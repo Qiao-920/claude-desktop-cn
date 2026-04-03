@@ -1,7 +1,7 @@
 {
   "name": "claude-desktop",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Claude Desktop - AI assistant with native capabilities",
   "author": {
     "name": "pretend1111",
@@ -64,11 +64,20 @@
       {
         "from": "engine/node_modules",
         "to": "engine/node_modules"
+      },
+      {
+        "from": "engine/vision-helper.ts",
+        "to": "engine/vision-helper.ts"
+      },
+      {
+        "from": "engine/.env",
+        "to": "engine/.env"
       }
     ],
     "publish": {
-      "provider": "generic",
-      "url": "https://update.jiazhuang.cloud"
+      "provider": "github",
+      "owner": "pretend1111",
+      "repo": "claude-desktop-app"
     },
     "win": {
       "target": [

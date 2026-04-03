@@ -412,7 +412,13 @@ function initServer(mainWindow) {
         if (!conv) return res.status(404).json({ error: 'Not found' });
 
         if (req.body.title) conv.title = req.body.title;
-        if (req.body.model) conv.model = req.body.model;
+        if (req.body.model && req.body.model !== conv.model) {
+            conv.model = req.body.model;
+            // Model changed — reset engine session so next message starts fresh with new model
+            // (engine sessions are model-bound; resuming with a different model causes context loss)
+            conv.claude_session_id = null;
+            console.log('[Session] Reset for conv', conv.id, '(model changed to', conv.model + ')');
+        }
 
         saveDb();
         res.json(conv);

@@ -104,21 +104,21 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
               >
                 <div className="flex-1">
                   <div className="flex items-center justify-between">
-                    <div className="text-[14.5px] font-[450] text-[#E0E0E0]">{m.name}</div>
+                    <div className="text-[14.5px] font-[450] text-claude-text">{m.name}</div>
                   </div>
-                  <div className="text-[13px] text-[#81807d] mt-0.5">{desc}{disabled ? ' · 断供' : ''}</div>
+                  <div className="text-[13px] text-claude-textSecondary mt-0.5">{desc}{disabled ? ' · 断供' : ''}</div>
                 </div>
                 {active && <Check size={18} className="text-[#3b82f6] ml-2 shrink-0" />}
               </button>
             );
           })}
 
-          <div className="h-[1px] bg-[#3a3a38] my-1 mx-4" />
+          <div className="h-[1px] bg-claude-border my-1 mx-4" />
 
           <div className="px-4 py-2 flex items-center justify-between hover:bg-claude-hover text-left select-none cursor-pointer">
             <div className="flex-1">
-              <div className="text-[14.5px] font-[450] text-[#E0E0E0]">Extended thinking</div>
-              <div className="text-[13px] text-[#81807d] mt-0.5">Think longer for complex tasks</div>
+              <div className="text-[14.5px] font-[450] text-claude-text">Extended thinking</div>
+              <div className="text-[13px] text-claude-textSecondary mt-0.5">Think longer for complex tasks</div>
             </div>
 
             <button
@@ -132,11 +132,11 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({
             </button>
           </div>
 
-          <div className="h-[1px] bg-[#3a3a38] my-1 mx-4" />
+          <div className="h-[1px] bg-claude-border my-1 mx-4" />
 
-          <div className="px-4 py-2 flex items-center justify-between hover:bg-claude-hover text-left select-none cursor-pointer text-[#E0E0E0] mb-1">
+          <div className="px-4 py-2 flex items-center justify-between hover:bg-claude-hover text-left select-none cursor-pointer text-claude-text mb-1">
             <span className="text-[14.5px] font-[450]">More models</span>
-            <ChevronRight size={16} className="text-[#81807d]" />
+            <ChevronRight size={16} className="text-claude-textSecondary" />
           </div>
         </div>
       )}

@@ -31,9 +31,10 @@ interface ClaudeLogoProps {
   autoAnimate?: boolean; // 对应 thinking 模式
   breathe?: boolean;     // 对应 waiting 模式
   color?: string;
+  maxScale?: number;     // cap the drawing scale (e.g. 0.17 to keep logo small in a large canvas)
 }
 
-const ClaudeLogo: React.FC<ClaudeLogoProps> = ({ className = '', style, onClick, autoAnimate = false, breathe = false, color = '#D97757' }) => {
+const ClaudeLogo: React.FC<ClaudeLogoProps> = ({ className = '', style, onClick, autoAnimate = false, breathe = false, color = '#D97757', maxScale }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const requestRef = useRef<number | null>(null);
@@ -54,7 +55,8 @@ const ClaudeLogo: React.FC<ClaudeLogoProps> = ({ className = '', style, onClick,
     smoothness: 0,
     fillet: 6.0,
     color: color,
-    mode: 'idle'
+    mode: 'idle',
+    maxScale: maxScale,
   });
 
   // 监听颜色变化
@@ -102,6 +104,7 @@ const ClaudeLogo: React.FC<ClaudeLogoProps> = ({ className = '', style, onClick,
       // 参考尺寸: 240 (大约是 tentacles 展开后的直径)
       const minDim = Math.min(width, height);
       state.scale = (minDim / 240) * 0.85;
+      if (state.maxScale !== undefined && state.scale > state.maxScale) state.scale = state.maxScale;
       
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.scale(dpr, dpr);

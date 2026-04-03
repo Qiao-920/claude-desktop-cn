@@ -2630,8 +2630,8 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
             className="flex items-center gap-4"
             style={{ marginBottom: `${tunerConfig?.welcomeMb || 40}px` }}
           >
-            <div className="w-[48px] h-[48px] shrink-0 flex items-center justify-center translate-x-[16px] translate-y-[4px]">
-              <ClaudeLogo color="#D97757" />
+            <div className="w-[80px] h-[80px] shrink-0 flex items-center justify-center -mx-[16px]" style={{ marginTop: '-16px', marginBottom: '-16px' }}>
+              <ClaudeLogo color="#D97757" maxScale={0.17} />
             </div>
             <h1
               className="text-claude-text dark:!text-[#d6cec3] tracking-tight leading-none pt-1 transition-all duration-100 ease-out whitespace-nowrap"
