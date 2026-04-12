@@ -1146,17 +1146,40 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
   const viewingIdRef = useRef<string | null>(null);
   const messagesBufferRef = useRef(new Map<string, any[]>());
 
-  // Update messages for a specific conversation — only touches React state if it's the active conversation
+  // Update messages for a specific conversation — only touches React state if it's the active conversation.
+  //
+  // Backfill safety net: setMessagesFor is called exclusively from streaming SSE event
+  // handlers (text deltas, thinking deltas, tool events, done/error callbacks). They all
+  // mutate the trailing assistant placeholder. If a race causes the updater to run BEFORE
+  // the placeholder push has committed (rare but real — depends on React batching, async
+  // boundaries, and SSE chunk timing), the original updaters silently dropped the event
+  // via their `lastMsg.role === 'assistant'` guard.
+  //
+  // The fix: ensure the tail of `prev` is an assistant message before invoking the
+  // updater. Existing callers don't change — their guard now always passes, and the
+  // event lands on the backfilled placeholder. The bridge will overwrite this placeholder
+  // with the canonical message + toolCalls when finishTurn flushes to db, so even if a
+  // re-load races with backfill the persistent state stays correct.
   const setMessagesFor = useCallback((convId: string, updater: (prev: any[]) => any[]) => {
+    const ensureUpdater = (prev: any[]) => {
+      if (prev.length === 0) return updater(prev); // empty conv: don't synthesize a phantom placeholder
+      const last = prev[prev.length - 1];
+      if (last && last.role === 'assistant') return updater(prev);
+      // Tail is a user message (or other non-assistant). Backfill an assistant
+      // placeholder so the trailing SSE event has somewhere to land instead of
+      // being silently dropped by the updater's `lastMsg.role === 'assistant'` guard.
+      return updater([...prev, { role: 'assistant', content: '' }]);
+    };
+
     if (viewingIdRef.current === convId) {
       setMessages(prev => {
-        const result = updater(prev);
+        const result = ensureUpdater(prev);
         messagesBufferRef.current.set(convId, result);
         return result;
       });
     } else {
       const prev = messagesBufferRef.current.get(convId) || [];
-      messagesBufferRef.current.set(convId, updater(prev));
+      messagesBufferRef.current.set(convId, ensureUpdater(prev));
     }
   }, []);
 

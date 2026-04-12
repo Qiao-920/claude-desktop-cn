@@ -130,9 +130,20 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
   const [streamingIds, setStreamingIds] = useState<Set<string>>(new Set());
   const [updateStatus, setUpdateStatus] = useState<{ type: string; version?: string; percent?: number } | null>(null);
 
-  // Listen for streaming state changes
+  // Listen for streaming state changes. When a stream JUST ended (set size shrunk),
+  // also refetch usage so the bottom-left progress bar reflects the new spend.
+  // Bridge records usage to Chengdu fire-and-forget at finishTurn — wait ~1.5s for
+  // the round trip (SG gateway → Chengdu DB write) to settle before reading.
   useEffect(() => {
-    const handler = () => setStreamingIds(new Set(getStreamingIds()));
+    let prevSize = getStreamingIds().size;
+    const handler = () => {
+      const newIds = new Set(getStreamingIds());
+      setStreamingIds(newIds);
+      if (newIds.size < prevSize) {
+        setTimeout(() => fetchPlan(), 1500);
+      }
+      prevSize = newIds.size;
+    };
     window.addEventListener('streaming-change', handler);
     return () => window.removeEventListener('streaming-change', handler);
   }, []);
