@@ -26,7 +26,7 @@ import AdminAnnouncements from './components/admin/AdminAnnouncements';
 import ChatsPage from './components/ChatsPage';
 import CustomizePage from './components/CustomizePage';
 import ProjectsPage from './components/ProjectsPage';
-import { useChineseClientText } from './utils/chineseClientText';
+import { useClientLanguageText } from './utils/chineseClientText';
 
 const Tooltip = ({ children, text, shortcut }: { children: React.ReactNode; text: string; shortcut?: string }) => {
   const [show, setShow] = useState(false);
@@ -820,7 +820,7 @@ const Layout = () => {
 };
 
 const App = () => {
-  useChineseClientText();
+  useClientLanguageText();
 
   return (
     <HashRouter>

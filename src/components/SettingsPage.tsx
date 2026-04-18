@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ChevronRight, Smartphone, MonitorIcon, LogOut, MoreHorizontal, Check, X } from 'lucide-react';
 import { getUserProfile, updateUserProfile, getUserUsage, getGatewayUsage, getSessions, deleteSession, logoutOtherSessions, changePassword, deleteAccount, logout, getProviderModels } from '../api';
 import ProviderSettings from './ProviderSettings';
+import { UiLanguage, getStoredUiLanguage, setStoredUiLanguage } from '../utils/chineseClientText';
 
 interface SettingsPageProps {
   onClose: () => void;
@@ -13,7 +14,7 @@ const WORK_OPTIONS = [
   '法律', '医疗健康', '其他',
 ];
 
-type Tab = 'general' | 'account' | 'usage';
+type Tab = 'general' | 'models' | 'account' | 'usage';
 
 const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const [tab, setTab] = useState<Tab>('general');
@@ -46,6 +47,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
   const [sendKey, setSendKey] = useState(localStorage.getItem('sendKey') || 'enter'); // enter or ctrl+enter
   const [newlineKey, setNewlineKey] = useState(localStorage.getItem('newlineKey') || (localStorage.getItem('sendKey') === 'enter' ? 'shift_enter' : 'enter'));
+  const [uiLanguage, setUiLanguage] = useState<UiLanguage>(getStoredUiLanguage());
 
   const isSelfHosted = localStorage.getItem('user_mode') === 'selfhosted';
 
@@ -154,6 +156,11 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     document.documentElement.setAttribute('data-chat-font', f);
     localStorage.setItem('chat_font', f);
     updateUserProfile({ chat_font: f }).catch(() => { });
+  };
+
+  const applyLanguage = (language: UiLanguage) => {
+    setUiLanguage(language);
+    setStoredUiLanguage(language);
   };
 
   const HARDCODED_MODELS = [
@@ -614,6 +621,33 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
             </div>
           </div>
         </section></>}
+
+        <hr className="border-claude-border" />
+
+        <section>
+          <h3 className="text-[16px] font-semibold text-claude-text mb-5">Interface language</h3>
+          <div className="flex gap-3">
+            {([
+              { value: 'zh-CN', label: 'Chinese' },
+              { value: 'en', label: 'English' },
+            ] as const).map(opt => {
+              const active = uiLanguage === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  onClick={() => applyLanguage(opt.value)}
+                  className={`flex-1 px-4 py-3 rounded-xl border text-left transition-all ${
+                    active
+                      ? 'border-[#3b82f6]/80 bg-blue-500/5 text-claude-text'
+                      : 'border-claude-border/60 hover:border-claude-textSecondary/20 text-claude-textSecondary'
+                  }`}
+                >
+                  <div className="text-[14px] font-medium">{opt.label}</div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
 
         {/* Send Key Section */}
         <section>
