@@ -208,7 +208,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
             WebkitTextStroke: '0.5px currentColor'
           }}
         >
-          Settings
+          设置
         </h2>
 
         <button
@@ -216,7 +216,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
           className={`text-left px-3 py-2 rounded-lg text-[15px] font-medium transition-colors ${tab === 'general' ? 'bg-claude-btn-hover text-claude-text' : 'text-claude-textSecondary hover:bg-claude-hover'
             }`}
         >
-          General
+          通用
         </button>
         {localStorage.getItem('user_mode') === 'selfhosted' && (
           <button
@@ -224,7 +224,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
             className={`text-left px-3 py-2 rounded-lg text-[15px] font-medium transition-colors ${tab === 'models' ? 'bg-claude-btn-hover text-claude-text' : 'text-claude-textSecondary hover:bg-claude-hover'
               }`}
           >
-            Models
+            模型
           </button>
         )}
         {localStorage.getItem('user_mode') !== 'selfhosted' && (
@@ -233,7 +233,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
             className={`text-left px-3 py-2 rounded-lg text-[15px] font-medium transition-colors ${tab === 'account' ? 'bg-claude-btn-hover text-claude-text' : 'text-claude-textSecondary hover:bg-claude-hover'
               }`}
           >
-            Account
+            账户
           </button>
         )}
         {localStorage.getItem('user_mode') !== 'selfhosted' && (
@@ -242,7 +242,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
             className={`text-left px-3 py-2 rounded-lg text-[15px] font-medium transition-colors ${tab === 'usage' ? 'bg-claude-btn-hover text-claude-text' : 'text-claude-textSecondary hover:bg-claude-hover'
               }`}
           >
-            Usage
+            用量
           </button>
         )}
       </div>
@@ -494,7 +494,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                 }}>
                 <button onClick={() => { handleDeleteSession(ctxMenu.sessionId); setCtxMenu(null); }}
                   className="w-full text-left px-4 py-2 text-[13px] text-claude-text hover:bg-[#F5F4F1] dark:hover:bg-[#383838] transition-colors">
-                  Log out
+                  退出登录
                 </button>
               </div>
             </>
@@ -847,7 +847,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
 
   function renderUsage() {
     if (!usage) {
-      return <div className="text-[14px] text-[#999] py-8">Loading usage data...</div>;
+      return <div className="text-[14px] text-[#999] py-8">正在加载用量数据...</div>;
     }
 
     const tokenQuota = Number(usage.token_quota) || 0;

@@ -50,6 +50,7 @@ jobs:
       - name: Write build-time secrets
         shell: bash
         env:
+          GH_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
           GH_OAUTH_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET }}
         run: |
           # Inject GitHub OAuth client secret into electron/secrets.json, read by main.cjs
@@ -58,6 +59,7 @@ jobs:
           node -e "
             const fs = require('fs');
             const secrets = {};
+            if (process.env.GH_OAUTH_CLIENT_ID) secrets.GITHUB_CLIENT_ID = process.env.GH_OAUTH_CLIENT_ID;
             if (process.env.GH_OAUTH_SECRET) secrets.GITHUB_CLIENT_SECRET = process.env.GH_OAUTH_SECRET;
             fs.writeFileSync('electron/secrets.json', JSON.stringify(secrets, null, 2));
             console.log('secrets.json written, keys:', Object.keys(secrets));

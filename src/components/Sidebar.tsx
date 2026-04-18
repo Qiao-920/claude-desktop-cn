@@ -67,7 +67,7 @@ const RenameModal = ({ isOpen, onClose, onSave, initialTitle }: RenameModalProps
         className="bg-claude-input rounded-2xl shadow-xl w-[400px] p-6 animate-fade-in"
         onClick={e => e.stopPropagation()}
       >
-        <h3 className="text-[18px] font-semibold text-claude-text mb-4">Rename chat</h3>
+        <h3 className="text-[18px] font-semibold text-claude-text mb-4">重命名聊天</h3>
         <input
           ref={inputRef}
           type="text"
@@ -88,7 +88,7 @@ const RenameModal = ({ isOpen, onClose, onSave, initialTitle }: RenameModalProps
             onClick={onClose}
             className="px-4 py-2 text-[14px] font-medium text-claude-text hover:bg-claude-hover rounded-lg transition-colors"
           >
-            Cancel
+            取消
           </button>
           <button
             onClick={() => {
@@ -97,7 +97,7 @@ const RenameModal = ({ isOpen, onClose, onSave, initialTitle }: RenameModalProps
             disabled={!title.trim()}
             className="px-4 py-2 text-[14px] font-medium text-white bg-[#333333] hover:bg-[#1a1a1a] dark:bg-[#FFFFFF] dark:text-black dark:hover:bg-[#e5e5e5] rounded-lg transition-colors disabled:opacity-50"
           >
-            Save
+            保存
           </button>
         </div>
       </div>
@@ -121,7 +121,7 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [userMenuPos, setUserMenuPos] = useState<{ bottom: number; left: number } | null>(null);
-  const [planLabel, setPlanLabel] = useState('Free plan');
+  const [planLabel, setPlanLabel] = useState('免费计划');
   const [usageData, setUsageData] = useState<{ token_used: number; token_quota: number } | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
@@ -272,7 +272,7 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
         };
         setPlanLabel(nameMap[data.plan.name] || data.plan.name);
       } else {
-        setPlanLabel('Free plan');
+        setPlanLabel('免费计划');
       }
     } catch (e) {
       // 获取失败保持默认
@@ -728,7 +728,7 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
                   className="font-medium text-claude-text leading-tight"
                   style={{ fontSize: `${tunerConfig?.userNameSize || 15}px`, whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}
                 >
-                  {userUser?.display_name || userUser?.full_name || userUser?.nickname || 'User'}
+                  {userUser?.display_name || userUser?.full_name || userUser?.nickname || '用户'}
                 </div>
                 {localStorage.getItem('user_mode') === 'selfhosted' ? (
                   <div className="text-[13px] text-claude-textSecondary mt-1 leading-tight">Self-hosted</div>
@@ -759,7 +759,7 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
             >
               {/* User info header */}
               <div className="px-4 py-2.5 border-b border-claude-border">
-                <div className="text-[13px] font-medium text-claude-text">{userUser?.display_name || userUser?.full_name || userUser?.nickname || 'User'}</div>
+                <div className="text-[13px] font-medium text-claude-text">{userUser?.display_name || userUser?.full_name || userUser?.nickname || '用户'}</div>
                 <div className="text-[12px] text-claude-textSecondary mt-0.5">{userUser?.email || ''}</div>
               </div>
               {/* Menu items */}
@@ -769,7 +769,7 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
                   className="w-full flex items-center gap-3 px-4 py-2 text-[13px] text-claude-text hover:bg-claude-hover transition-colors"
                 >
                   <Settings size={16} className="text-claude-textSecondary" />
-                  Settings
+                  设置
                 </button>
                 {localStorage.getItem('user_mode') !== 'selfhosted' && (
                   <button
@@ -777,7 +777,7 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
                     onClick={() => { setShowUserMenu(false); onOpenUpgrade?.(); }}
                   >
                     <CreditCard size={16} className="text-claude-textSecondary" />
-                    Payment
+                    套餐购买
                   </button>
                 )}
                 {isAdmin && localStorage.getItem('user_mode') !== 'selfhosted' && (
@@ -786,7 +786,7 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
                     onClick={() => { setShowUserMenu(false); navigate('/admin'); }}
                   >
                     <Shield size={16} className="text-claude-textSecondary" />
-                    Admin Panel
+                    管理面板
                   </button>
                 )}
                 <button
@@ -794,7 +794,7 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
                   className="w-full flex items-center gap-3 px-4 py-2 text-[13px] text-claude-text hover:bg-claude-hover transition-colors"
                 >
                   <HelpCircle size={16} className="text-claude-textSecondary" />
-                  Get Help
+                  售后支持
                 </button>
               </div>
               <div className="h-[1px] bg-claude-border mx-3" />
@@ -804,7 +804,7 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
                   className="w-full flex items-center gap-3 px-4 py-2 text-[13px] text-claude-text hover:bg-claude-hover transition-colors"
                 >
                   <LogOut size={16} className="text-claude-textSecondary" />
-                  Log out
+                  退出登录
                 </button>
               </div>
             </div>
@@ -825,14 +825,14 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
           >
             <button className="flex items-center gap-3 px-3 py-2 hover:bg-claude-hover text-left w-full transition-colors group">
               <IconStarOutline size={16} className="text-claude-textSecondary group-hover:text-claude-text" />
-              <span className="text-[13px] text-claude-text">Star</span>
+              <span className="text-[13px] text-claude-text">收藏</span>
             </button>
             <button
               onClick={(e) => handleRenameClick(e, activeMenuIndex as number)}
               className="flex items-center gap-3 px-3 py-2 hover:bg-claude-hover text-left w-full transition-colors group"
             >
               <IconPencil size={16} className="text-claude-textSecondary group-hover:text-claude-text" />
-              <span className="text-[13px] text-claude-text">Rename</span>
+              <span className="text-[13px] text-claude-text">重命名</span>
             </button>
             <div className="h-[1px] bg-claude-border my-1 mx-3" />
             <button
@@ -840,7 +840,7 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
               className="flex items-center gap-3 px-3 py-2 hover:bg-claude-hover text-left w-full transition-colors group"
             >
               <IconTrash size={16} className="text-[#B9382C]" />
-              <span className="text-[13px] text-[#B9382C]">Delete</span>
+              <span className="text-[13px] text-[#B9382C]">删除</span>
             </button>
           </div>
         )
@@ -863,18 +863,16 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
         onSave={handleRenameSubmit}
         initialTitle={renameInitialTitle}
       />
-
       {/* Logout Confirmation Modal */}
       {showLogoutConfirm && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40">
           <div className="bg-claude-input rounded-2xl shadow-xl w-[360px] p-6">
-            <h3 className="text-[16px] font-semibold text-claude-text mb-2">确定退出登录？</h3>
-            <p className="text-[14px] text-claude-textSecondary mb-6">此操作将清除您的登录状态。</p>
+            <h3 className="text-[16px] font-semibold text-claude-text mb-2">确认退出登录？</h3>
+            <p className="text-[14px] text-claude-textSecondary mb-6">此操作会清除当前设备上的登录状态。</p>
             <div className="flex justify-end gap-3">
               <button
                 onClick={() => setShowLogoutConfirm(false)}
                 className="px-4 py-2 text-[13px] text-claude-text bg-claude-btn-hover hover:bg-claude-hover rounded-lg transition-colors"
-              // Using btn-hover for light gray bg? 
               >
                 取消
               </button>
@@ -896,9 +894,9 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-[16px] font-semibold text-claude-text mb-2">售后支持</h3>
-            <p className="text-[14px] text-claude-textSecondary mb-3">售后 QQ 群号：</p>
+            <p className="text-[14px] text-claude-textSecondary mb-3">售后 QQ：</p>
             <div className="px-4 py-3 mb-6 rounded-xl bg-claude-btn-hover text-[20px] font-semibold tracking-wide text-claude-text text-center select-all">
-              1083610043
+              2592056451
             </div>
             <div className="flex justify-end">
               <button

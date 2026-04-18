@@ -371,9 +371,9 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
         {/* Header */}
         <div className="flex items-start justify-between px-5 pt-5 pb-3">
           <div>
-            <h2 className="text-[15px] font-semibold text-claude-text">Add content from GitHub</h2>
+            <h2 className="text-[15px] font-semibold text-claude-text">从 GitHub 添加内容</h2>
             <p className="text-[12px] text-claude-textSecondary mt-0.5">
-              Select the files you would like to add to this chat
+              选择你想加入当前对话的文件
             </p>
           </div>
           <button
@@ -395,7 +395,7 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
               className="flex items-center gap-1.5 px-3 py-1.5 border border-claude-border rounded-lg text-[13px] text-claude-text bg-claude-input hover:bg-claude-hover transition-colors disabled:opacity-50 min-w-[180px]"
             >
               <span className="truncate">
-                {selectedRepo ? selectedRepo.full_name : 'Select a repository'}
+                {selectedRepo ? selectedRepo.full_name : '选择仓库'}
               </span>
               <ChevronDown size={14} className="text-claude-textSecondary ml-auto flex-shrink-0" />
             </button>
@@ -403,11 +403,11 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
               <div className="absolute left-0 top-full mt-1 w-[300px] bg-claude-input border border-claude-border rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.16)] py-1 z-10 max-h-[260px] overflow-y-auto">
                 {reposLoading && (
                   <div className="px-4 py-3 text-[12px] text-claude-textSecondary flex items-center gap-2">
-                    <Loader2 size={12} className="animate-spin" /> Loading repositories...
+                    <Loader2 size={12} className="animate-spin" /> 正在加载仓库...
                   </div>
                 )}
                 {!reposLoading && repos.length === 0 && (
-                  <div className="px-4 py-3 text-[12px] text-claude-textSecondary">No repositories found</div>
+                  <div className="px-4 py-3 text-[12px] text-claude-textSecondary">未找到仓库</div>
                 )}
                 {!reposLoading && repos.map(r => (
                   <button
@@ -424,7 +424,7 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
           </div>
           <button
             onClick={() => setShowUrlInput(prev => !prev)}
-            title="Paste a GitHub URL"
+            title="粘贴 GitHub 链接"
             className="p-1.5 text-claude-textSecondary hover:text-claude-text hover:bg-claude-hover rounded-md transition-colors"
           >
             <Link2 size={16} />
@@ -445,7 +445,7 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
               onClick={handleUrlSubmit}
               className="px-3 py-1.5 bg-black text-white dark:bg-white dark:text-black rounded-lg text-[12px] hover:opacity-90 transition-opacity"
             >
-              Open
+              打开
             </button>
           </div>
         )}
@@ -455,12 +455,12 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
           {connected === false && (
             <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center">
               <Github size={36} className="text-claude-textSecondary" />
-              <p className="text-[13px] text-claude-textSecondary">Connect your GitHub account to browse repositories.</p>
+              <p className="text-[13px] text-claude-textSecondary">连接你的 GitHub 账号后即可浏览仓库。</p>
               <button
                 onClick={handleConnect}
                 className="px-4 py-1.5 bg-black text-white dark:bg-white dark:text-black rounded-lg text-[13px] hover:opacity-90 transition-opacity"
               >
-                {connectingPoll ? 'Waiting for GitHub...' : 'Connect GitHub'}
+                {connectingPoll ? '等待 GitHub 授权...' : '连接 GitHub'}
               </button>
             </div>
           )}
@@ -468,7 +468,7 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
           {connected && !selectedRepo && (
             <div className="flex-1 flex items-center justify-center px-6 text-center">
               <p className="text-[13px] text-claude-textSecondary">
-                Select a repository or paste a URL above to get started
+                选择一个仓库，或在上方粘贴 GitHub 链接开始
               </p>
             </div>
           )}
@@ -480,7 +480,7 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
                   <button
                     onClick={handleGoUp}
                     className="p-0.5 hover:text-claude-text hover:bg-claude-hover rounded"
-                    title="Go up"
+                    title="返回上一级"
                   >
                     <ChevronLeft size={14} />
                   </button>
@@ -494,14 +494,14 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
               <div className="flex-1 overflow-y-auto">
                 {entriesLoading && (
                   <div className="p-4 text-[12px] text-claude-textSecondary flex items-center gap-2">
-                    <Loader2 size={12} className="animate-spin" /> Loading...
+                    <Loader2 size={12} className="animate-spin" /> 加载中...
                   </div>
                 )}
                 {browseError && !entriesLoading && (
                   <div className="p-4 text-[12px] text-red-500">{browseError}</div>
                 )}
                 {!entriesLoading && !browseError && entries.length === 0 && (
-                  <div className="p-4 text-[12px] text-claude-textSecondary">Empty folder</div>
+                  <div className="p-4 text-[12px] text-claude-textSecondary">空文件夹</div>
                 )}
                 {!entriesLoading && entries.map(entry => {
                   const isFile = entry.type === 'file';
@@ -553,8 +553,8 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
             <div className="flex items-center gap-2 text-[12px] text-claude-textSecondary">
               <span>
                 {selected.size === 0
-                  ? 'Select files to add to chat context'
-                  : `${selected.size} item${selected.size > 1 ? 's' : ''} selected`}
+                  ? '选择要加入对话上下文的文件'
+                  : `已选择 ${selected.size} 项`}
               </span>
             </div>
             <div className="flex items-center gap-3">
@@ -563,7 +563,7 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
                 style={{ color: isOverflow ? '#dc2626' : undefined }}
               >
                 <span className={isOverflow ? '' : 'text-claude-textSecondary'}>
-                  {capacityLabel}% of capacity used
+                  {capacityLabel}% 容量已使用
                 </span>
               </span>
               <button
@@ -572,7 +572,7 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
                 className="px-3 py-1.5 bg-black text-white dark:bg-white dark:text-black rounded-lg text-[12px] hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
               >
                 {confirming && <Loader2 size={12} className="animate-spin" />}
-                Add to chat
+                添加到对话
               </button>
             </div>
           </div>

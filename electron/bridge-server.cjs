@@ -2628,12 +2628,12 @@ You have the following skills available. When a user's request matches a skill's
     //  GITHUB CONNECTOR 鈥?OAuth + API
     // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?
 
-    // GitHub OAuth App credentials. CLIENT_ID is public (embedded in authorize URL),
-    // CLIENT_SECRET must NOT be hardcoded — read from env at launch. In production
-    // the CI build injects it (see build.yml); in dev set GITHUB_CLIENT_SECRET in shell.
+    // GitHub OAuth App credentials. CLIENT_ID is public (embedded in authorize URL).
+    // CLIENT_SECRET must NOT be committed. main.cjs loads electron/secrets.json into
+    // process.env at launch, so local builds can provide both values there.
     // Callback URL registered at https://github.com/settings/developers must be:
     //   http://127.0.0.1:30080/api/github/callback
-    const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || 'Ov23liWiTL6v74GsI2U7';
+    const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || '';
     const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || '';
     const GITHUB_REDIRECT_URI = 'http://127.0.0.1:30080/api/github/callback';
 
@@ -2665,6 +2665,7 @@ You have the following skills available. When a user's request matches a skill's
 
     // GET /api/github/auth-url 鈥?return OAuth authorize URL
     server.get('/api/github/auth-url', (req, res) => {
+        if (!GITHUB_CLIENT_ID) return res.status(503).json({ error: 'GitHub OAuth not configured: GITHUB_CLIENT_ID missing.' });
         const state = require('crypto').randomBytes(16).toString('hex');
         const url = `https://github.com/login/oauth/authorize?client_id=${GITHUB_CLIENT_ID}&redirect_uri=${encodeURIComponent(GITHUB_REDIRECT_URI)}&scope=repo,read:user&state=${state}`;
         res.json({ url, state });

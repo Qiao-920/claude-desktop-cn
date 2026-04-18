@@ -563,7 +563,7 @@ const MessageList = React.memo<MessageListProps>(({
           {(msg.is_summary === 1 || msg.is_compact_boundary) && (
             <div className="flex items-center gap-3 mb-5 mt-2">
               <div className="flex-1 h-px bg-claude-border" />
-              <span className="text-[12px] text-claude-textSecondary whitespace-nowrap">Context compacted above this point</span>
+              <span className="text-[12px] text-claude-textSecondary whitespace-nowrap">此处以上内容已压缩</span>
               <div className="flex-1 h-px bg-claude-border" />
             </div>
           )}
@@ -594,7 +594,7 @@ const MessageList = React.memo<MessageListProps>(({
                   <div className="flex items-start gap-2 text-claude-textSecondary text-[13px] leading-tight pt-1">
                     <Info size={14} className="mt-0.5 shrink-0" />
                     <span>
-                      Editing this message will create a new conversation branch. You can switch between branches using the arrow navigation buttons.
+                      编辑这条消息会创建一个新的对话分支。你可以用顶部箭头按钮在不同分支之间切换。
                     </span>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
@@ -602,14 +602,14 @@ const MessageList = React.memo<MessageListProps>(({
                       onClick={onEditCancel}
                       className="px-3 py-1.5 text-[13px] font-medium text-claude-text bg-white dark:bg-claude-bg border border-black/10 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-claude-hover rounded-lg transition-colors"
                     >
-                      Cancel
+                      取消
                     </button>
                     <button
                       onClick={onEditSave}
                       disabled={!editingContent.trim() || editingContent === msg.content}
                       className="px-3 py-1.5 text-[13px] font-medium text-white bg-claude-text hover:bg-claude-textSecondary rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
                     >
-                      Save
+                      保存
                     </button>
                   </div>
                 </div>
@@ -624,7 +624,7 @@ const MessageList = React.memo<MessageListProps>(({
                 {(!msg.attachments || msg.attachments.length === 0) && msg.has_attachments === 1 && (
                   <div className="max-w-[85%] w-fit mb-1">
                     <div className="bg-[#F0EEE7] dark:bg-claude-btnHover text-claude-textSecondary px-3.5 py-2 text-[14px] rounded-2xl font-sans italic">
-                      📎 Files attached
+                      已附加文件
                     </div>
                   </div>
                 )}

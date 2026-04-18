@@ -26,6 +26,7 @@ import AdminAnnouncements from './components/admin/AdminAnnouncements';
 import ChatsPage from './components/ChatsPage';
 import CustomizePage from './components/CustomizePage';
 import ProjectsPage from './components/ProjectsPage';
+import { useChineseClientText } from './utils/chineseClientText';
 
 const Tooltip = ({ children, text, shortcut }: { children: React.ReactNode; text: string; shortcut?: string }) => {
   const [show, setShow] = useState(false);
@@ -85,7 +86,7 @@ const ChatHeader = ({
   }, [showMenu]);
 
   const startEditing = () => {
-    setEditTitle(title || 'New Chat');
+    setEditTitle(title || '新建聊天');
     setIsEditing(true);
     setShowMenu(false);
   };
@@ -149,7 +150,7 @@ const ChatHeader = ({
             onClick={startEditing}
             className="flex items-center px-2 py-1.5 hover:bg-claude-btn-hover rounded-md transition-colors text-[14px] font-medium text-claude-text max-w-[200px] truncate group"
           >
-            {title || 'New Chat'}
+            {title || '新建聊天'}
           </button>
 
           <button
@@ -167,7 +168,7 @@ const ChatHeader = ({
             >
               <button className="flex items-center gap-3 px-3 py-2 hover:bg-claude-hover text-left w-full transition-colors group">
                 <Star size={16} className="text-claude-textSecondary group-hover:text-claude-text" />
-                <span className="text-[13px] text-claude-text">Star</span>
+                <span className="text-[13px] text-claude-text">收藏</span>
               </button>
               <button
                 onClick={(e) => {
@@ -177,7 +178,7 @@ const ChatHeader = ({
                 className="flex items-center gap-3 px-3 py-2 hover:bg-claude-hover text-left w-full transition-colors group"
               >
                 <Pencil size={16} className="text-claude-textSecondary group-hover:text-claude-text" />
-                <span className="text-[13px] text-claude-text">Rename</span>
+                <span className="text-[13px] text-claude-text">重命名</span>
               </button>
               <div className="h-[1px] bg-claude-border my-1 mx-3" />
               <button
@@ -188,7 +189,7 @@ const ChatHeader = ({
                 className="flex items-center gap-3 px-3 py-2 hover:bg-claude-hover text-left w-full transition-colors group"
               >
                 <Trash size={16} className="text-[#B9382C]" />
-                <span className="text-[13px] text-[#B9382C]">Delete</span>
+                <span className="text-[13px] text-[#B9382C]">删除</span>
               </button>
             </div>
           )}
@@ -200,14 +201,14 @@ const ChatHeader = ({
           <button
             onClick={onOpenArtifacts}
             className={`w-8 h-8 flex items-center justify-center text-claude-textSecondary hover:bg-claude-btn-hover rounded-md transition-colors ${showArtifacts ? 'bg-claude-btn-hover text-claude-text' : ''}`}
-            title="View Artifacts"
+            title="查看作品"
           >
             <FileText size={18} strokeWidth={1.5} />
           </button>
         )}
         <button
           className="px-2 h-8 flex items-center justify-center text-claude-textSecondary hover:text-claude-text transition-colors"
-          title="Open Workspace Folder"
+          title="打开工作区文件夹"
           onClick={async () => {
             if (!id) return;
             try {
@@ -819,6 +820,8 @@ const Layout = () => {
 };
 
 const App = () => {
+  useChineseClientText();
+
   return (
     <HashRouter>
       <Routes>

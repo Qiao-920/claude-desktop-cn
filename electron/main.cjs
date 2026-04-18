@@ -9,7 +9,8 @@ const { autoUpdater } = require('electron-updater');
 try {
     const secretsPath = path.join(__dirname, 'secrets.json');
     if (fs.existsSync(secretsPath)) {
-        const s = JSON.parse(fs.readFileSync(secretsPath, 'utf8'));
+        const raw = fs.readFileSync(secretsPath, 'utf8').replace(/^\uFEFF/, '');
+        const s = JSON.parse(raw);
         for (const [k, v] of Object.entries(s)) {
             if (!process.env[k]) process.env[k] = String(v);
         }
@@ -157,8 +158,9 @@ app.whenReady().then(() => {
     // No SDK subprocess needed — using direct API calls
     enableNodeModeForChildProcesses();
 
-    // Auto-update (production only)
-    if (!isDev) {
+    // Auto-update is disabled in this local Chinese build.
+    // The upstream app checks for updates frequently and may replace local changes.
+    if (!isDev && process.env.CLAUDE_DESKTOP_ENABLE_AUTO_UPDATE === '1') {
         autoUpdater.setFeedURL({
             provider: 'generic',
             url: 'https://clawparrot.com/updates',

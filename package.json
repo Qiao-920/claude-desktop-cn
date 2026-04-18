@@ -80,6 +80,7 @@
       "repo": "claude-desktop-app"
     },
     "win": {
+      "artifactName": "Claude-Desktop-CN-Setup-${version}.${ext}",
       "target": [
         "nsis"
       ],
