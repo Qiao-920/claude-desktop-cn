@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Search, Plus, ChevronDown, ArrowLeft, MoreVertical, Star, ArrowUp, FileText, Trash, Pencil, MessageSquare, X, Upload, Check, AudioLines, ChevronRight, Archive, Github, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Paperclip, ListCollapse } from 'lucide-react';
-import { getProjects, createProject, getProject, updateProject, deleteProject, uploadProjectFile, deleteProjectFile, createProjectConversation, deleteConversation, getSkills, Project, ProjectFile, ProjectGithubSource, importProjectGithub, syncProjectGithubSource, removeProjectGithubSource } from '../api';
+import { getProjects, createProject, getProject, updateProject, deleteProject, uploadProjectFile, deleteProjectFile, createProjectConversation, deleteConversation, getSkills, Project, ProjectFile, ProjectGithubSource, importProjectGithub, syncProjectGithubSource, updateProjectGithubSource, removeProjectGithubSource } from '../api';
 import ModelSelector, { SelectableModel } from './ModelSelector';
 import { IconPlus } from './Icons';
 import startProjectsImg from '../assets/icons/start-projects.png';
@@ -38,6 +38,7 @@ const ProjectsPage = () => {
   const [enabledSkills, setEnabledSkills] = useState<Array<{ id: string; name: string; description?: string }>>([]);
   const [selectedSkill, setSelectedSkill] = useState<{ name: string; slug: string; description?: string } | null>(null);
   const [showGithubModal, setShowGithubModal] = useState(false);
+  const [editingGithubSource, setEditingGithubSource] = useState<ProjectGithubSource | null>(null);
   const [githubError, setGithubError] = useState<string | null>(null);
   const [syncingSourceId, setSyncingSourceId] = useState<string | null>(null);
   const plusMenuRef = useRef<HTMLDivElement>(null);
@@ -253,6 +254,25 @@ const ProjectsPage = () => {
     }
   };
 
+  const handleProjectGithubUpdate = async (payload: GithubAddPayload) => {
+    if (!currentProject || !editingGithubSource) return;
+    setGithubError(null);
+    setSyncingSourceId(editingGithubSource.id);
+    try {
+      await updateProjectGithubSource(currentProject.id, editingGithubSource.id, {
+        ref: payload.ref,
+        selections: payload.selections,
+      });
+      await loadProject(currentProject.id);
+      await loadProjects();
+    } catch (err: any) {
+      setGithubError(err?.message || 'Failed to update GitHub source');
+      throw err;
+    } finally {
+      setSyncingSourceId(null);
+    }
+  };
+
   const handleSyncGithubSource = async (source: ProjectGithubSource) => {
     if (!currentProject) return;
     setGithubError(null);
@@ -282,6 +302,11 @@ const ProjectsPage = () => {
     } finally {
       setSyncingSourceId(null);
     }
+  };
+
+  const handleGithubModalClose = () => {
+    setShowGithubModal(false);
+    setEditingGithubSource(null);
   };
 
   // ═══ Project Detail View ═══
@@ -539,7 +564,7 @@ const ProjectsPage = () => {
                   </h3>
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => setShowGithubModal(true)}
+                      onClick={() => { setEditingGithubSource(null); setShowGithubModal(true); }}
                       className="flex items-center gap-2 px-3 py-1.5 text-[12.5px] font-medium text-claude-text border border-claude-border rounded-lg hover:bg-claude-hover transition-colors"
                     >
                       <Github size={14} />
@@ -582,22 +607,31 @@ const ProjectsPage = () => {
                         <div className="flex-1 min-w-0">
                           <div className="text-[13.5px] text-claude-text font-medium truncate">{source.repo_full_name}</div>
                           <div className="text-[11.5px] text-[#A1A1AA]">
-                            {source.file_count} files · branch {source.ref} · synced {new Date(source.last_synced_at).toLocaleString()}
+                            {source.file_count} 个文件 · 引用 {source.ref} · 同步于 {new Date(source.last_synced_at).toLocaleString()}
                           </div>
                         </div>
+                        <button
+                          onClick={() => { setEditingGithubSource(source); setShowGithubModal(true); }}
+                          disabled={syncingSourceId === source.id}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-claude-text border border-claude-border rounded-lg hover:bg-claude-hover transition-colors disabled:opacity-50"
+                          title="配置 GitHub 来源"
+                        >
+                          <Pencil size={13} />
+                          配置
+                        </button>
                         <button
                           onClick={() => handleSyncGithubSource(source)}
                           disabled={syncingSourceId === source.id}
                           className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-claude-text border border-claude-border rounded-lg hover:bg-claude-hover transition-colors disabled:opacity-50"
                         >
                           <RefreshCw size={13} className={syncingSourceId === source.id ? 'animate-spin' : ''} />
-                          Sync
+                          同步
                         </button>
                         <button
                           onClick={() => handleRemoveGithubSource(source)}
                           disabled={syncingSourceId === source.id}
                           className="p-1 text-[#A1A1AA] hover:text-red-500 transition-colors disabled:opacity-50"
-                          title="Remove GitHub source"
+                          title="移除 GitHub 来源"
                         >
                           <X size={16} />
                         </button>
@@ -658,10 +692,10 @@ const ProjectsPage = () => {
                       </div>
                     </div>
                     <span className="text-[13px] text-[#A1A1AA] text-center max-w-[200px] leading-relaxed">
-                      Add PDFs, documents, or other text to reference in this project.
+                      添加 PDF、文档或其他文本文件，让这个项目在后续对话里持续引用。
                     </span>
                     <button
-                      onClick={(e) => { e.stopPropagation(); setShowGithubModal(true); }}
+                      onClick={(e) => { e.stopPropagation(); setEditingGithubSource(null); setShowGithubModal(true); }}
                       className="mt-4 flex items-center gap-2 px-3 py-1.5 text-[12.5px] font-medium text-claude-text border border-claude-border rounded-lg hover:bg-claude-hover transition-colors"
                     >
                       <Github size={14} />
@@ -675,8 +709,16 @@ const ProjectsPage = () => {
 
           <AddFromGithubModal
             isOpen={showGithubModal}
-            onClose={() => setShowGithubModal(false)}
-            onConfirm={handleProjectGithubImport}
+            onClose={handleGithubModalClose}
+            onConfirm={editingGithubSource ? handleProjectGithubUpdate : handleProjectGithubImport}
+            initialPayload={editingGithubSource ? {
+              repoFullName: editingGithubSource.repo_full_name,
+              ref: editingGithubSource.ref,
+              selections: editingGithubSource.selections || [],
+            } : null}
+            title={editingGithubSource ? '配置 GitHub 来源' : '从 GitHub 导入项目文件'}
+            description={editingGithubSource ? '调整这个 GitHub 来源的分支和文件范围，然后重新同步到项目。' : '选择一个 GitHub 仓库，把需要的文件或文件夹导入到当前项目。'}
+            confirmLabel={editingGithubSource ? '保存配置' : '导入到项目'}
           />
         </div>
       </div>

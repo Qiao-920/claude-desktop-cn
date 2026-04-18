@@ -26,7 +26,7 @@ interface GhEntry {
 
 interface TreeEntry {
   path: string;
-  type: string; // 'blob' | 'tree'
+  type: string;
   size: number;
 }
 
@@ -51,13 +51,17 @@ interface Props {
   onConfirm: (payload: GithubAddPayload) => Promise<void> | void;
   currentContextTokens?: number;
   contextLimit?: number;
+  initialPayload?: GithubAddPayload | null;
+  title?: string;
+  description?: string;
+  confirmLabel?: string;
 }
 
 const BLUE = '#4B9EFA';
 const REPOS_CACHE_KEY = 'gh_repos_cache_v1';
 const TREE_CACHE_PREFIX = 'gh_tree_cache_v1:';
-const REPOS_TTL_MS = 60 * 60 * 1000; // 1 hour
-const TREE_TTL_MS = 30 * 60 * 1000;  // 30 min
+const REPOS_TTL_MS = 60 * 60 * 1000;
+const TREE_TTL_MS = 30 * 60 * 1000;
 
 function readCache<T>(key: string, ttl: number): T | null {
   try {
@@ -76,17 +80,35 @@ function writeCache(key: string, data: any) {
   try {
     localStorage.setItem(key, JSON.stringify({ data, timestamp: Date.now() }));
   } catch {
-    // ignore quota errors
+    // Ignore quota errors
   }
 }
 
-const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, currentContextTokens = 0, contextLimit = 200000 }) => {
+function formatSize(n: number): string {
+  if (!n && n !== 0) return '';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const AddFromGithubModal: React.FC<Props> = ({
+  isOpen,
+  onClose,
+  onConfirm,
+  currentContextTokens = 0,
+  contextLimit = 200000,
+  initialPayload = null,
+  title = '从 GitHub 添加内容',
+  description = '选择你想加入当前项目上下文的文件',
+  confirmLabel = '添加到项目',
+}) => {
   const [connected, setConnected] = useState<boolean | null>(null);
   const [connectingPoll, setConnectingPoll] = useState(false);
   const [repos, setRepos] = useState<Repo[]>([]);
   const [reposLoading, setReposLoading] = useState(false);
   const [showRepoDropdown, setShowRepoDropdown] = useState(false);
   const [selectedRepo, setSelectedRepo] = useState<Repo | null>(null);
+  const [selectedRef, setSelectedRef] = useState(initialPayload?.ref?.trim() || 'main');
 
   const [currentPath, setCurrentPath] = useState('');
   const [entries, setEntries] = useState<GhEntry[]>([]);
@@ -104,9 +126,11 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
   const [showUrlInput, setShowUrlInput] = useState(false);
 
   const repoBtnRef = useRef<HTMLButtonElement>(null);
+  const seededInitialPayloadRef = useRef(false);
 
-  const reset = () => {
+  const reset = useCallback(() => {
     setSelectedRepo(null);
+    setSelectedRef(initialPayload?.ref?.trim() || 'main');
     setCurrentPath('');
     setEntries([]);
     setTree(null);
@@ -116,36 +140,42 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
     setUrlInput('');
     setShowUrlInput(false);
     setShowRepoDropdown(false);
-  };
+    seededInitialPayloadRef.current = false;
+  }, [initialPayload]);
 
   useEffect(() => {
     if (!isOpen) return;
+    reset();
     let cancelled = false;
-    getGithubStatus().then(data => {
-      if (cancelled) return;
-      setConnected(!!data?.connected);
-    }).catch(() => {
-      if (!cancelled) setConnected(false);
-    });
-    return () => { cancelled = true; };
-  }, [isOpen]);
+    getGithubStatus()
+      .then(data => {
+        if (!cancelled) setConnected(!!data?.connected);
+      })
+      .catch(() => {
+        if (!cancelled) setConnected(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, reset]);
 
   useEffect(() => {
     if (!connectingPoll) return;
     const timer = setInterval(() => {
-      getGithubStatus().then(data => {
-        if (data?.connected) {
-          setConnected(true);
-          setConnectingPoll(false);
-        }
-      }).catch(() => { });
+      getGithubStatus()
+        .then(data => {
+          if (data?.connected) {
+            setConnected(true);
+            setConnectingPoll(false);
+          }
+        })
+        .catch(() => {});
     }, 2000);
     return () => clearInterval(timer);
   }, [connectingPoll]);
 
   useEffect(() => {
     if (!isOpen || !connected) return;
-    // Show cached repos immediately (stale-while-revalidate)
     const cached = readCache<Repo[]>(REPOS_CACHE_KEY, REPOS_TTL_MS);
     if (cached && Array.isArray(cached) && cached.length > 0) {
       setRepos(cached);
@@ -153,21 +183,23 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
     } else {
       setReposLoading(true);
     }
-    // Refresh in background
-    getGithubRepos(1).then(data => {
-      if (Array.isArray(data)) {
-        setRepos(data);
-        writeCache(REPOS_CACHE_KEY, data);
-      }
-    }).catch(() => { }).finally(() => setReposLoading(false));
+    getGithubRepos(1)
+      .then(data => {
+        if (Array.isArray(data)) {
+          setRepos(data);
+          writeCache(REPOS_CACHE_KEY, data);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setReposLoading(false));
   }, [isOpen, connected]);
 
-  const loadPath = useCallback(async (repo: Repo, path: string) => {
+  const loadPath = useCallback(async (repo: Repo, path: string, ref: string) => {
     setEntriesLoading(true);
     setBrowseError(null);
     try {
       const [owner, repoName] = repo.full_name.split('/');
-      const data = await getGithubContents(owner, repoName, path);
+      const data = await getGithubContents(owner, repoName, path, ref);
       if (Array.isArray(data)) {
         const sorted = [...data].sort((a, b) => {
           if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
@@ -178,15 +210,16 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
         setEntries([]);
       }
     } catch (e: any) {
-      setBrowseError(e?.message || 'Failed to load');
+      setBrowseError(e?.message || '加载 GitHub 内容失败');
       setEntries([]);
     } finally {
       setEntriesLoading(false);
     }
   }, []);
 
-  const loadTree = useCallback(async (repo: Repo) => {
-    const cacheKey = TREE_CACHE_PREFIX + repo.full_name;
+  const loadTree = useCallback(async (repo: Repo, ref: string) => {
+    const refKey = ref || 'default';
+    const cacheKey = `${TREE_CACHE_PREFIX}${repo.full_name}:${refKey}`;
     const cached = readCache<TreeEntry[]>(cacheKey, TREE_TTL_MS);
     if (cached && Array.isArray(cached)) {
       setTree(cached);
@@ -197,7 +230,7 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
     }
     try {
       const [owner, repoName] = repo.full_name.split('/');
-      const data = await getGithubTree(owner, repoName);
+      const data = await getGithubTree(owner, repoName, ref);
       const treeArr = data?.tree || [];
       setTree(treeArr);
       writeCache(cacheKey, treeArr);
@@ -208,19 +241,59 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
     }
   }, []);
 
-  const handleSelectRepo = (repo: Repo) => {
+  const seedFromPayload = useCallback(async (payload: GithubAddPayload) => {
+    const [owner, repoName] = payload.repoFullName.split('/');
+    const repo = repos.find(r => r.full_name === payload.repoFullName) || {
+      id: -1,
+      name: repoName,
+      full_name: payload.repoFullName,
+    };
+    const ref = payload.ref?.trim() || 'main';
     setSelectedRepo(repo);
+    setSelectedRef(ref);
+    setCurrentPath('');
+    setSelected(new Map(
+      payload.selections.map(item => {
+        const key = `${payload.repoFullName}:${item.path}`;
+        return [key, {
+          key,
+          repoFullName: payload.repoFullName,
+          path: item.path,
+          name: item.path.split('/').filter(Boolean).pop() || item.path,
+          size: 0,
+          isFolder: !!item.isFolder,
+        }];
+      })
+    ));
+    await Promise.all([
+      loadPath(repo, '', ref),
+      loadTree(repo, ref),
+    ]);
+  }, [loadPath, loadTree, repos]);
+
+  useEffect(() => {
+    if (!isOpen || !connected || !initialPayload || seededInitialPayloadRef.current) return;
+    seededInitialPayloadRef.current = true;
+    seedFromPayload(initialPayload).catch(() => {
+      seededInitialPayloadRef.current = false;
+    });
+  }, [isOpen, connected, initialPayload, seedFromPayload]);
+
+  const handleSelectRepo = (repo: Repo) => {
+    const nextRef = 'main';
+    setSelectedRepo(repo);
+    setSelectedRef(nextRef);
     setShowRepoDropdown(false);
     setCurrentPath('');
     setSelected(new Map());
-    loadPath(repo, '');
-    loadTree(repo);
+    loadPath(repo, '', nextRef);
+    loadTree(repo, nextRef);
   };
 
   const handleEnterDir = (entry: GhEntry) => {
     if (!selectedRepo) return;
     setCurrentPath(entry.path);
-    loadPath(selectedRepo, entry.path);
+    loadPath(selectedRepo, entry.path, selectedRef.trim() || 'main');
   };
 
   const handleGoUp = () => {
@@ -229,13 +302,12 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
     parts.pop();
     const next = parts.join('/');
     setCurrentPath(next);
-    loadPath(selectedRepo, next);
+    loadPath(selectedRepo, next, selectedRef.trim() || 'main');
   };
 
-  // Compute size of a folder by summing all blob sizes under its path in the tree
   const getFolderSize = useCallback((path: string): number => {
     if (!tree) return 0;
-    const prefix = path ? path + '/' : '';
+    const prefix = path ? `${path}/` : '';
     let total = 0;
     for (const t of tree) {
       if (t.type === 'blob' && (prefix === '' || t.path.startsWith(prefix))) {
@@ -282,20 +354,33 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
   const handleUrlSubmit = async () => {
     const url = urlInput.trim();
     if (!url) return;
-    const m = url.match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?(?:\/(?:tree|blob)\/[^/]+\/(.+))?$/i);
+    const m = url.match(/github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?(?:\/(?:tree|blob)\/([^/]+)(?:\/(.+))?)?$/i);
     if (!m) {
-      setBrowseError('Invalid GitHub URL');
+      setBrowseError('无效的 GitHub 链接');
       return;
     }
-    const [, owner, repoName, innerPath] = m;
+    const [, owner, repoName, refFromUrl, innerPath] = m;
     const fullName = `${owner}/${repoName}`;
+    const nextRef = (refFromUrl || 'main').trim();
     const pseudoRepo: Repo = { id: -1, name: repoName, full_name: fullName };
     setSelectedRepo(pseudoRepo);
+    setSelectedRef(nextRef);
     setShowUrlInput(false);
     setSelected(new Map());
     setCurrentPath(innerPath || '');
-    loadPath(pseudoRepo, innerPath || '');
-    loadTree(pseudoRepo);
+    await Promise.all([
+      loadPath(pseudoRepo, innerPath || '', nextRef),
+      loadTree(pseudoRepo, nextRef),
+    ]);
+  };
+
+  const handleReloadRef = async () => {
+    if (!selectedRepo) return;
+    const nextRef = selectedRef.trim() || 'main';
+    await Promise.all([
+      loadPath(selectedRepo, currentPath, nextRef),
+      loadTree(selectedRepo, nextRef),
+    ]);
   };
 
   const handleConfirm = async () => {
@@ -303,24 +388,24 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
     setConfirming(true);
     setConfirmError(null);
     try {
-      const selections: Array<{ path: string; isFolder: boolean }> = [];
-      for (const item of selected.values()) {
-        selections.push({ path: item.path, isFolder: !!item.isFolder });
-      }
+      const selections = Array.from(selected.values()).map(item => ({
+        path: item.path,
+        isFolder: !!item.isFolder,
+      }));
       if (selections.length === 0) {
         setConfirming(false);
         return;
       }
       await onConfirm({
         repoFullName: selectedRepo.full_name,
-        ref: 'main',
+        ref: selectedRef.trim() || 'main',
         selections,
       });
       reset();
       onClose();
     } catch (e: any) {
-      console.error('[GitHub Add] failed:', e);
-      setConfirmError(e?.message || 'Failed to add files');
+      console.error('[GitHub Modal] failed:', e);
+      setConfirmError(e?.message || 'GitHub 文件处理失败');
     } finally {
       setConfirming(false);
     }
@@ -331,7 +416,6 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
     onClose();
   };
 
-  // Per-row capacity % preview (relative to context limit)
   const getEntryPctLabel = useCallback((entry: GhEntry): string => {
     if (!contextLimit) return '';
     const bytes = entry.type === 'file' ? (entry.size || 0) : getFolderSize(entry.path);
@@ -339,14 +423,13 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
     const tokens = Math.ceil(bytes / 4);
     const pct = (tokens / contextLimit) * 100;
     if (pct < 1) return '<1%';
-    if (pct < 10) return pct.toFixed(1) + '%';
-    return Math.round(pct).toLocaleString() + '%';
+    if (pct < 10) return `${pct.toFixed(1)}%`;
+    return `${Math.round(pct).toLocaleString()}%`;
   }, [contextLimit, getFolderSize]);
 
   if (!isOpen) return null;
 
   const pathParts = currentPath ? currentPath.split('/').filter(Boolean) : [];
-
   const selectedBytes = Array.from(selected.values()).reduce((sum, f) => sum + (f.size || 0), 0);
   const selectedTokens = Math.ceil(selectedBytes / 4);
   const totalTokens = currentContextTokens + selectedTokens;
@@ -368,13 +451,10 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
         className="bg-claude-bg border border-claude-border rounded-2xl shadow-2xl w-[min(720px,92vw)] h-[min(680px,88vh)] flex flex-col font-sans"
         onClick={e => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="flex items-start justify-between px-5 pt-5 pb-3">
           <div>
-            <h2 className="text-[15px] font-semibold text-claude-text">从 GitHub 添加内容</h2>
-            <p className="text-[12px] text-claude-textSecondary mt-0.5">
-              选择你想加入当前对话的文件
-            </p>
+            <h2 className="text-[15px] font-semibold text-claude-text">{title}</h2>
+            <p className="text-[12px] text-claude-textSecondary mt-0.5">{description}</p>
           </div>
           <button
             onClick={handleClose}
@@ -384,7 +464,6 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
           </button>
         </div>
 
-        {/* Repo picker row */}
         <div className="px-5 pb-3 flex items-center gap-2">
           <Github size={18} className="text-claude-text flex-shrink-0" />
           <div className="relative">
@@ -392,7 +471,7 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
               ref={repoBtnRef}
               disabled={!connected}
               onClick={() => setShowRepoDropdown(prev => !prev)}
-              className="flex items-center gap-1.5 px-3 py-1.5 border border-claude-border rounded-lg text-[13px] text-claude-text bg-claude-input hover:bg-claude-hover transition-colors disabled:opacity-50 min-w-[180px]"
+              className="flex items-center gap-1.5 px-3 py-1.5 border border-claude-border rounded-lg text-[13px] text-claude-text bg-claude-input hover:bg-claude-hover transition-colors disabled:opacity-50 min-w-[220px]"
             >
               <span className="truncate">
                 {selectedRepo ? selectedRepo.full_name : '选择仓库'}
@@ -400,7 +479,7 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
               <ChevronDown size={14} className="text-claude-textSecondary ml-auto flex-shrink-0" />
             </button>
             {showRepoDropdown && connected && (
-              <div className="absolute left-0 top-full mt-1 w-[300px] bg-claude-input border border-claude-border rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.16)] py-1 z-10 max-h-[260px] overflow-y-auto">
+              <div className="absolute left-0 top-full mt-1 w-[320px] bg-claude-input border border-claude-border rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.16)] py-1 z-10 max-h-[260px] overflow-y-auto">
                 {reposLoading && (
                   <div className="px-4 py-3 text-[12px] text-claude-textSecondary flex items-center gap-2">
                     <Loader2 size={12} className="animate-spin" /> 正在加载仓库...
@@ -431,6 +510,25 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
           </button>
         </div>
 
+        {connected && selectedRepo && (
+          <div className="px-5 pb-3 flex items-center gap-2">
+            <input
+              type="text"
+              placeholder="分支 / 标签 / 提交，默认 main"
+              value={selectedRef}
+              onChange={e => setSelectedRef(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleReloadRef(); }}
+              className="flex-1 px-3 py-1.5 border border-claude-border rounded-lg text-[13px] bg-claude-input text-claude-text outline-none focus:border-[#CCC] dark:focus:border-[#5a5a58]"
+            />
+            <button
+              onClick={handleReloadRef}
+              className="px-3 py-1.5 bg-black text-white dark:bg-white dark:text-black rounded-lg text-[12px] hover:opacity-90 transition-opacity"
+            >
+              载入
+            </button>
+          </div>
+        )}
+
         {showUrlInput && (
           <div className="px-5 pb-3 flex items-center gap-2">
             <input
@@ -450,7 +548,6 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
           </div>
         )}
 
-        {/* Browser area */}
         <div className="mx-5 mb-3 flex-1 min-h-0 border border-claude-border rounded-xl bg-claude-input overflow-hidden flex flex-col">
           {connected === false && (
             <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center">
@@ -468,7 +565,7 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
           {connected && !selectedRepo && (
             <div className="flex-1 flex items-center justify-center px-6 text-center">
               <p className="text-[13px] text-claude-textSecondary">
-                选择一个仓库，或在上方粘贴 GitHub 链接开始
+                选择一个仓库，或在上方粘贴 GitHub 链接开始。
               </p>
             </div>
           )}
@@ -489,7 +586,8 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
                   <span className="text-claude-text font-medium">{selectedRepo.name}</span>
                   {pathParts.length > 0 && <span> / {pathParts.join(' / ')}</span>}
                 </span>
-                {treeLoading && <Loader2 size={11} className="animate-spin ml-auto" />}
+                <span className="ml-auto text-[11px] whitespace-nowrap">ref: {selectedRef.trim() || 'main'}</span>
+                {treeLoading && <Loader2 size={11} className="animate-spin" />}
               </div>
               <div className="flex-1 overflow-y-auto">
                 {entriesLoading && (
@@ -513,7 +611,7 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
                       className="flex items-center gap-2 px-3 py-1.5 text-[13px] text-claude-text hover:bg-claude-hover transition-colors"
                     >
                       <div
-                        onClick={(e) => { e.stopPropagation(); toggleEntry(entry); }}
+                        onClick={e => { e.stopPropagation(); toggleEntry(entry); }}
                         className={`w-4 h-4 border rounded flex items-center justify-center flex-shrink-0 cursor-pointer ${isSelected ? 'border-transparent' : 'border-claude-border'}`}
                         style={isSelected ? { backgroundColor: BLUE, borderColor: BLUE } : undefined}
                       >
@@ -547,23 +645,17 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
           )}
         </div>
 
-        {/* Footer */}
         <div className="px-5 py-3 border-t border-claude-border">
           <div className="flex items-center justify-between gap-3 mb-2">
             <div className="flex items-center gap-2 text-[12px] text-claude-textSecondary">
               <span>
-                {selected.size === 0
-                  ? '选择要加入对话上下文的文件'
-                  : `已选择 ${selected.size} 项`}
+                {selected.size === 0 ? '选择要加入项目上下文的文件' : `已选择 ${selected.size} 项`}
               </span>
             </div>
             <div className="flex items-center gap-3">
-              <span
-                className="text-[11px] whitespace-nowrap"
-                style={{ color: isOverflow ? '#dc2626' : undefined }}
-              >
+              <span className="text-[11px] whitespace-nowrap" style={{ color: isOverflow ? '#dc2626' : undefined }}>
                 <span className={isOverflow ? '' : 'text-claude-textSecondary'}>
-                  {capacityLabel}% 容量已使用
+                  已使用 {capacityLabel}% 容量
                 </span>
               </span>
               <button
@@ -572,11 +664,10 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
                 className="px-3 py-1.5 bg-black text-white dark:bg-white dark:text-black rounded-lg text-[12px] hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
               >
                 {confirming && <Loader2 size={12} className="animate-spin" />}
-                添加到对话
+                {confirmLabel}
               </button>
             </div>
           </div>
-          {/* Progress bar */}
           <div className="h-[6px] w-full rounded-full bg-transparent border border-claude-border overflow-hidden">
             <div
               className={`h-full transition-all duration-200 ${isOverflow ? 'bg-red-600' : 'bg-black dark:bg-white'}`}
@@ -591,12 +682,5 @@ const AddFromGithubModal: React.FC<Props> = ({ isOpen, onClose, onConfirm, curre
     </div>
   );
 };
-
-function formatSize(n: number): string {
-  if (!n && n !== 0) return '';
-  if (n < 1024) return n + ' B';
-  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
-  return (n / (1024 * 1024)).toFixed(1) + ' MB';
-}
 
 export default AddFromGithubModal;

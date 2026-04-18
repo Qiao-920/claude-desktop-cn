@@ -531,6 +531,21 @@ export async function syncProjectGithubSource(
   return res.json();
 }
 
+export async function updateProjectGithubSource(
+  projectId: string,
+  sourceId: string,
+  payload: {
+    ref: string;
+    selections: Array<{ path: string; isFolder: boolean }>;
+  }
+): Promise<{ ok: boolean; source: ProjectGithubSource; fileCount: number }> {
+  const res = await request(`/projects/${projectId}/github/sources/${sourceId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
 export async function removeProjectGithubSource(projectId: string, sourceId: string) {
   const res = await request(`/projects/${projectId}/github/sources/${sourceId}`, {
     method: 'DELETE',

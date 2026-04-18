@@ -3105,6 +3105,73 @@ You have the following skills available. When a user's request matches a skill's
         }
     });
 
+    server.patch('/api/projects/:id/github/sources/:sourceId', async (req, res) => {
+        const token = loadGithubToken();
+        if (!token?.access_token) return res.status(401).json({ error: 'Not connected' });
+        const project = db.projects.find(p => p.id === req.params.id);
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+        if (!Array.isArray(project.github_sources)) project.github_sources = [];
+
+        const source = project.github_sources.find(s => s.id === req.params.sourceId);
+        if (!source) return res.status(404).json({ error: 'GitHub source not found' });
+
+        const { ref, selections } = req.body || {};
+        if (!Array.isArray(selections) || selections.length === 0) {
+            return res.status(400).json({ error: 'Missing selections' });
+        }
+
+        try {
+            removeProjectGithubSourceData(project, source);
+            const [owner, repoName] = String(source.repo_full_name).split('/');
+            const targetRoot = path.join(project.workspace_path, 'files', 'github', owner, repoName);
+            if (fs.existsSync(targetRoot)) {
+                try { fs.rmSync(targetRoot, { recursive: true, force: true }); } catch (_) {}
+            }
+
+            const result = await materializeGithubSelection({
+                repoFullName: source.repo_full_name,
+                ref: ref || source.ref,
+                selections,
+                targetRoot,
+                accessToken: token.access_token,
+            });
+
+            const updatedSource = {
+                ...source,
+                ref: result.refToUse,
+                root_dir: path.join('github', owner, repoName).replace(/\\/g, '/'),
+                file_count: result.materialized.length,
+                selections,
+                last_synced_at: new Date().toISOString(),
+            };
+
+            for (const file of result.materialized) {
+                db.project_files.push({
+                    id: uuidv4(),
+                    project_id: project.id,
+                    file_name: path.join('github', owner, repoName, file.path).replace(/\\/g, '/'),
+                    file_path: file.outPath,
+                    file_size: file.size || 0,
+                    mime_type: guessMimeType(file.path),
+                    source_type: 'github',
+                    github_source_id: updatedSource.id,
+                    github_repo: updatedSource.repo_full_name,
+                    github_path: file.path,
+                    created_at: new Date().toISOString(),
+                });
+            }
+
+            project.github_sources.push(updatedSource);
+            project.updated_at = new Date().toISOString();
+            saveDb();
+
+            res.json({ ok: true, source: updatedSource, fileCount: result.materialized.length });
+        } catch (e) {
+            console.error('[Project GitHub Update] error:', e);
+            res.status(500).json({ error: (e && e.message) || String(e) });
+        }
+    });
+
     server.delete('/api/projects/:id/github/sources/:sourceId', (req, res) => {
         const project = db.projects.find(p => p.id === req.params.id);
         if (!project) return res.status(404).json({ error: 'Project not found' });
