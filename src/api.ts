@@ -1,3 +1,5 @@
+import { getEffectiveChatStyle } from './utils/chatStyles';
+
 const API_BASE = 'http://127.0.0.1:30080/api';
 const GATEWAY_BASE = 'https://api-cn.jiazhuang.cloud';
 const CHENGDU_API = 'https://clawparrot.com/api';
@@ -726,7 +728,16 @@ export function warmEngine(conversationId: string): void {
   try {
     const p = JSON.parse(localStorage.getItem('user_profile') || localStorage.getItem('user') || '{}');
     const wf = p.work_function; const pp = p.personal_preferences;
-    userProfile = (wf || pp) ? { work_function: wf, personal_preferences: pp } : undefined;
+    const responseStyle = getEffectiveChatStyle(conversationId);
+    userProfile = (wf || pp || responseStyle) ? {
+      work_function: wf,
+      personal_preferences: pp,
+      response_style: responseStyle ? {
+        id: responseStyle.id,
+        name: responseStyle.name,
+        instructions: responseStyle.instructions,
+      } : undefined,
+    } : undefined;
   } catch { userProfile = undefined; }
   // Fire-and-forget — don't block UI
   request(`/conversations/${conversationId}/warm`, {
@@ -1134,7 +1145,16 @@ export async function sendMessage(
             const p = JSON.parse(localStorage.getItem('user_profile') || localStorage.getItem('user') || '{}');
             const wf = p.work_function;
             const pp = p.personal_preferences;
-            return (wf || pp) ? { work_function: wf, personal_preferences: pp } : undefined;
+            const responseStyle = getEffectiveChatStyle(conversationId);
+            return (wf || pp || responseStyle) ? {
+              work_function: wf,
+              personal_preferences: pp,
+              response_style: responseStyle ? {
+                id: responseStyle.id,
+                name: responseStyle.name,
+                instructions: responseStyle.instructions,
+              } : undefined,
+            } : undefined;
           } catch { return undefined; }
         })(),
       }),

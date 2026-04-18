@@ -3534,6 +3534,10 @@ You have the following skills available. When a user's request matches a skill's
             if (user_profile.work_function) parts.push('Occupation: ' + user_profile.work_function);
             if (user_profile.personal_preferences) parts.push('User preferences: ' + user_profile.personal_preferences);
             if (parts.length > 0) sysPrompt += '\n\n<user_profile>\n' + parts.join('\n') + '\n</user_profile>';
+            if (user_profile.response_style && user_profile.response_style.instructions) {
+                const styleName = user_profile.response_style.name || user_profile.response_style.id || 'Custom';
+                sysPrompt += '\n\n<response_style>\nSelected style: ' + styleName + '\nInstructions: ' + user_profile.response_style.instructions + '\n</response_style>';
+            }
         }
         if (conv.project_id) {
             const project = db.projects.find(p => p.id === conv.project_id);
@@ -3809,7 +3813,24 @@ You have the following skills available. When a user's request matches a skill's
         const child = spawn(bunExePath, cliArgs, { cwd: conv.workspace_path, env: envVars, stdio: ['pipe', 'pipe', 'pipe'] });
         let resolveReady;
         const readyPromise = new Promise((resolve) => { resolveReady = resolve; });
-        const engine = { child, convId, modelId, apiKey, baseUrl, apiFormat, lastUsed: Date.now(), sessionId: conv.claude_session_id, state: 'idle', buf: '', turn: null, needsRestart: false, ready: false, readyPromise, resolveReady };
+        const engine = {
+            child,
+            convId,
+            modelId,
+            apiKey,
+            baseUrl,
+            apiFormat,
+            userProfileKey: config.userProfileKey || '',
+            lastUsed: Date.now(),
+            sessionId: conv.claude_session_id,
+            state: 'idle',
+            buf: '',
+            turn: null,
+            needsRestart: false,
+            ready: false,
+            readyPromise,
+            resolveReady,
+        };
         activeChildren.set(convId, child);
 
         const handleEngineStdoutLine = (line) => {
@@ -3891,7 +3912,7 @@ You have the following skills available. When a user's request matches a skill's
         const config = resolveChatConfig(conv, user_mode, env_token, env_base_url);
         const sysPrompt = buildChatSystemPrompt(conv, user_mode, user_profile);
         console.log('[EnginePool] Pre-warming engine for', convId, 'model=' + config.modelId);
-        spawnPersistentEngine(convId, conv, { ...config, sysPrompt });
+        spawnPersistentEngine(convId, conv, { ...config, sysPrompt, userProfileKey: JSON.stringify(user_profile || {}) });
         res.json({ ok: true });
     });
 
@@ -4100,7 +4121,9 @@ You have the following skills available. When a user's request matches a skill's
             const apiKeyChanged = !!engine && engine.apiKey !== config.apiKey;
             const baseUrlChanged = !!engine && engine.baseUrl !== config.baseUrl;
             const apiFormatChanged = !!engine && engine.apiFormat !== config.apiFormat;
-            if (engine && (!isEngineAlive(engine) || engine.modelId !== config.modelId || engine.needsRestart || apiKeyChanged || baseUrlChanged || apiFormatChanged)) {
+            const userProfileKey = JSON.stringify(user_profile || {});
+            const userProfileChanged = !!engine && engine.userProfileKey !== userProfileKey;
+            if (engine && (!isEngineAlive(engine) || engine.modelId !== config.modelId || engine.needsRestart || apiKeyChanged || baseUrlChanged || apiFormatChanged || userProfileChanged)) {
                 killEngine(conversation_id, 'chat_existing_engine_invalid_or_stale', {
                     isAlive: !!isEngineAlive(engine),
                     currentModel: engine && engine.modelId,
@@ -4109,12 +4132,13 @@ You have the following skills available. When a user's request matches a skill's
                     apiKeyChanged,
                     baseUrlChanged,
                     apiFormatChanged,
+                    userProfileChanged,
                 });
                 engine = null;
             }
             if (!engine) {
                 const sysPrompt = buildChatSystemPrompt(conv, user_mode, user_profile);
-                engine = spawnPersistentEngine(conversation_id, conv, { ...config, sysPrompt });
+                engine = spawnPersistentEngine(conversation_id, conv, { ...config, sysPrompt, userProfileKey });
             }
             if (!isEngineAlive(engine)) throw new Error('Engine failed to start');
             if (engine.state === 'processing') {

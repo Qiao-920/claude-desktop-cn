@@ -18,6 +18,8 @@ import DocumentCreationProcess, { DocumentDraftInfo } from './DocumentCreationPr
 import CodeExecution from './CodeExecution';
 import ToolDiffView, { shouldUseDiffView, hasExpandableContent, getToolStats } from './ToolDiffView';
 import { executeCode, sendCodeResult, setStatusCallback } from '../pyodideRunner';
+import { UiLanguage, useClientLanguageText } from '../utils/chineseClientText';
+import { CHAT_STYLES_EVENT, ChatStyle, clearConversationChatStyleId, getAllChatStyles, getChatStyleDescription, getChatStyleLabel, getDefaultChatStyleId, getEffectiveChatStyle, setConversationChatStyleId } from '../utils/chatStyles';
 
 function formatChatError(err: string): string {
   const lower = (err || '').toLowerCase();
@@ -62,6 +64,101 @@ const SkillInputOverlay: React.FC<{ text: string; className?: string; style?: Re
     <div className={className} style={{ ...style, pointerEvents: 'none', position: 'absolute', top: 0, left: 0, right: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }} aria-hidden>
       <span className="text-[#4B9EFA]">{match[1]}</span>
       <span className="text-claude-text">{match[2] || ''}</span>
+    </div>
+  );
+};
+
+const ChatStyleSelector: React.FC<{
+  language: UiLanguage;
+  styles: ChatStyle[];
+  selectedStyleId: string;
+  defaultStyleId: string;
+  onSelect: (styleId: string | null) => void;
+}> = ({ language, styles, selectedStyleId, defaultStyleId, onSelect }) => {
+  const [open, setOpen] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const selectedStyle = styles.find((style) => style.id === selectedStyleId) || styles[0];
+  const defaultStyle = styles.find((style) => style.id === defaultStyleId) || styles[0];
+  const copy = language === 'zh-CN'
+    ? {
+        label: '风格',
+        followDefault: `跟随默认 · ${defaultStyle ? getChatStyleLabel(defaultStyle, language) : '平衡'}`,
+        defaultBadge: '默认',
+      }
+    : {
+        label: 'Style',
+        followDefault: `Follow default · ${defaultStyle ? getChatStyleLabel(defaultStyle, language) : 'Balanced'}`,
+        defaultBadge: 'Default',
+      };
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (menuRef.current?.contains(target) || buttonRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [open]);
+
+  if (!selectedStyle) return null;
+
+  return (
+    <div className="relative">
+      <button
+        ref={buttonRef}
+        onClick={() => setOpen((prev) => !prev)}
+        className="flex items-center gap-2 px-3 py-2 rounded-lg border border-claude-border bg-claude-input text-claude-text hover:bg-claude-hover transition-colors"
+        title={getChatStyleDescription(selectedStyle, language)}
+      >
+        <span className="text-[12px] text-claude-textSecondary">{copy.label}</span>
+        <span className="text-[13px] font-medium">{getChatStyleLabel(selectedStyle, language)}</span>
+        <ChevronDown size={14} className={`text-claude-textSecondary transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div
+          ref={menuRef}
+          className="absolute bottom-full right-0 mb-2 w-[280px] rounded-xl border border-claude-border bg-claude-input shadow-[0_8px_24px_rgba(0,0,0,0.18)] py-1.5 z-50"
+        >
+          <button
+            onClick={() => { onSelect(null); setOpen(false); }}
+            className="w-full text-left px-4 py-2.5 hover:bg-claude-hover transition-colors"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[13px] font-medium text-claude-text">{copy.followDefault}</div>
+              </div>
+              {selectedStyleId === defaultStyleId && <Check size={14} className="text-[#2E7CF6]" />}
+            </div>
+          </button>
+          <div className="my-1 border-t border-claude-border" />
+          {styles.map((style) => (
+            <button
+              key={style.id}
+              onClick={() => { onSelect(style.id); setOpen(false); }}
+              className="w-full text-left px-4 py-2.5 hover:bg-claude-hover transition-colors"
+              title={getChatStyleDescription(style, language)}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <div className="text-[13px] font-medium text-claude-text">{getChatStyleLabel(style, language)}</div>
+                    {style.id === defaultStyleId && (
+                      <span className="text-[10px] text-[#2E7CF6] bg-[#2E7CF6]/10 px-1.5 py-0.5 rounded-full">{copy.defaultBadge}</span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-claude-textSecondary mt-1 leading-relaxed">
+                    {getChatStyleDescription(style, language)}
+                  </div>
+                </div>
+                {selectedStyleId === style.id && <Check size={14} className="text-[#2E7CF6] mt-0.5 shrink-0" />}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
@@ -1036,6 +1133,7 @@ const MessageList = React.memo<MessageListProps>(({
 });
 
 const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtifactsUpdate, onOpenArtifacts, onTitleChange, onChatModeChange }: MainContentProps) => {
+  const uiLanguage = useClientLanguageText();
   const { id } = useParams(); // Get conversation ID from URL
   const location = useLocation();
   const [localId, setLocalId] = useState<string | null>(null);
@@ -1275,6 +1373,9 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [showPlusMenu, setShowPlusMenu] = useState(false);
+  const [availableChatStyles, setAvailableChatStyles] = useState<ChatStyle[]>(() => getAllChatStyles());
+  const [defaultChatStyleId, setDefaultChatStyle] = useState(() => getDefaultChatStyleId());
+  const [selectedChatStyleId, setSelectedChatStyleId] = useState(() => getEffectiveChatStyle(null).id);
   const [researchMode, setResearchMode] = useState(false);
   const [openedResearchMsgId, setOpenedResearchMsgId] = useState<string | null>(null);
   const toggleResearchMode = useCallback(async () => {
@@ -1444,6 +1545,38 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
   }, [showPlusMenu]);
+
+  useEffect(() => {
+    const syncChatStyles = () => {
+      setAvailableChatStyles(getAllChatStyles());
+      setDefaultChatStyle(getDefaultChatStyleId());
+      setSelectedChatStyleId(getEffectiveChatStyle(activeId).id);
+    };
+
+    syncChatStyles();
+    window.addEventListener(CHAT_STYLES_EVENT, syncChatStyles as EventListener);
+    return () => window.removeEventListener(CHAT_STYLES_EVENT, syncChatStyles as EventListener);
+  }, [activeId]);
+
+  useEffect(() => {
+    setSelectedChatStyleId(getEffectiveChatStyle(activeId).id);
+    setDefaultChatStyle(getDefaultChatStyleId());
+  }, [activeId, resetKey]);
+
+  const handleChatStyleSelect = useCallback((styleId: string | null) => {
+    if (activeId) {
+      if (!styleId || styleId === getDefaultChatStyleId()) {
+        clearConversationChatStyleId(activeId);
+        setSelectedChatStyleId(getDefaultChatStyleId());
+        return;
+      }
+      setConversationChatStyleId(activeId, styleId);
+      setSelectedChatStyleId(styleId);
+      return;
+    }
+
+    setSelectedChatStyleId(styleId || getDefaultChatStyleId());
+  }, [activeId]);
 
   // Reset when resetKey changes (New Chat clicked)
   useEffect(() => {
@@ -2297,6 +2430,12 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
             console.error('Failed to attach new conversation to project', e);
           }
           setPendingProjectId(null);
+        }
+        const currentDefaultStyleId = getDefaultChatStyleId();
+        if (selectedChatStyleId && selectedChatStyleId !== currentDefaultStyleId) {
+          setConversationChatStyleId(conversationId!, selectedChatStyleId);
+        } else {
+          clearConversationChatStyleId(conversationId!);
         }
         warmEngine(conversationId); // Pre-warm engine while user waits
 
@@ -3720,6 +3859,13 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                   )}
                 </div>
                 <div className="flex items-center gap-3">
+                  <ChatStyleSelector
+                    language={uiLanguage}
+                    styles={availableChatStyles}
+                    selectedStyleId={selectedChatStyleId}
+                    defaultStyleId={defaultChatStyleId}
+                    onSelect={handleChatStyleSelect}
+                  />
                   <ModelSelector
                     currentModelString={currentModelString}
                     models={selectorModels}
@@ -4102,6 +4248,13 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                     })()}
                   </div>
                   <div className="flex items-center gap-3">
+                    <ChatStyleSelector
+                      language={uiLanguage}
+                      styles={availableChatStyles}
+                      selectedStyleId={selectedChatStyleId}
+                      defaultStyleId={defaultChatStyleId}
+                      onSelect={handleChatStyleSelect}
+                    />
                     <ModelSelector
                       currentModelString={currentModelString}
                       models={selectorModels}

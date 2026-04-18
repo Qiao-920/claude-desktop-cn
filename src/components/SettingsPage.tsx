@@ -3,6 +3,7 @@ import { ChevronRight, Smartphone, MonitorIcon, LogOut, MoreHorizontal, Check, X
 import { getUserProfile, updateUserProfile, getUserUsage, getGatewayUsage, getSessions, deleteSession, logoutOtherSessions, changePassword, deleteAccount, logout, getProviderModels } from '../api';
 import ProviderSettings from './ProviderSettings';
 import { UiLanguage, getStoredUiLanguage, setStoredUiLanguage } from '../utils/chineseClientText';
+import { ChatStyle, createCustomChatStyle, getAllChatStyles, getChatStyleDescription, getChatStyleLabel, getDefaultChatStyleId, saveCustomChatStyles, setDefaultChatStyleId } from '../utils/chatStyles';
 
 interface SettingsPageProps {
   onClose: () => void;
@@ -48,8 +49,16 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const [sendKey, setSendKey] = useState(localStorage.getItem('sendKey') || 'enter'); // enter or ctrl+enter
   const [newlineKey, setNewlineKey] = useState(localStorage.getItem('newlineKey') || (localStorage.getItem('sendKey') === 'enter' ? 'shift_enter' : 'enter'));
   const [uiLanguage, setUiLanguage] = useState<UiLanguage>(getStoredUiLanguage());
+  const [chatStyles, setChatStyles] = useState<ChatStyle[]>(() => getAllChatStyles());
+  const [defaultChatStyle, setDefaultChatStyle] = useState(() => getDefaultChatStyleId());
+  const [newStyleName, setNewStyleName] = useState('');
+  const [newStyleDescription, setNewStyleDescription] = useState('');
+  const [newStyleInstructions, setNewStyleInstructions] = useState('');
+  const [styleError, setStyleError] = useState('');
 
   const isSelfHosted = localStorage.getItem('user_mode') === 'selfhosted';
+  const presetChatStyles = chatStyles.filter((style) => style.kind === 'preset');
+  const customChatStyles = chatStyles.filter((style) => style.kind === 'custom');
 
   useEffect(() => {
     // Load profile: self-hosted uses localStorage, Clawparrot uses backend
@@ -161,6 +170,43 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const applyLanguage = (language: UiLanguage) => {
     setUiLanguage(language);
     setStoredUiLanguage(language);
+  };
+
+  const applyDefaultChatStyle = (styleId: string) => {
+    setDefaultChatStyle(styleId);
+    setDefaultChatStyleId(styleId);
+  };
+
+  const handleCreateStyle = () => {
+    const name = newStyleName.trim();
+    const instructions = newStyleInstructions.trim();
+    if (!name || !instructions) {
+      setStyleError(uiLanguage === 'zh-CN' ? '名称和风格说明都要填写。' : 'Please fill in both the style name and the instructions.');
+      return;
+    }
+    const nextStyle = createCustomChatStyle({
+      name,
+      description: newStyleDescription,
+      instructions,
+    });
+    const nextStyles = [...chatStyles, nextStyle];
+    setChatStyles(nextStyles);
+    saveCustomChatStyles(nextStyles);
+    setNewStyleName('');
+    setNewStyleDescription('');
+    setNewStyleInstructions('');
+    setStyleError('');
+  };
+
+  const handleDeleteStyle = (styleId: string) => {
+    const nextStyles = chatStyles.filter((style) => style.id !== styleId);
+    setChatStyles(nextStyles);
+    saveCustomChatStyles(nextStyles);
+    if (defaultChatStyle === styleId) {
+      const fallbackId = nextStyles[0]?.id || 'balanced';
+      setDefaultChatStyle(fallbackId);
+      setDefaultChatStyleId(fallbackId);
+    }
   };
 
   const HARDCODED_MODELS = [
@@ -512,6 +558,40 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   }
 
   function renderGeneral() {
+    const stylesCopy = uiLanguage === 'zh-CN'
+      ? {
+          title: '回答风格',
+          subtitle: '给新对话设一个默认的回答风格，也可以保存你自己的风格模板。',
+          defaultLabel: '默认风格',
+          customTitle: '自定义风格',
+          customEmpty: '还没有自定义风格，下面新建一个就行。',
+          createTitle: '新建风格',
+          name: '风格名称',
+          namePlaceholder: '例如：技术负责人 / 审稿模式',
+          description: '简短说明',
+          descriptionPlaceholder: '这套风格适合什么场景',
+          instructions: '风格说明',
+          instructionsPlaceholder: '例如：先给结论，再列风险和建议；默认用中文，术语保留英文。',
+          save: '保存风格',
+          delete: '删除',
+        }
+      : {
+          title: 'Response style',
+          subtitle: 'Choose the default response style for new chats, and save your own style presets.',
+          defaultLabel: 'Default style',
+          customTitle: 'Custom styles',
+          customEmpty: 'No custom styles yet. Create your first one below.',
+          createTitle: 'Create a style',
+          name: 'Style name',
+          namePlaceholder: 'For example: Tech Lead / Reviewer mode',
+          description: 'Short description',
+          descriptionPlaceholder: 'What this style is best for',
+          instructions: 'Instructions',
+          instructionsPlaceholder: 'For example: lead with the conclusion, then risks and suggestions; default to Chinese, keep technical terms in English.',
+          save: 'Save style',
+          delete: 'Delete',
+        };
+
     return (
       <div className="space-y-10 animate-fade-in">
         {/* Profile Section */}
@@ -580,6 +660,156 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
               />
             </div>
 
+          </div>
+        </section>
+
+        <hr className="border-claude-border" />
+
+        <section>
+          <div className="flex items-start justify-between gap-6 mb-5">
+            <div>
+              <h3 className="text-[16px] font-semibold text-claude-text">{stylesCopy.title}</h3>
+              <p className="text-[12px] text-claude-textSecondary/70 mt-1">{stylesCopy.subtitle}</p>
+            </div>
+            <div className="min-w-[220px]">
+              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">{stylesCopy.defaultLabel}</label>
+              <div className="relative">
+                <select
+                  value={defaultChatStyle}
+                  onChange={(e) => applyDefaultChatStyle(e.target.value)}
+                  className="w-full px-3 py-2 bg-claude-input border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0] focus:ring-0 appearance-none transition-all"
+                >
+                  {chatStyles.map((style) => (
+                    <option key={style.id} value={style.id}>
+                      {getChatStyleLabel(style, uiLanguage)}
+                    </option>
+                  ))}
+                </select>
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-claude-textSecondary">
+                  <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            {presetChatStyles.map((style) => {
+              const active = defaultChatStyle === style.id;
+              return (
+                <button
+                  key={style.id}
+                  onClick={() => applyDefaultChatStyle(style.id)}
+                  className={`text-left rounded-xl border px-4 py-3 transition-all ${
+                    active
+                      ? 'border-[#3b82f6]/80 bg-blue-500/5 shadow-sm'
+                      : 'border-claude-border bg-claude-input hover:border-claude-textSecondary/30'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-[14px] font-medium text-claude-text">{getChatStyleLabel(style, uiLanguage)}</div>
+                    {active && <Check size={14} className="text-[#3b82f6]" />}
+                  </div>
+                  <p className="text-[12px] text-claude-textSecondary mt-1.5 leading-relaxed">
+                    {getChatStyleDescription(style, uiLanguage)}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mt-6">
+            <h4 className="text-[14px] font-semibold text-claude-text mb-3">{stylesCopy.customTitle}</h4>
+            {customChatStyles.length > 0 ? (
+              <div className="space-y-3">
+                {customChatStyles.map((style) => (
+                  <div key={style.id} className="rounded-xl border border-claude-border bg-claude-input px-4 py-3">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <div className="text-[14px] font-medium text-claude-text">{style.name}</div>
+                          {defaultChatStyle === style.id && (
+                            <span className="text-[11px] text-[#3b82f6] bg-blue-500/10 px-2 py-0.5 rounded-full">
+                              {stylesCopy.defaultLabel}
+                            </span>
+                          )}
+                        </div>
+                        {style.description && (
+                          <p className="text-[12px] text-claude-textSecondary mt-1">{style.description}</p>
+                        )}
+                        <p className="text-[12px] text-claude-textSecondary/80 mt-2 leading-relaxed whitespace-pre-wrap">
+                          {style.instructions}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => applyDefaultChatStyle(style.id)}
+                          className="px-3 py-1.5 text-[12px] rounded-lg border border-claude-border text-claude-text hover:bg-claude-hover transition-colors"
+                        >
+                          {stylesCopy.defaultLabel}
+                        </button>
+                        <button
+                          onClick={() => handleDeleteStyle(style.id)}
+                          className="px-3 py-1.5 text-[12px] rounded-lg border border-red-500/20 text-red-500 hover:bg-red-500/5 transition-colors"
+                        >
+                          {stylesCopy.delete}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-[12px] text-claude-textSecondary/70 rounded-xl border border-dashed border-claude-border px-4 py-3">
+                {stylesCopy.customEmpty}
+              </div>
+            )}
+          </div>
+
+          <div className="mt-6 rounded-2xl border border-claude-border bg-claude-input px-5 py-5 space-y-4">
+            <h4 className="text-[14px] font-semibold text-claude-text">{stylesCopy.createTitle}</h4>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">{stylesCopy.name}</label>
+                <input
+                  type="text"
+                  value={newStyleName}
+                  onChange={(e) => { setNewStyleName(e.target.value); setStyleError(''); }}
+                  className="w-full px-3 py-2 bg-claude-bg border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0]"
+                  placeholder={stylesCopy.namePlaceholder}
+                />
+              </div>
+              <div>
+                <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">{stylesCopy.description}</label>
+                <input
+                  type="text"
+                  value={newStyleDescription}
+                  onChange={(e) => setNewStyleDescription(e.target.value)}
+                  className="w-full px-3 py-2 bg-claude-bg border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0]"
+                  placeholder={stylesCopy.descriptionPlaceholder}
+                />
+              </div>
+            </div>
+            <div>
+              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">{stylesCopy.instructions}</label>
+              <textarea
+                value={newStyleInstructions}
+                onChange={(e) => { setNewStyleInstructions(e.target.value); setStyleError(''); }}
+                rows={4}
+                className="w-full px-3 py-2.5 bg-claude-bg border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0] resize-none"
+                placeholder={stylesCopy.instructionsPlaceholder}
+              />
+            </div>
+            {styleError && <div className="text-[12px] text-red-500">{styleError}</div>}
+            <div className="flex justify-end">
+              <button
+                onClick={handleCreateStyle}
+                className="px-4 py-2 text-[13px] font-medium rounded-lg bg-claude-text text-claude-bg hover:opacity-90 transition-opacity"
+              >
+                {stylesCopy.save}
+              </button>
+            </div>
           </div>
         </section>
 
