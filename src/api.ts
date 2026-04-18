@@ -412,6 +412,7 @@ export interface Project {
   is_archived: number;
   file_count?: number;
   chat_count?: number;
+  github_sources?: ProjectGithubSource[];
   created_at: string;
   updated_at: string;
 }
@@ -423,7 +424,22 @@ export interface ProjectFile {
   file_path: string;
   file_size: number;
   mime_type: string;
+  source_type?: 'upload' | 'github';
+  github_source_id?: string;
+  github_repo?: string;
+  github_path?: string;
   created_at: string;
+}
+
+export interface ProjectGithubSource {
+  id: string;
+  repo_full_name: string;
+  ref: string;
+  root_dir: string;
+  file_count: number;
+  selections: Array<{ path: string; isFolder: boolean }>;
+  added_at: string;
+  last_synced_at: string;
 }
 
 export async function getProjects(): Promise<Project[]> {
@@ -484,6 +500,38 @@ export async function createProjectConversation(projectId: string, title?: strin
   const res = await request(`/projects/${projectId}/conversations`, {
     method: 'POST',
     body: JSON.stringify({ title, model }),
+  });
+  return res.json();
+}
+
+export async function importProjectGithub(
+  projectId: string,
+  payload: {
+    repoFullName: string;
+    ref: string;
+    selections: Array<{ path: string; isFolder: boolean }>;
+  }
+): Promise<{ ok: boolean; source: ProjectGithubSource; fileCount: number; replaced: boolean }> {
+  const res = await request(`/projects/${projectId}/github/import`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+export async function syncProjectGithubSource(
+  projectId: string,
+  sourceId: string
+): Promise<{ ok: boolean; source: ProjectGithubSource; fileCount: number }> {
+  const res = await request(`/projects/${projectId}/github/sources/${sourceId}/sync`, {
+    method: 'POST',
+  });
+  return res.json();
+}
+
+export async function removeProjectGithubSource(projectId: string, sourceId: string) {
+  const res = await request(`/projects/${projectId}/github/sources/${sourceId}`, {
+    method: 'DELETE',
   });
   return res.json();
 }

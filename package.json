@@ -4,8 +4,12 @@
   "version": "1.6.12",
   "description": "Claude Desktop - AI assistant with native capabilities",
   "author": {
-    "name": "pretend1111",
-    "email": "pretend1111@users.noreply.github.com"
+    "name": "Qiao-920",
+    "email": "Qiao-920@users.noreply.github.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Qiao-920/claude-desktop-cn.git"
   },
   "type": "module",
   "main": "electron/main.cjs",
@@ -76,8 +80,8 @@
     ],
     "publish": {
       "provider": "github",
-      "owner": "pretend1111",
-      "repo": "claude-desktop-app"
+      "owner": "Qiao-920",
+      "repo": "claude-desktop-cn"
     },
     "win": {
       "artifactName": "Claude-Desktop-CN-Setup-${version}.${ext}",

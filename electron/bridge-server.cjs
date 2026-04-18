@@ -237,6 +237,9 @@ function initServer(mainWindow) {
             // Ensure new arrays exist for older DB files
             if (!db.projects) db.projects = [];
             if (!db.project_files) db.project_files = [];
+            for (const project of db.projects) {
+                if (!Array.isArray(project.github_sources)) project.github_sources = [];
+            }
         } catch (e) { }
     }
     const saveDb = () => fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
@@ -1159,6 +1162,7 @@ function initServer(mainWindow) {
         const project = {
             id, name: name.trim(), description: description.trim(),
             instructions: '', workspace_path: projectDir,
+            github_sources: [],
             is_archived: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
         };
         db.projects.push(project);
@@ -1175,7 +1179,8 @@ function initServer(mainWindow) {
         const conversations = db.conversations.filter(c => c.project_id === project.id)
             .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-        res.json({ ...project, files, conversations });
+        if (!Array.isArray(project.github_sources)) project.github_sources = [];
+        res.json({ ...project, github_sources: project.github_sources, files, conversations });
     });
 
     server.patch('/api/projects/:id', (req, res) => {
@@ -1186,6 +1191,7 @@ function initServer(mainWindow) {
         if (req.body.description !== undefined) project.description = req.body.description;
         if (req.body.instructions !== undefined) project.instructions = req.body.instructions;
         if (req.body.is_archived !== undefined) project.is_archived = req.body.is_archived;
+        if (!Array.isArray(project.github_sources)) project.github_sources = [];
         project.updated_at = new Date().toISOString();
 
         saveDb();
@@ -1253,6 +1259,7 @@ function initServer(mainWindow) {
             file_path: req.file.path,
             file_size: req.file.size,
             mime_type: req.file.mimetype,
+            source_type: 'upload',
             extracted_text: extractedText,
             created_at: new Date().toISOString(),
         };
@@ -1297,7 +1304,11 @@ function initServer(mainWindow) {
         const projectFiles = db.project_files.filter(f => f.project_id === project.id);
         for (const pf of projectFiles) {
             if (pf.file_path && fs.existsSync(pf.file_path)) {
-                try { fs.copyFileSync(pf.file_path, path.join(workspacePath, pf.file_name)); } catch (_) {}
+                try {
+                    const destPath = path.join(workspacePath, pf.file_name);
+                    fs.mkdirSync(path.dirname(destPath), { recursive: true });
+                    fs.copyFileSync(pf.file_path, destPath);
+                } catch (_) {}
             }
         }
 
@@ -1411,9 +1422,13 @@ function initServer(mainWindow) {
                 const projectFiles = db.project_files.filter(f => f.project_id === project_id);
                 for (const pf of projectFiles) {
                     if (pf.file_path && fs.existsSync(pf.file_path)) {
-                        try { fs.copyFileSync(pf.file_path, path.join(workspacePath, pf.file_name)); } catch (_) {}
-                    }
-                }
+                try {
+                    const destPath = path.join(workspacePath, pf.file_name);
+                    fs.mkdirSync(path.dirname(destPath), { recursive: true });
+                    fs.copyFileSync(pf.file_path, destPath);
+                } catch (_) {}
+            }
+        }
             }
         }
 
@@ -2818,6 +2833,298 @@ You have the following skills available. When a user's request matches a skill's
             req.end();
         });
     }
+
+    function guessMimeType(filePath) {
+        const ext = path.extname(filePath).toLowerCase();
+        const map = {
+            '.md': 'text/markdown',
+            '.txt': 'text/plain',
+            '.json': 'application/json',
+            '.js': 'text/javascript',
+            '.ts': 'text/typescript',
+            '.tsx': 'text/typescript',
+            '.jsx': 'text/javascript',
+            '.py': 'text/x-python',
+            '.css': 'text/css',
+            '.html': 'text/html',
+            '.xml': 'application/xml',
+            '.yml': 'text/yaml',
+            '.yaml': 'text/yaml',
+            '.csv': 'text/csv',
+            '.sh': 'text/x-shellscript',
+        };
+        return map[ext] || 'application/octet-stream';
+    }
+
+    async function resolveGithubSelectionPlan(repoFullName, ref, accessToken) {
+        const [owner, repoName] = String(repoFullName || '').split('/');
+        if (!owner || !repoName) throw new Error('Invalid repoFullName');
+
+        let refToUse = ref;
+        if (!refToUse) {
+            const repoRes = await githubApiRequest(`/repos/${owner}/${repoName}`, accessToken);
+            if (repoRes.status !== 200) throw new Error('Repo fetch failed');
+            refToUse = repoRes.data.default_branch || 'main';
+        }
+
+        const branchRes = await githubApiRequest(`/repos/${owner}/${repoName}/branches/${encodeURIComponent(refToUse)}`, accessToken);
+        if (branchRes.status !== 200) throw new Error('Branch fetch failed');
+        const treeSha = branchRes.data?.commit?.commit?.tree?.sha;
+        if (!treeSha) throw new Error('Tree sha not found');
+
+        const treeRes = await githubApiRequest(`/repos/${owner}/${repoName}/git/trees/${treeSha}?recursive=1`, accessToken);
+        if (treeRes.status !== 200) throw new Error('Tree fetch failed');
+
+        return {
+            owner,
+            repoName,
+            refToUse,
+            tree: Array.isArray(treeRes.data?.tree) ? treeRes.data.tree : [],
+        };
+    }
+
+    function expandGithubSelections(tree, selections) {
+        const seen = Object.create(null);
+        const toFetch = [];
+        for (const sel of selections || []) {
+            if (!sel || typeof sel.path !== 'string') continue;
+            if (sel.isFolder) {
+                const prefix = sel.path === '' ? '' : sel.path + '/';
+                for (const t of tree) {
+                    if (!t || t.type !== 'blob') continue;
+                    if (prefix !== '' && String(t.path).indexOf(prefix) !== 0) continue;
+                    if (seen[t.path]) continue;
+                    seen[t.path] = true;
+                    toFetch.push({ path: t.path, sha: t.sha, size: t.size || 0 });
+                }
+            } else {
+                for (const t of tree) {
+                    if (t && t.type === 'blob' && t.path === sel.path) {
+                        if (!seen[t.path]) {
+                            seen[t.path] = true;
+                            toFetch.push({ path: t.path, sha: t.sha, size: t.size || 0 });
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        return toFetch;
+    }
+
+    async function materializeGithubSelection({ repoFullName, ref, selections, targetRoot, accessToken }) {
+        const { owner, repoName, refToUse, tree } = await resolveGithubSelectionPlan(repoFullName, ref, accessToken);
+        const toFetch = expandGithubSelections(tree, selections);
+        if (toFetch.length === 0) throw new Error('No files matched selection');
+
+        fs.mkdirSync(targetRoot, { recursive: true });
+
+        const CONCURRENCY = 8;
+        let cursor = 0;
+        const materialized = [];
+        const errors = [];
+        const runWorker = async () => {
+            while (true) {
+                const idx = cursor++;
+                if (idx >= toFetch.length) return;
+                const f = toFetch[idx];
+                try {
+                    const buf = await githubFetchBlob(owner, repoName, f.sha, accessToken);
+                    const outPath = path.join(targetRoot, f.path);
+                    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+                    fs.writeFileSync(outPath, buf);
+                    materialized.push({ path: f.path, size: f.size, outPath });
+                } catch (e) {
+                    errors.push({ path: f.path, error: (e && e.message) || String(e) });
+                }
+            }
+        };
+
+        const workers = [];
+        const workerCount = Math.min(CONCURRENCY, toFetch.length);
+        for (let w = 0; w < workerCount; w++) workers.push(runWorker());
+        await Promise.all(workers);
+
+        return {
+            owner,
+            repoName,
+            refToUse,
+            materialized,
+            errors,
+        };
+    }
+
+    function removeProjectGithubSourceData(project, source) {
+        const sourceId = source?.id;
+        if (!sourceId) return;
+        const linkedFiles = db.project_files.filter(f => f.project_id === project.id && f.github_source_id === sourceId);
+        for (const file of linkedFiles) {
+            if (file.file_path && fs.existsSync(file.file_path)) {
+                try { fs.unlinkSync(file.file_path); } catch (_) {}
+            }
+        }
+        db.project_files = db.project_files.filter(f => !(f.project_id === project.id && f.github_source_id === sourceId));
+        project.github_sources = (project.github_sources || []).filter(s => s.id !== sourceId);
+    }
+
+    server.post('/api/projects/:id/github/import', async (req, res) => {
+        const token = loadGithubToken();
+        if (!token?.access_token) return res.status(401).json({ error: 'Not connected' });
+        const project = db.projects.find(p => p.id === req.params.id);
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+
+        const { repoFullName, ref, selections } = req.body || {};
+        if (!repoFullName || !Array.isArray(selections) || selections.length === 0) {
+            return res.status(400).json({ error: 'Missing repoFullName or selections' });
+        }
+
+        if (!Array.isArray(project.github_sources)) project.github_sources = [];
+
+        try {
+            const existing = project.github_sources.find(s => s.repo_full_name === repoFullName) || null;
+            if (existing) {
+                removeProjectGithubSourceData(project, existing);
+            }
+
+            const sourceId = existing?.id || uuidv4();
+            const [owner, repoName] = String(repoFullName).split('/');
+            const targetRoot = path.join(project.workspace_path, 'files', 'github', owner, repoName);
+            if (fs.existsSync(targetRoot)) {
+                try { fs.rmSync(targetRoot, { recursive: true, force: true }); } catch (_) {}
+            }
+
+            const result = await materializeGithubSelection({
+                repoFullName,
+                ref,
+                selections,
+                targetRoot,
+                accessToken: token.access_token,
+            });
+
+            const source = {
+                id: sourceId,
+                repo_full_name: repoFullName,
+                ref: result.refToUse,
+                root_dir: path.join('github', owner, repoName).replace(/\\/g, '/'),
+                file_count: result.materialized.length,
+                selections,
+                added_at: existing?.added_at || new Date().toISOString(),
+                last_synced_at: new Date().toISOString(),
+            };
+
+            for (const file of result.materialized) {
+                db.project_files.push({
+                    id: uuidv4(),
+                    project_id: project.id,
+                    file_name: path.join('github', owner, repoName, file.path).replace(/\\/g, '/'),
+                    file_path: file.outPath,
+                    file_size: file.size || 0,
+                    mime_type: guessMimeType(file.path),
+                    source_type: 'github',
+                    github_source_id: sourceId,
+                    github_repo: repoFullName,
+                    github_path: file.path,
+                    created_at: new Date().toISOString(),
+                });
+            }
+
+            project.github_sources.push(source);
+            project.updated_at = new Date().toISOString();
+            saveDb();
+
+            res.json({
+                ok: true,
+                source,
+                fileCount: result.materialized.length,
+                replaced: !!existing,
+            });
+        } catch (e) {
+            console.error('[Project GitHub Import] error:', e);
+            res.status(500).json({ error: (e && e.message) || String(e) });
+        }
+    });
+
+    server.post('/api/projects/:id/github/sources/:sourceId/sync', async (req, res) => {
+        const token = loadGithubToken();
+        if (!token?.access_token) return res.status(401).json({ error: 'Not connected' });
+        const project = db.projects.find(p => p.id === req.params.id);
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+        if (!Array.isArray(project.github_sources)) project.github_sources = [];
+
+        const source = project.github_sources.find(s => s.id === req.params.sourceId);
+        if (!source) return res.status(404).json({ error: 'GitHub source not found' });
+
+        try {
+            removeProjectGithubSourceData(project, source);
+            const [owner, repoName] = String(source.repo_full_name).split('/');
+            const targetRoot = path.join(project.workspace_path, 'files', 'github', owner, repoName);
+            if (fs.existsSync(targetRoot)) {
+                try { fs.rmSync(targetRoot, { recursive: true, force: true }); } catch (_) {}
+            }
+
+            const result = await materializeGithubSelection({
+                repoFullName: source.repo_full_name,
+                ref: source.ref,
+                selections: source.selections || [],
+                targetRoot,
+                accessToken: token.access_token,
+            });
+
+            const refreshedSource = {
+                ...source,
+                ref: result.refToUse,
+                root_dir: path.join('github', owner, repoName).replace(/\\/g, '/'),
+                file_count: result.materialized.length,
+                last_synced_at: new Date().toISOString(),
+            };
+
+            for (const file of result.materialized) {
+                db.project_files.push({
+                    id: uuidv4(),
+                    project_id: project.id,
+                    file_name: path.join('github', owner, repoName, file.path).replace(/\\/g, '/'),
+                    file_path: file.outPath,
+                    file_size: file.size || 0,
+                    mime_type: guessMimeType(file.path),
+                    source_type: 'github',
+                    github_source_id: refreshedSource.id,
+                    github_repo: refreshedSource.repo_full_name,
+                    github_path: file.path,
+                    created_at: new Date().toISOString(),
+                });
+            }
+
+            project.github_sources.push(refreshedSource);
+            project.updated_at = new Date().toISOString();
+            saveDb();
+
+            res.json({ ok: true, source: refreshedSource, fileCount: result.materialized.length });
+        } catch (e) {
+            console.error('[Project GitHub Sync] error:', e);
+            res.status(500).json({ error: (e && e.message) || String(e) });
+        }
+    });
+
+    server.delete('/api/projects/:id/github/sources/:sourceId', (req, res) => {
+        const project = db.projects.find(p => p.id === req.params.id);
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+        if (!Array.isArray(project.github_sources)) project.github_sources = [];
+
+        const source = project.github_sources.find(s => s.id === req.params.sourceId);
+        if (!source) return res.status(404).json({ error: 'GitHub source not found' });
+
+        removeProjectGithubSourceData(project, source);
+
+        const [owner, repoName] = String(source.repo_full_name).split('/');
+        const targetRoot = path.join(project.workspace_path, 'files', 'github', owner, repoName);
+        if (fs.existsSync(targetRoot)) {
+            try { fs.rmSync(targetRoot, { recursive: true, force: true }); } catch (_) {}
+        }
+
+        project.updated_at = new Date().toISOString();
+        saveDb();
+        res.json({ ok: true });
+    });
 
     // POST /api/github/materialize — write selected files to conv workspace
     server.post('/api/github/materialize', async (req, res) => {

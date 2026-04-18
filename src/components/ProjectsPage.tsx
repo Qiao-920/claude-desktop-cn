@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Search, Plus, ChevronDown, ArrowLeft, MoreVertical, Star, ArrowUp, FileText, Trash, Pencil, MessageSquare, X, Upload, Check, AudioLines, ChevronRight, Archive } from 'lucide-react';
+import { Search, Plus, ChevronDown, ArrowLeft, MoreVertical, Star, ArrowUp, FileText, Trash, Pencil, MessageSquare, X, Upload, Check, AudioLines, ChevronRight, Archive, Github, RefreshCw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Paperclip, ListCollapse } from 'lucide-react';
-import { getProjects, createProject, getProject, updateProject, deleteProject, uploadProjectFile, deleteProjectFile, createProjectConversation, deleteConversation, getSkills, Project, ProjectFile } from '../api';
+import { getProjects, createProject, getProject, updateProject, deleteProject, uploadProjectFile, deleteProjectFile, createProjectConversation, deleteConversation, getSkills, Project, ProjectFile, ProjectGithubSource, importProjectGithub, syncProjectGithubSource, removeProjectGithubSource } from '../api';
 import ModelSelector, { SelectableModel } from './ModelSelector';
 import { IconPlus } from './Icons';
 import startProjectsImg from '../assets/icons/start-projects.png';
+import AddFromGithubModal, { GithubAddPayload } from './AddFromGithubModal';
 
 const ProjectsPage = () => {
   const navigate = useNavigate();
@@ -36,6 +37,9 @@ const ProjectsPage = () => {
   const [showSkillsSubmenu, setShowSkillsSubmenu] = useState(false);
   const [enabledSkills, setEnabledSkills] = useState<Array<{ id: string; name: string; description?: string }>>([]);
   const [selectedSkill, setSelectedSkill] = useState<{ name: string; slug: string; description?: string } | null>(null);
+  const [showGithubModal, setShowGithubModal] = useState(false);
+  const [githubError, setGithubError] = useState<string | null>(null);
+  const [syncingSourceId, setSyncingSourceId] = useState<string | null>(null);
   const plusMenuRef = useRef<HTMLDivElement>(null);
   const plusBtnRef = useRef<HTMLButtonElement>(null);
 
@@ -120,6 +124,7 @@ const ProjectsPage = () => {
       const data = await getProject(id);
       setCurrentProject(data);
       setInstructionsText(data.instructions || '');
+      setGithubError(null);
     } catch (_) { }
   }, []);
 
@@ -234,6 +239,50 @@ const ProjectsPage = () => {
       return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
     });
   }, [projects, searchQuery, sortBy]);
+
+  const handleProjectGithubImport = async (payload: GithubAddPayload) => {
+    if (!currentProject) return;
+    setGithubError(null);
+    try {
+      await importProjectGithub(currentProject.id, payload);
+      await loadProject(currentProject.id);
+      await loadProjects();
+    } catch (err: any) {
+      setGithubError(err?.message || 'Failed to import GitHub files');
+      throw err;
+    }
+  };
+
+  const handleSyncGithubSource = async (source: ProjectGithubSource) => {
+    if (!currentProject) return;
+    setGithubError(null);
+    setSyncingSourceId(source.id);
+    try {
+      await syncProjectGithubSource(currentProject.id, source.id);
+      await loadProject(currentProject.id);
+      await loadProjects();
+    } catch (err: any) {
+      setGithubError(err?.message || 'Failed to sync GitHub source');
+    } finally {
+      setSyncingSourceId(null);
+    }
+  };
+
+  const handleRemoveGithubSource = async (source: ProjectGithubSource) => {
+    if (!currentProject) return;
+    if (!window.confirm(`Remove ${source.repo_full_name} from this project? Imported GitHub files will also be removed.`)) return;
+    setGithubError(null);
+    setSyncingSourceId(source.id);
+    try {
+      await removeProjectGithubSource(currentProject.id, source.id);
+      await loadProject(currentProject.id);
+      await loadProjects();
+    } catch (err: any) {
+      setGithubError(err?.message || 'Failed to remove GitHub source');
+    } finally {
+      setSyncingSourceId(null);
+    }
+  };
 
   // ═══ Project Detail View ═══
   if (currentProject) {
@@ -488,23 +537,73 @@ const ProjectsPage = () => {
                   <h3 className="font-semibold text-claude-text" style={{ fontSize: '15.5px' }}>
                     Files {currentProject.files?.length > 0 && <span className="text-claude-textSecondary text-[13px] ml-1">({currentProject.files.length})</span>}
                   </h3>
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="text-[#A1A1AA] hover:text-claude-text transition-colors"
-                  >
-                    <Plus size={22} strokeWidth={1.5} />
-                  </button>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    className="hidden"
-                    onChange={e => { if (e.target.files) handleFileUpload(e.target.files); e.target.value = ''; }}
-                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setShowGithubModal(true)}
+                      className="flex items-center gap-2 px-3 py-1.5 text-[12.5px] font-medium text-claude-text border border-claude-border rounded-lg hover:bg-claude-hover transition-colors"
+                    >
+                      <Github size={14} />
+                      从 GitHub 添加
+                    </button>
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="text-[#A1A1AA] hover:text-claude-text transition-colors"
+                    >
+                      <Plus size={22} strokeWidth={1.5} />
+                    </button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      className="hidden"
+                      onChange={e => { if (e.target.files) handleFileUpload(e.target.files); e.target.value = ''; }}
+                    />
+                  </div>
                 </div>
 
                 {uploading && (
                   <div className="text-[13px] text-claude-textSecondary animate-pulse mb-3">Uploading...</div>
+                )}
+
+                {githubError && (
+                  <div className="text-[13px] text-red-500 mb-3">{githubError}</div>
+                )}
+
+                {currentProject.github_sources?.length > 0 && (
+                  <div className="space-y-2 mb-4">
+                    {currentProject.github_sources.map((source: ProjectGithubSource) => (
+                      <div
+                        key={source.id}
+                        className="flex items-center gap-3 px-3 py-3 rounded-[12px] bg-[#F7F7F5] dark:bg-white/[0.03] border border-claude-border"
+                      >
+                        <div className="w-9 h-9 rounded-lg bg-black text-white dark:bg-white dark:text-black flex items-center justify-center flex-shrink-0">
+                          <Github size={16} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-[13.5px] text-claude-text font-medium truncate">{source.repo_full_name}</div>
+                          <div className="text-[11.5px] text-[#A1A1AA]">
+                            {source.file_count} files · branch {source.ref} · synced {new Date(source.last_synced_at).toLocaleString()}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleSyncGithubSource(source)}
+                          disabled={syncingSourceId === source.id}
+                          className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-claude-text border border-claude-border rounded-lg hover:bg-claude-hover transition-colors disabled:opacity-50"
+                        >
+                          <RefreshCw size={13} className={syncingSourceId === source.id ? 'animate-spin' : ''} />
+                          Sync
+                        </button>
+                        <button
+                          onClick={() => handleRemoveGithubSource(source)}
+                          disabled={syncingSourceId === source.id}
+                          className="p-1 text-[#A1A1AA] hover:text-red-500 transition-colors disabled:opacity-50"
+                          title="Remove GitHub source"
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 )}
 
                 {currentProject.files && currentProject.files.length > 0 ? (
@@ -514,8 +613,13 @@ const ProjectsPage = () => {
                         <FileText size={16} className="text-[#A1A1AA] flex-shrink-0" />
                         <div className="flex-1 min-w-0">
                           <div className="text-[13.5px] text-claude-text truncate font-medium">{f.file_name}</div>
-                          <div className="text-[11.5px] text-[#A1A1AA]">
+                          <div className="text-[11.5px] text-[#A1A1AA] flex items-center gap-2 flex-wrap">
                             {f.file_size > 1024 * 1024 ? `${(f.file_size / 1024 / 1024).toFixed(1)} MB` : `${(f.file_size / 1024).toFixed(1)} KB`}
+                            {f.source_type === 'github' && (
+                              <span className="px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 text-[11px] text-claude-textSecondary">
+                                GitHub
+                              </span>
+                            )}
                           </div>
                         </div>
                         <button
@@ -556,11 +660,24 @@ const ProjectsPage = () => {
                     <span className="text-[13px] text-[#A1A1AA] text-center max-w-[200px] leading-relaxed">
                       Add PDFs, documents, or other text to reference in this project.
                     </span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setShowGithubModal(true); }}
+                      className="mt-4 flex items-center gap-2 px-3 py-1.5 text-[12.5px] font-medium text-claude-text border border-claude-border rounded-lg hover:bg-claude-hover transition-colors"
+                    >
+                      <Github size={14} />
+                      或从 GitHub 导入
+                    </button>
                   </div>
                 )}
               </div>
             </div>
           </div>
+
+          <AddFromGithubModal
+            isOpen={showGithubModal}
+            onClose={() => setShowGithubModal(false)}
+            onConfirm={handleProjectGithubImport}
+          />
         </div>
       </div>
     );
