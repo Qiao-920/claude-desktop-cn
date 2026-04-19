@@ -29,6 +29,21 @@
   --text-claude-avatar: #FFFFFF;
   --bg-mode-tabs: #EFEEEB;
   --bg-mode-tab-active: #F8F8F6;
+  --chat-body-font-size: 16.5px;
+  --chat-user-font-size: 16px;
+  --chat-input-font-size: 16px;
+  --chat-metadata-font-size: 12px;
+  --chat-message-line-height: 1.55;
+  --markdown-gap-scale: 1;
+}
+
+:root[data-ui-density="compact"] {
+  --chat-body-font-size: 15px;
+  --chat-user-font-size: 14px;
+  --chat-input-font-size: 14px;
+  --chat-metadata-font-size: 11px;
+  --chat-message-line-height: 1.42;
+  --markdown-gap-scale: 0.82;
 }
 
 .dark {
@@ -189,8 +204,8 @@ html.dark .sidebar-scroll:hover::-webkit-scrollbar-thumb:hover {
 
 /* === Markdown Styles === */
 .markdown-body p {
-  margin-bottom: 0.6em;
-  line-height: 1.5;
+  margin-bottom: calc(0.6em * var(--markdown-gap-scale));
+  line-height: var(--chat-message-line-height);
   color: var(--text-claude-main);
 }
 
@@ -200,15 +215,15 @@ html.dark .sidebar-scroll:hover::-webkit-scrollbar-thumb:hover {
 .markdown-body h4,
 .markdown-body h5,
 .markdown-body h6 {
-  margin-top: 1.0em;
-  margin-bottom: 0.4em;
+  margin-top: calc(1em * var(--markdown-gap-scale));
+  margin-bottom: calc(0.4em * var(--markdown-gap-scale));
   font-weight: 600;
   color: var(--text-claude-main);
 }
 
 .markdown-body ul,
 .markdown-body ol {
-  margin-bottom: 0.6em;
+  margin-bottom: calc(0.6em * var(--markdown-gap-scale));
   padding-left: 1.5em;
   list-style-type: disc;
   color: var(--text-claude-main);
@@ -216,10 +231,10 @@ html.dark .sidebar-scroll:hover::-webkit-scrollbar-thumb:hover {
 
 .markdown-body pre {
   background-color: var(--bg-claude-input);
-  padding: 1em;
+  padding: calc(1em * var(--markdown-gap-scale));
   border-radius: 8px;
   overflow-x: auto;
-  margin-bottom: 0.6em;
+  margin-bottom: calc(0.6em * var(--markdown-gap-scale));
   font-family: monospace;
   border: 1px solid var(--border-claude);
 }
@@ -240,6 +255,8 @@ html.dark .sidebar-scroll:hover::-webkit-scrollbar-thumb:hover {
 
 .assistant-markdown {
   color: var(--text-claude-model-body);
+  font-size: var(--chat-body-font-size);
+  line-height: var(--chat-message-line-height);
 }
 
 .assistant-markdown p,

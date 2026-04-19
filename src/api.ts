@@ -506,6 +506,29 @@ export async function createProjectConversation(projectId: string, title?: strin
   return res.json();
 }
 
+export interface AgentConfig {
+  permissionMode: 'workspace_write' | 'full_access';
+}
+
+export async function getAgentConfig(): Promise<AgentConfig> {
+  const res = await fetch(`${API_BASE}/agent-config`);
+  if (!res.ok) throw new Error('Failed to get agent config');
+  return res.json();
+}
+
+export async function updateAgentConfig(config: Partial<AgentConfig>): Promise<AgentConfig> {
+  const res = await fetch(`${API_BASE}/agent-config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to update agent config');
+  }
+  return res.json();
+}
+
 export async function importProjectGithub(
   projectId: string,
   payload: {
@@ -879,6 +902,9 @@ export function reconnectStream(
             }
             if (parsed.type === 'compact_boundary' && onSystem) {
               onSystem('compact_boundary', '', parsed);
+            }
+            if (parsed.type === 'message_stats' && onSystem) {
+              onSystem('message_stats', '', parsed);
             }
             // Research mode events on reconnect path
             if (parsed.type && parsed.type.startsWith('research_') && onSystem) {
@@ -1515,6 +1541,11 @@ export async function sendMessage(
           // Track text offset where tool work ends and final response begins
           if (parsed.type === 'tool_text_offset' && onSystem) {
             onSystem('tool_text_offset', '', parsed);
+          }
+
+          if (parsed.type === 'message_stats' && onSystem) {
+            onSystem('message_stats', '', parsed);
+            continue;
           }
 
           if (parsed.type === 'message_stop') {

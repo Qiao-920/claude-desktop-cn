@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const { v4: uuidv4 } = require('uuid');
 const { app } = require('electron');
-const { TOOL_DEFINITIONS, executeTool } = require('./tools.cjs');
+const { TOOL_DEFINITIONS, executeTool, setAccessConfigPath } = require('./tools.cjs');
 const { runResearchPipeline } = require('./research-orchestrator.cjs');
 
 // Heuristic: when research_mode is enabled, decide whether THIS message
@@ -206,6 +206,24 @@ function initServer(mainWindow) {
     // Setup paths
     const userDataPath = app.getPath('userData');
     const dbPath = path.join(userDataPath, 'claude-desktop.json');
+    const agentConfigPath = path.join(userDataPath, 'agent-config.json');
+    setAccessConfigPath(agentConfigPath);
+    const defaultAgentConfig = {
+        permissionMode: 'full_access',
+    };
+    const readAgentConfig = () => {
+        try {
+            if (fs.existsSync(agentConfigPath)) {
+                return { ...defaultAgentConfig, ...JSON.parse(fs.readFileSync(agentConfigPath, 'utf8')) };
+            }
+        } catch (_) { }
+        return { ...defaultAgentConfig };
+    };
+    const saveAgentConfig = (partial) => {
+        const next = { ...readAgentConfig(), ...(partial || {}) };
+        fs.writeFileSync(agentConfigPath, JSON.stringify(next, null, 2));
+        return next;
+    };
 
     // Workspace: use user-chosen path, or default to ~/Documents/Claude Desktop
     const defaultWorkspacesDir = path.join(app.getPath('documents'), 'Claude Desktop');
@@ -3044,6 +3062,22 @@ You have the following skills available. When a user's request matches a skill's
         }
     });
 
+    server.get('/api/agent-config', (req, res) => {
+        res.json(readAgentConfig());
+    });
+    server.post('/api/agent-config', (req, res) => {
+        const permissionMode = req.body && req.body.permissionMode;
+        if (permissionMode !== 'workspace_write' && permissionMode !== 'full_access') {
+            return res.status(400).json({ error: 'Invalid permission mode' });
+        }
+        try {
+            const config = saveAgentConfig({ permissionMode });
+            res.json(config);
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
     server.post('/api/projects/:id/github/sources/:sourceId/sync', async (req, res) => {
         const token = loadGithubToken();
         if (!token?.access_token) return res.status(401).json({ error: 'Not connected' });
@@ -3596,6 +3630,7 @@ You have the following skills available. When a user's request matches a skill's
 
     function buildChatSystemPrompt(conv, user_mode, user_profile) {
         let sysPrompt = (user_mode === 'selfhosted' ? customSystemPromptClean : customSystemPromptFull) || '';
+        const agentConfig = readAgentConfig();
         if (user_profile) {
             const parts = [];
             if (user_profile.work_function) parts.push('Occupation: ' + user_profile.work_function);
@@ -3606,6 +3641,13 @@ You have the following skills available. When a user's request matches a skill's
                 sysPrompt += '\n\n<response_style>\nSelected style: ' + styleName + '\nInstructions: ' + user_profile.response_style.instructions + '\n</response_style>';
             }
         }
+        sysPrompt += '\n\n<tool_access_policy>\nPermission mode: ' + agentConfig.permissionMode + '\n';
+        if (agentConfig.permissionMode === 'full_access') {
+            sysPrompt += 'The desktop app may read, write, and execute shell commands on the local machine. Use this power carefully and explain risky actions before taking them.\n';
+        } else {
+            sysPrompt += 'The desktop app is limited to the current workspace for file access, and shell execution is disabled.\n';
+        }
+        sysPrompt += '</tool_access_policy>';
         if (conv.project_id) {
             const project = db.projects.find(p => p.id === conv.project_id);
             if (project) {
@@ -3681,6 +3723,8 @@ You have the following skills available. When a user's request matches a skill's
             if (se.type === 'content_block_delta') {
                 if (se.delta && se.delta.type === 'text_delta') { turn.assistantText += se.delta.text; turn.pendingWorkText += se.delta.text; sendSSE({ type: 'content_block_delta', delta: { type: 'text_delta', text: se.delta.text } }); }
                 else if (se.delta && se.delta.type === 'thinking_delta') { turn.thinkingText += se.delta.thinking; sendSSE({ type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: se.delta.thinking } }); }
+            } else if (se.type === 'message_delta' && se.usage && se.usage.output_tokens != null) {
+                turn.outputTokens = Math.max(turn.outputTokens || 0, Number(se.usage.output_tokens) || 0);
             } else if (se.type === 'content_block_start' && se.content_block && se.content_block.type === 'tool_use') {
                 var tu = se.content_block;
                 var capturedTextBefore = turn.pendingWorkText.trim();
@@ -3762,6 +3806,9 @@ You have the following skills available. When a user's request matches a skill's
             }
         }
         else if (evt.type === 'system' && (evt.subtype === 'task_started' || evt.subtype === 'task_progress' || evt.subtype === 'task_notification')) {
+            if (evt.usage && evt.usage.output_tokens != null) {
+                turn.outputTokens = Math.max(turn.outputTokens || 0, Number(evt.usage.output_tokens) || 0);
+            }
             sendSSE({ type: 'task_event', subtype: evt.subtype, task_id: evt.task_id, description: evt.description, status: evt.status, summary: evt.summary, usage: evt.usage, last_tool_name: evt.last_tool_name });
         }
         else if (evt.type === 'system' && evt.subtype === 'compact_boundary') {
@@ -3776,12 +3823,21 @@ You have the following skills available. When a user's request matches a skill's
         if (turn.timeoutId) clearTimeout(turn.timeoutId);
         if (turn.maxTimeoutId) clearTimeout(turn.maxTimeoutId);
         engine.turn = null; engine.state = 'idle';
+        const elapsedMs = Math.max(1, Date.now() - (turn.startedAt || Date.now()));
+        const estimatedTokens = Math.max(1, turn.outputTokens || Math.ceil((turn.assistantText || '').length / 4));
+        const responseStats = {
+            model: engine.modelId,
+            output_tokens: estimatedTokens,
+            elapsed_ms: elapsedMs,
+            tokens_per_second: Number((estimatedTokens / Math.max(elapsedMs / 1000, 0.001)).toFixed(2)),
+        };
         if (turn.assistantText || turn.thinkingText || turn.toolCalls.size > 0) {
-            db.messages.push({ id: turn.assistantUuid || uuidv4(), conversation_id: convId, role: 'assistant', content: JSON.stringify([{ type: 'text', text: turn.assistantText }]), created_at: new Date().toISOString(), engineUuidSynced: !!turn.assistantUuid, thinking: turn.thinkingText || undefined, toolCalls: turn.toolCalls.size > 0 ? turn.toolCallOrder.map(id => turn.toolCalls.get(id)).filter(Boolean) : undefined, toolTextEndOffset: (turn.toolCalls.size > 0 && turn.lastToolDoneTextLen > 0) ? turn.lastToolDoneTextLen : undefined, searchLogs: turn.searchLogs.length > 0 ? turn.searchLogs : undefined });
+            db.messages.push({ id: turn.assistantUuid || uuidv4(), conversation_id: convId, role: 'assistant', content: JSON.stringify([{ type: 'text', text: turn.assistantText }]), created_at: new Date().toISOString(), engineUuidSynced: !!turn.assistantUuid, thinking: turn.thinkingText || undefined, toolCalls: turn.toolCalls.size > 0 ? turn.toolCallOrder.map(id => turn.toolCalls.get(id)).filter(Boolean) : undefined, toolTextEndOffset: (turn.toolCalls.size > 0 && turn.lastToolDoneTextLen > 0) ? turn.lastToolDoneTextLen : undefined, searchLogs: turn.searchLogs.length > 0 ? turn.searchLogs : undefined, responseStats });
             saveDb();
             generateTitleAsync(convId, turn.message.slice(0, 300), turn.assistantText.slice(0, 300), turn.apiKey, turn.baseUrl, conv.model, turn.apiFormat);
         }
         if (turn.toolCalls.size > 0 && turn.lastToolDoneTextLen > 0) turn.sendSSE({ type: 'tool_text_offset', offset: turn.lastToolDoneTextLen });
+        turn.sendSSE({ type: 'message_stats', stats: responseStats });
         pendingImageBlocks.delete(convId);
         turn.sendSSE({ type: 'message_stop' });
         endStream(convId);
@@ -4240,6 +4296,7 @@ You have the following skills available. When a user's request matches a skill's
                 startedAt: Date.now(),
                 lastActivityAt: Date.now(),
                 lastActivitySource: 'turn_start',
+                outputTokens: 0,
             };
 
             // Write user message to stdin (stream-json format).

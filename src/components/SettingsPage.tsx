@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronRight, Smartphone, MonitorIcon, LogOut, MoreHorizontal, Check, X } from 'lucide-react';
-import { getUserProfile, updateUserProfile, getUserUsage, getGatewayUsage, getSessions, deleteSession, logoutOtherSessions, changePassword, deleteAccount, logout, getProviderModels } from '../api';
+import { getUserProfile, updateUserProfile, getUserUsage, getGatewayUsage, getSessions, deleteSession, logoutOtherSessions, changePassword, deleteAccount, logout, getProviderModels, getAgentConfig, updateAgentConfig } from '../api';
 import ProviderSettings from './ProviderSettings';
 import { UiLanguage, getStoredUiLanguage, setStoredUiLanguage } from '../utils/chineseClientText';
 import { ChatStyle, createCustomChatStyle, getAllChatStyles, getChatStyleDescription, getChatStyleLabel, getDefaultChatStyleId, saveCustomChatStyles, setDefaultChatStyleId } from '../utils/chatStyles';
@@ -49,6 +49,8 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const [sendKey, setSendKey] = useState(localStorage.getItem('sendKey') || 'enter'); // enter or ctrl+enter
   const [newlineKey, setNewlineKey] = useState(localStorage.getItem('newlineKey') || (localStorage.getItem('sendKey') === 'enter' ? 'shift_enter' : 'enter'));
   const [uiLanguage, setUiLanguage] = useState<UiLanguage>(getStoredUiLanguage());
+  const [uiDensity, setUiDensity] = useState(localStorage.getItem('ui_density') || 'compact');
+  const [permissionMode, setPermissionMode] = useState<'workspace_write' | 'full_access'>('full_access');
   const [chatStyles, setChatStyles] = useState<ChatStyle[]>(() => getAllChatStyles());
   const [defaultChatStyle, setDefaultChatStyle] = useState(() => getDefaultChatStyleId());
   const [newStyleName, setNewStyleName] = useState('');
@@ -90,6 +92,9 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     getSessions().then(data => {
       setSessions(data.sessions || []);
       setCurrentSessionId(data.currentSessionId || '');
+    }).catch(() => { });
+    getAgentConfig().then(config => {
+      setPermissionMode(config.permissionMode || 'full_access');
     }).catch(() => { });
   }, []);
 
@@ -170,6 +175,23 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const applyLanguage = (language: UiLanguage) => {
     setUiLanguage(language);
     setStoredUiLanguage(language);
+  };
+
+  const applyUiDensity = (density: string) => {
+    setUiDensity(density);
+    localStorage.setItem('ui_density', density);
+    document.documentElement.setAttribute('data-ui-density', density);
+  };
+
+  const applyPermissionMode = async (mode: 'workspace_write' | 'full_access') => {
+    setPermissionMode(mode);
+    try {
+      const config = await updateAgentConfig({ permissionMode: mode });
+      setPermissionMode(config.permissionMode || mode);
+      window.dispatchEvent(new CustomEvent('agentConfigUpdated', { detail: config }));
+    } catch (err) {
+      console.error('Failed to update permission mode', err);
+    }
   };
 
   const applyDefaultChatStyle = (styleId: string) => {
@@ -873,6 +895,66 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                   }`}
                 >
                   <div className="text-[14px] font-medium">{opt.label}</div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section>
+          <h3 className="text-[16px] font-semibold text-claude-text mb-5">Interface density</h3>
+          <div className="flex gap-3">
+            {([
+              { value: 'compact', label: 'Compact', desc: uiLanguage === 'zh-CN' ? '更小字体与更紧凑间距' : 'Smaller type and tighter spacing' },
+              { value: 'comfortable', label: 'Comfortable', desc: uiLanguage === 'zh-CN' ? '默认阅读密度' : 'Default reading density' },
+            ] as const).map(opt => {
+              const active = uiDensity === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  onClick={() => applyUiDensity(opt.value)}
+                  className={`flex-1 px-4 py-3 rounded-xl border text-left transition-all ${
+                    active
+                      ? 'border-[#3b82f6]/80 bg-blue-500/5 text-claude-text'
+                      : 'border-claude-border/60 hover:border-claude-textSecondary/20 text-claude-textSecondary'
+                  }`}
+                >
+                  <div className="text-[14px] font-medium">{opt.label}</div>
+                  <div className="text-[12px] mt-1 text-claude-textSecondary/70">{opt.desc}</div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section>
+          <h3 className="text-[16px] font-semibold text-claude-text mb-5">Agent permissions</h3>
+          <div className="flex gap-3">
+            {([
+              {
+                value: 'workspace_write',
+                label: uiLanguage === 'zh-CN' ? '默认权限' : 'Default',
+                desc: uiLanguage === 'zh-CN' ? '只允许当前工作区文件操作，禁用 shell' : 'Workspace-only file access, shell disabled',
+              },
+              {
+                value: 'full_access',
+                label: uiLanguage === 'zh-CN' ? '完全访问权限' : 'Full access',
+                desc: uiLanguage === 'zh-CN' ? '允许全盘文件操作与命令执行' : 'System-wide file access and shell commands',
+              },
+            ] as const).map(opt => {
+              const active = permissionMode === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  onClick={() => applyPermissionMode(opt.value)}
+                  className={`flex-1 px-4 py-3 rounded-xl border text-left transition-all ${
+                    active
+                      ? 'border-[#3b82f6]/80 bg-blue-500/5 text-claude-text'
+                      : 'border-claude-border/60 hover:border-claude-textSecondary/20 text-claude-textSecondary'
+                  }`}
+                >
+                  <div className="text-[14px] font-medium">{opt.label}</div>
+                  <div className="text-[12px] mt-1 text-claude-textSecondary/70">{opt.desc}</div>
                 </button>
               );
             })}

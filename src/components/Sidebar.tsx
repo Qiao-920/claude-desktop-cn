@@ -536,8 +536,8 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
                 key={item.label}
                 onClick={() => handleNavClick(item.label)}
                 className={`w-full flex items-center justify-start text-claude-text hover:bg-claude-hover rounded-lg transition-colors group overflow-hidden whitespace-nowrap ${(location.pathname === '/chats' && item.label === 'Chats') || (location.pathname === '/projects' && item.label === 'Projects') ? 'bg-claude-hover' : ''}`}
-                style={{ fontWeight: 400 }}
                 style={{
+                  fontWeight: 400,
                   paddingTop: '2px',
                   paddingBottom: '2px',
                   paddingLeft: '0px',

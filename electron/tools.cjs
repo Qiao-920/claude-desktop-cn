@@ -6,6 +6,48 @@ const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
 
+let accessConfigPath = null;
+
+function setAccessConfigPath(filePath) {
+    accessConfigPath = filePath;
+}
+
+function readAccessConfig() {
+    if (!accessConfigPath) {
+        return { permissionMode: 'full_access' };
+    }
+    try {
+        if (fs.existsSync(accessConfigPath)) {
+            const parsed = JSON.parse(fs.readFileSync(accessConfigPath, 'utf8'));
+            return {
+                permissionMode: parsed.permissionMode || 'full_access',
+            };
+        }
+    } catch (_) { }
+    return { permissionMode: 'full_access' };
+}
+
+function getPermissionMode() {
+    return readAccessConfig().permissionMode || 'full_access';
+}
+
+function isFullAccessMode() {
+    return getPermissionMode() === 'full_access';
+}
+
+function ensureWorkspacePath(resolvedPath, cwd, operation) {
+    if (isFullAccessMode()) return null;
+    const workspaceRoot = path.resolve(cwd);
+    const targetPath = path.resolve(resolvedPath);
+    if (targetPath === workspaceRoot || targetPath.startsWith(workspaceRoot + path.sep)) {
+        return null;
+    }
+    return {
+        content: `${operation} is limited to the current workspace while permission mode is not full access.\nWorkspace: ${workspaceRoot}\nRequested path: ${targetPath}\nSwitch to full access in settings to allow system-wide operations.`,
+        is_error: true,
+    };
+}
+
 // ════════════════════════════════════════════════════════
 //  Tool Schemas (sent to Anthropic API as `tools` param)
 // ════════════════════════════════════════════════════════
@@ -130,6 +172,8 @@ async function executeTool(name, input, cwd) {
 // ── Read ──
 function toolRead(input, cwd) {
     const filePath = resolvePath(input.file_path, cwd);
+    const guard = ensureWorkspacePath(filePath, cwd, 'Read');
+    if (guard) return guard;
     if (!fs.existsSync(filePath)) {
         return { content: `File not found: ${filePath}`, is_error: true };
     }
@@ -160,6 +204,8 @@ function toolRead(input, cwd) {
 // ── Write ──
 function toolWrite(input, cwd) {
     const filePath = resolvePath(input.file_path, cwd);
+    const guard = ensureWorkspacePath(filePath, cwd, 'Write');
+    if (guard) return guard;
     const dir = path.dirname(filePath);
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
@@ -172,6 +218,8 @@ function toolWrite(input, cwd) {
 // ── Edit ──
 function toolEdit(input, cwd) {
     const filePath = resolvePath(input.file_path, cwd);
+    const guard = ensureWorkspacePath(filePath, cwd, 'Edit');
+    if (guard) return guard;
     if (!fs.existsSync(filePath)) {
         return { content: `File not found: ${filePath}`, is_error: true };
     }
@@ -201,6 +249,12 @@ function toolEdit(input, cwd) {
 
 // ── Bash ──
 function toolBash(input, cwd) {
+    if (!isFullAccessMode()) {
+        return Promise.resolve({
+            content: `Bash is disabled outside full access mode.\nCurrent workspace: ${path.resolve(cwd)}\nSwitch to full access in settings to allow shell commands.`,
+            is_error: true,
+        });
+    }
     const timeout = input.timeout || 120000;
     const isWin = process.platform === 'win32';
     return new Promise((resolve) => {
@@ -229,6 +283,8 @@ function toolBash(input, cwd) {
 // ── Glob ──
 function toolGlob(input, cwd) {
     const baseDir = input.path ? resolvePath(input.path, cwd) : cwd;
+    const guard = ensureWorkspacePath(baseDir, cwd, 'Glob');
+    if (guard) return Promise.resolve(guard);
     if (!fs.existsSync(baseDir)) {
         return Promise.resolve({ content: `Directory not found: ${baseDir}`, is_error: true });
     }
@@ -294,6 +350,8 @@ function toolGlob(input, cwd) {
 // ── Grep ──
 function toolGrep(input, cwd) {
     const baseDir = input.path ? resolvePath(input.path, cwd) : cwd;
+    const guard = ensureWorkspacePath(baseDir, cwd, 'Grep');
+    if (guard) return Promise.resolve(guard);
     const contextLines = input.context || 0;
     const MAX_MATCHES = 200;
     const MAX_FILE_SIZE = 2 * 1024 * 1024; // 2MB
@@ -383,6 +441,8 @@ function toolGrep(input, cwd) {
 // ── ListDir ──
 function toolListDir(input, cwd) {
     const dirPath = resolvePath(input.path, cwd);
+    const guard = ensureWorkspacePath(dirPath, cwd, 'ListDir');
+    if (guard) return guard;
     if (!fs.existsSync(dirPath)) {
         return { content: `Directory not found: ${dirPath}`, is_error: true };
     }
@@ -412,4 +472,4 @@ function toolListDir(input, cwd) {
     return { content: lines.join('\n') || '(empty directory)' };
 }
 
-module.exports = { TOOL_DEFINITIONS, executeTool };
+module.exports = { TOOL_DEFINITIONS, executeTool, setAccessConfigPath };

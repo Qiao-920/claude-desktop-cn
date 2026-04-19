@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { ChevronDown, FileText, ArrowUp, RotateCcw, Pencil, Copy, Check, Paperclip, ListCollapse, Globe, Clock, Info, Github, Plus, X, Loader2 } from 'lucide-react';
+import { ChevronDown, FileText, ArrowUp, RotateCcw, Pencil, Copy, Check, Paperclip, ListCollapse, Globe, Clock, Info, Github, Plus, X, Loader2, Shield } from 'lucide-react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { IconPlus, IconVoice, IconPencil, IconProjects, IconResearch, IconWebSearch } from './Icons';
 import ClaudeLogo from './ClaudeLogo';
-import { getConversation, sendMessage, createConversation, getUser, updateConversation, deleteMessagesFrom, deleteMessagesTail, uploadFile, deleteAttachment, compactConversation, answerUserQuestion, getUserUsage, getAttachmentUrl, getGenerationStatus, stopGeneration, getContextSize, getUserModels, getStreamStatus, reconnectStream, getProviderModels, getSkills, warmEngine, getProjects, createProject, Project, materializeGithub, getProviders, Provider } from '../api';
+import { getConversation, sendMessage, createConversation, getUser, updateConversation, deleteMessagesFrom, deleteMessagesTail, uploadFile, deleteAttachment, compactConversation, answerUserQuestion, getUserUsage, getAttachmentUrl, getGenerationStatus, stopGeneration, getContextSize, getUserModels, getStreamStatus, reconnectStream, getProviderModels, getSkills, warmEngine, getProjects, createProject, Project, materializeGithub, getProviders, Provider, getAgentConfig, updateAgentConfig } from '../api';
 import { addStreaming, removeStreaming, isStreaming } from '../streamingState';
 import MarkdownRenderer from './MarkdownRenderer';
 import ResearchPanel from './ResearchPanel';
@@ -233,6 +233,22 @@ function formatMessageTime(dateStr: string): string {
 
 function stripThinking(model: string) {
   return (model || '').replace(/-thinking$/, '');
+}
+
+function formatElapsedMs(ms?: number): string {
+  if (!ms || ms <= 0) return '';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function formatTokensPerSecond(value?: number): string {
+  if (!value || value <= 0) return '';
+  return `${value.toFixed(2)} t/s`;
+}
+
+function formatModelBadge(model?: string | null): string {
+  if (!model) return '';
+  return stripThinking(model);
 }
 
 function withThinking(base: string, thinking: boolean) {
@@ -615,6 +631,7 @@ interface ModelCatalog {
 /** Memoized message list — skips re-render when only inputText changes */
 interface MessageListProps {
   messages: any[];
+  currentModelString: string;
   loading: boolean;
   expandedMessages: Set<number>;
   editingMessageIdx: number | null;
@@ -634,7 +651,7 @@ interface MessageListProps {
 }
 
 const MessageList = React.memo<MessageListProps>(({
-  messages, loading, expandedMessages, editingMessageIdx, editingContent,
+  messages, currentModelString, loading, expandedMessages, editingMessageIdx, editingContent,
   copiedMessageIdx, compactStatus, onSetEditingContent, onEditCancel, onEditSave,
   onToggleExpand, onResend, onEdit, onCopy, onOpenDocument, onSetMessages,
   messageContentRefs,
@@ -669,7 +686,7 @@ const MessageList = React.memo<MessageListProps>(({
               <div className="w-full bg-[#F0EEE7] dark:bg-claude-btnHover rounded-xl p-3 border border-black/5 dark:border-white/10">
                 <div className="bg-white dark:bg-black/20 rounded-lg border border-black/10 dark:border-white/10 focus-within:ring-2 focus-within:ring-blue-500/20 focus-within:border-blue-500 transition-all p-3">
                   <textarea
-                    className="w-full bg-transparent text-claude-text outline-none resize-none text-[16px] leading-relaxed font-sans font-[350] block"
+                    className="w-full bg-transparent text-claude-text outline-none resize-none leading-relaxed font-sans font-[350] block"
                     value={editingContent}
                     onChange={(e) => {
                       onSetEditingContent(e.target.value);
@@ -684,7 +701,7 @@ const MessageList = React.memo<MessageListProps>(({
                         el.focus();
                       }
                     }}
-                    style={{ minHeight: '60px' }}
+                    style={{ minHeight: '60px', fontSize: 'var(--chat-user-font-size)', lineHeight: 'var(--chat-message-line-height)' }}
                   />
                 </div>
                 <div className="flex items-start justify-between mt-3 px-1 gap-4">
@@ -728,8 +745,10 @@ const MessageList = React.memo<MessageListProps>(({
                 {(() => { const displayText = extractTextContent(msg.content); return displayText && displayText.trim() !== ''; })() && (
                   <div className="max-w-[85%] w-fit relative">
                     <div
-                      className="bg-[#F0EEE7] dark:bg-claude-btnHover text-claude-text px-3.5 py-2.5 text-[16px] leading-relaxed font-sans font-[350] whitespace-pre-wrap break-words relative overflow-hidden"
+                      className="bg-[#F0EEE7] dark:bg-claude-btnHover text-claude-text px-3.5 py-2.5 font-sans font-[350] whitespace-pre-wrap break-words relative overflow-hidden"
                       style={{
+                        fontSize: 'var(--chat-user-font-size)',
+                        lineHeight: 'var(--chat-message-line-height)',
                         maxHeight: expandedMessages.has(idx) ? 'none' : '300px',
                         borderRadius: ((() => {
                           const el = messageContentRefs.current.get(idx);
@@ -791,7 +810,7 @@ const MessageList = React.memo<MessageListProps>(({
               </div>
             )
           ) : (
-            <div className="px-1 text-claude-text text-[16.5px] leading-normal mt-2">
+            <div className="px-1 text-claude-text mt-2" style={{ fontSize: 'var(--chat-body-font-size)', lineHeight: 'var(--chat-message-line-height)' }}>
               {msg.thinking && (
                 <div className="mb-4">
                   <div
@@ -1108,6 +1127,29 @@ const MessageList = React.memo<MessageListProps>(({
                   ))}
                 </div>
               )}
+              {!!(msg.responseStats || msg.message_stats) && (
+                <div className="flex flex-wrap items-center gap-3 mt-3 mb-1 text-claude-textSecondary" style={{ fontSize: 'var(--chat-metadata-font-size)' }}>
+                  {(() => {
+                    const stats = msg.responseStats || msg.message_stats;
+                    const modelBadge = formatModelBadge(stats.model || msg.model || currentModelString);
+                    return modelBadge ? (
+                      <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full border border-claude-border bg-claude-input/60">
+                        <ClaudeLogo style={{ width: '12px', height: '12px' }} />
+                        <span>{modelBadge}</span>
+                      </span>
+                    ) : null;
+                  })()}
+                  {(msg.responseStats?.output_tokens || msg.message_stats?.output_tokens) ? (
+                    <span>{`${(msg.responseStats?.output_tokens || msg.message_stats?.output_tokens).toLocaleString()} tokens`}</span>
+                  ) : null}
+                  {formatElapsedMs(msg.responseStats?.elapsed_ms || msg.message_stats?.elapsed_ms) ? (
+                    <span>{formatElapsedMs(msg.responseStats?.elapsed_ms || msg.message_stats?.elapsed_ms)}</span>
+                  ) : null}
+                  {formatTokensPerSecond(msg.responseStats?.tokens_per_second || msg.message_stats?.tokens_per_second) ? (
+                    <span>{formatTokensPerSecond(msg.responseStats?.tokens_per_second || msg.message_stats?.tokens_per_second)}</span>
+                  ) : null}
+                </div>
+              )}
               {loading && idx === messages.length - 1 && !msg.content && !msg.thinking && !msg.searchStatus && normalizeDocumentDrafts(msg).length === 0 && !(msg.toolCalls && msg.toolCalls.length > 0) && (
                 <span className="inline-block ml-1 align-middle" style={{ verticalAlign: 'middle' }}>
                   <ClaudeLogo breathe style={{ width: '40px', height: '40px', display: 'inline-block' }} />
@@ -1373,9 +1415,11 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [showPlusMenu, setShowPlusMenu] = useState(false);
+  const [showPermissionMenu, setShowPermissionMenu] = useState(false);
   const [availableChatStyles, setAvailableChatStyles] = useState<ChatStyle[]>(() => getAllChatStyles());
   const [defaultChatStyleId, setDefaultChatStyle] = useState(() => getDefaultChatStyleId());
   const [selectedChatStyleId, setSelectedChatStyleId] = useState(() => getEffectiveChatStyle(null).id);
+  const [permissionMode, setPermissionMode] = useState<'workspace_write' | 'full_access'>('full_access');
   const [researchMode, setResearchMode] = useState(false);
   const [openedResearchMsgId, setOpenedResearchMsgId] = useState<string | null>(null);
   const toggleResearchMode = useCallback(async () => {
@@ -1531,20 +1575,25 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
 
   // 点击外部关闭加号菜单
   useEffect(() => {
-    if (!showPlusMenu) return;
+    if (!showPlusMenu && !showPermissionMenu) return;
     const handleClick = (e: MouseEvent) => {
       const target = e.target as Node;
       const insideMenu = plusMenuRef.current && plusMenuRef.current.contains(target);
       const insideButton = plusBtnRef.current && plusBtnRef.current.contains(target);
+      const permissionTrigger = (target as HTMLElement)?.closest?.('[data-permission-trigger="true"]');
+      const permissionMenu = (target as HTMLElement)?.closest?.('[data-permission-menu="true"]');
       if (!insideMenu && !insideButton) {
         setShowPlusMenu(false);
         setShowSkillsSubmenu(false);
         setShowProjectsSubmenu(false);
       }
+      if (!permissionTrigger && !permissionMenu) {
+        setShowPermissionMenu(false);
+      }
     };
     document.addEventListener('mousedown', handleClick);
     return () => document.removeEventListener('mousedown', handleClick);
-  }, [showPlusMenu]);
+  }, [showPlusMenu, showPermissionMenu]);
 
   useEffect(() => {
     const syncChatStyles = () => {
@@ -1563,6 +1612,26 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
     setDefaultChatStyle(getDefaultChatStyleId());
   }, [activeId, resetKey]);
 
+  useEffect(() => {
+    let cancelled = false;
+    getAgentConfig().then(config => {
+      if (!cancelled) {
+        setPermissionMode(config.permissionMode || 'full_access');
+      }
+    }).catch(() => {});
+    const handleAgentConfigUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<any>).detail;
+      if (detail?.permissionMode) {
+        setPermissionMode(detail.permissionMode);
+      }
+    };
+    window.addEventListener('agentConfigUpdated', handleAgentConfigUpdated as EventListener);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('agentConfigUpdated', handleAgentConfigUpdated as EventListener);
+    };
+  }, []);
+
   const handleChatStyleSelect = useCallback((styleId: string | null) => {
     if (activeId) {
       if (!styleId || styleId === getDefaultChatStyleId()) {
@@ -1577,6 +1646,18 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
 
     setSelectedChatStyleId(styleId || getDefaultChatStyleId());
   }, [activeId]);
+
+  const handlePermissionModeChange = useCallback(async (mode: 'workspace_write' | 'full_access') => {
+    setPermissionMode(mode);
+    setShowPermissionMenu(false);
+    try {
+      const config = await updateAgentConfig({ permissionMode: mode });
+      setPermissionMode(config.permissionMode || mode);
+      window.dispatchEvent(new CustomEvent('agentConfigUpdated', { detail: config }));
+    } catch (err) {
+      console.error('Failed to update permission mode', err);
+    }
+  }, []);
 
   // Reset when resetKey changes (New Chat clicked)
   useEffect(() => {
@@ -1874,6 +1955,16 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                     else if (data.subtype === 'task_progress') { const e = next.get(data.task_id); if (e) next.set(data.task_id, { ...e, last_tool_name: data.last_tool_name }); }
                     else if (data.subtype === 'task_notification') next.delete(data.task_id);
                     return next;
+                  });
+                }
+                if (event === 'message_stats' && data?.stats) {
+                  setMessagesFor(convId, prev => {
+                    const newMsgs = [...prev];
+                    const lastMsg = newMsgs[newMsgs.length - 1];
+                    if (lastMsg && lastMsg.role === 'assistant') {
+                      lastMsg.responseStats = data.stats;
+                    }
+                    return newMsgs;
                   });
                 }
               },
@@ -2639,6 +2730,16 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
             return newMsgs;
           });
         }
+        if (event === 'message_stats' && data?.stats) {
+          setMessagesFor(conversationId!, prev => {
+            const newMsgs = [...prev];
+            const lastMsg = newMsgs[newMsgs.length - 1];
+            if (lastMsg && lastMsg.role === 'assistant') {
+              lastMsg.responseStats = data.stats;
+            }
+            return newMsgs;
+          });
+        }
         if (event && event.startsWith('research_')) {
           setMessages(prev => applyResearchEvent(prev, event, data));
         }
@@ -2921,15 +3022,17 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
       ? msg.attachments.filter((att: any) => att && ((typeof att.id === 'string' && att.id.trim()) || (typeof att.fileId === 'string' && att.fileId.trim())))
       : [];
     // Normalize to snake_case for component compatibility
-    const attachments = raw.map((att: any) => ({
-      id: att.id || att.fileId || '',
-      file_name: att.file_name || att.fileName || 'file',
-      file_type: att.file_type || att.fileType || 'document',
-      mime_type: att.mime_type || att.mimeType || '',
-      file_size: att.file_size || att.size || 0,
-      ...att,
-      id: att.id || att.fileId || '', // ensure id wins over ...att spread
-    }));
+    const attachments = raw.map((att: any) => {
+      const normalizedId = att.id || att.fileId || '';
+      return {
+        ...att,
+        id: normalizedId,
+        file_name: att.file_name || att.fileName || 'file',
+        file_type: att.file_type || att.fileType || 'document',
+        mime_type: att.mime_type || att.mimeType || '',
+        file_size: att.file_size || att.size || 0,
+      };
+    });
     const attachmentIds = attachments.map((att: any) => att.id);
     return {
       attachmentIds,
@@ -3079,6 +3182,16 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
             const lastMsg = newMsgs[newMsgs.length - 1];
             if (lastMsg && lastMsg.role === 'assistant') {
               lastMsg.toolTextEndOffset = data.offset;
+            }
+            return newMsgs;
+          });
+        }
+        if (event === 'message_stats' && data?.stats) {
+          setMessagesFor(conversationId, prev => {
+            const newMsgs = [...prev];
+            const lastMsg = newMsgs[newMsgs.length - 1];
+            if (lastMsg && lastMsg.role === 'assistant') {
+              lastMsg.responseStats = data.stats;
             }
             return newMsgs;
           });
@@ -3281,6 +3394,16 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
             const lastMsg = newMsgs[newMsgs.length - 1];
             if (lastMsg && lastMsg.role === 'assistant') {
               lastMsg.toolTextEndOffset = data.offset;
+            }
+            return newMsgs;
+          });
+        }
+        if (event === 'message_stats' && data?.stats) {
+          setMessagesFor(conversationId, prev => {
+            const newMsgs = [...prev];
+            const lastMsg = newMsgs[newMsgs.length - 1];
+            if (lastMsg && lastMsg.role === 'assistant') {
+              lastMsg.responseStats = data.stats;
             }
             return newMsgs;
           });
@@ -3925,6 +4048,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
           >
             <MessageList
               messages={messages}
+              currentModelString={currentModelString}
               loading={loading}
               expandedMessages={expandedMessages}
               editingMessageIdx={editingMessageIdx}
@@ -3985,8 +4109,8 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                   />
                   <textarea
                     ref={inputRef}
-                    className={`w-full px-4 pt-4 pb-0 placeholder:text-claude-textSecondary text-[16px] outline-none resize-none bg-transparent font-sans font-[350] ${inputText.match(/^\/[a-zA-Z0-9_-]+/) ? 'text-transparent caret-claude-text' : 'text-claude-text'}`}
-                    style={{ height: `${inputBarBaseHeight}px`, minHeight: '16px', boxSizing: 'border-box', overflowY: 'hidden' }}
+                    className={`w-full px-4 pt-4 pb-0 placeholder:text-claude-textSecondary outline-none resize-none bg-transparent font-sans font-[350] ${inputText.match(/^\/[a-zA-Z0-9_-]+/) ? 'text-transparent caret-claude-text' : 'text-claude-text'}`}
+                    style={{ height: `${inputBarBaseHeight}px`, minHeight: '16px', boxSizing: 'border-box', overflowY: 'hidden', fontSize: 'var(--chat-input-font-size)', lineHeight: 'var(--chat-message-line-height)' }}
                     placeholder={selectedSkill ? `Describe what you want ${selectedSkill.name} to do...` : "How can I help you today?"}
                     value={inputText}
                     onChange={(e) => {
@@ -4210,6 +4334,49 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                         </div>
                       </div>
                     )}
+                    <div className="relative ml-1" data-permission-trigger="true">
+                      <button
+                        onClick={() => setShowPermissionMenu(prev => !prev)}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border transition-colors ${
+                          permissionMode === 'full_access'
+                            ? 'border-[#C6613F]/40 bg-[#C6613F]/10 text-[#C6613F]'
+                            : 'border-claude-border bg-claude-input text-claude-textSecondary'
+                        }`}
+                        style={{ fontSize: 'var(--chat-metadata-font-size)' }}
+                        title={permissionMode === 'full_access' ? 'Full access enabled' : 'Workspace-only access'}
+                      >
+                        <Shield size={13} />
+                        <span>{permissionMode === 'full_access' ? (uiLanguage === 'zh-CN' ? '完全访问权限' : 'Full access') : (uiLanguage === 'zh-CN' ? '默认权限' : 'Default')}</span>
+                        <ChevronDown size={12} className={`transition-transform ${showPermissionMenu ? 'rotate-180' : ''}`} />
+                      </button>
+                      {showPermissionMenu && (
+                        <div
+                          data-permission-menu="true"
+                          className="absolute bottom-full left-0 mb-2 w-[230px] bg-claude-input border border-claude-border rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.12)] py-1.5 z-50"
+                        >
+                          <button
+                            onClick={() => handlePermissionModeChange('workspace_write')}
+                            className="w-full flex items-start justify-between gap-3 px-4 py-2.5 text-left hover:bg-claude-hover transition-colors"
+                          >
+                            <div>
+                              <div className="text-[13px] text-claude-text">{uiLanguage === 'zh-CN' ? '默认权限' : 'Default'}</div>
+                              <div className="text-[11px] text-claude-textSecondary mt-1">{uiLanguage === 'zh-CN' ? '限制为当前工作区，禁用 shell' : 'Workspace-only file access, shell disabled'}</div>
+                            </div>
+                            {permissionMode === 'workspace_write' && <Check size={14} className="text-[#2E7CF6] mt-0.5" />}
+                          </button>
+                          <button
+                            onClick={() => handlePermissionModeChange('full_access')}
+                            className="w-full flex items-start justify-between gap-3 px-4 py-2.5 text-left hover:bg-claude-hover transition-colors"
+                          >
+                            <div>
+                              <div className="text-[13px] text-claude-text">{uiLanguage === 'zh-CN' ? '完全访问权限' : 'Full access'}</div>
+                              <div className="text-[11px] text-claude-textSecondary mt-1">{uiLanguage === 'zh-CN' ? '允许全盘文件操作与命令执行' : 'System-wide file access and shell commands'}</div>
+                            </div>
+                            {permissionMode === 'full_access' && <Check size={14} className="text-[#2E7CF6] mt-0.5" />}
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     {/* Blue research badge next to + button when enabled */}
                     {researchMode && (
                       <div className="group/research relative ml-1 flex items-center bg-[#DBEAFE] dark:bg-[#1E3A5F] rounded-lg p-1.5">

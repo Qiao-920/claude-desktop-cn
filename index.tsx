@@ -8,6 +8,7 @@ const rootElement = document.getElementById('root');
 // Initialize theme and font from localStorage to ensure CSS variables are hydrated before render
 const theme = localStorage.getItem('theme') || 'auto';
 const font = localStorage.getItem('chat_font') || 'default';
+const density = localStorage.getItem('ui_density') || 'compact';
 if (theme === 'dark' || (theme === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
   document.documentElement.setAttribute('data-theme', 'dark');
   document.documentElement.classList.add('dark');
@@ -15,6 +16,7 @@ if (theme === 'dark' || (theme === 'auto' && window.matchMedia('(prefers-color-s
   document.documentElement.setAttribute('data-theme', 'light');
 }
 document.documentElement.setAttribute('data-chat-font', font);
+document.documentElement.setAttribute('data-ui-density', density);
 
 if (!rootElement) {
   throw new Error("Could not find root element to mount to");
