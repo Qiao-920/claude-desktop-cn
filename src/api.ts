@@ -543,6 +543,15 @@ export interface CodeSaveResult {
   mimeType: string;
 }
 
+export interface CodeFileOperationResult {
+  ok?: boolean;
+  name?: string;
+  path: string;
+  type?: 'file' | 'directory';
+  size?: number;
+  mtime?: string;
+}
+
 export interface CodeCommandResult {
   cwd: string;
   command: string;
@@ -634,6 +643,51 @@ export async function saveCodeFile(workspacePath: string, path: string, content:
   return res.json();
 }
 
+export async function createCodeEntry(
+  workspacePath: string,
+  parentPath: string,
+  name: string,
+  type: 'file' | 'directory',
+  content = ''
+): Promise<CodeFileOperationResult> {
+  const res = await fetch(`${API_BASE}/code/workspace/create`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspacePath, parentPath, name, type, content }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to create entry');
+  }
+  return res.json();
+}
+
+export async function renameCodeEntry(workspacePath: string, path: string, newName: string): Promise<CodeFileOperationResult> {
+  const res = await fetch(`${API_BASE}/code/workspace/rename`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspacePath, path, newName }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to rename entry');
+  }
+  return res.json();
+}
+
+export async function deleteCodeEntry(workspacePath: string, path: string): Promise<CodeFileOperationResult> {
+  const res = await fetch(`${API_BASE}/code/workspace/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspacePath, path }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to delete entry');
+  }
+  return res.json();
+}
+
 export async function runCodeCommand(workspacePath: string, command: string, timeout = 120000): Promise<CodeCommandResult> {
   const res = await fetch(`${API_BASE}/code/workspace/command`, {
     method: 'POST',
@@ -669,6 +723,19 @@ export async function runCodeGitAction(workspacePath: string, action: 'pull' | '
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to run git action');
+  }
+  return res.json();
+}
+
+export async function restoreCodeFileFromGit(workspacePath: string, path: string): Promise<CodeGitActionResult> {
+  const res = await fetch(`${API_BASE}/code/workspace/git/restore-file`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspacePath, path }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to restore file');
   }
   return res.json();
 }

@@ -3139,6 +3139,21 @@ You have the following skills available. When a user's request matches a skill's
         });
     }
 
+    function assertSafeCodeName(name) {
+        if (!name || typeof name !== 'string') {
+            const err = new Error('Missing name');
+            err.statusCode = 400;
+            throw err;
+        }
+        const trimmed = name.trim();
+        if (!trimmed || trimmed.includes('/') || trimmed.includes('\\') || trimmed === '.' || trimmed === '..') {
+            const err = new Error('Invalid name');
+            err.statusCode = 400;
+            throw err;
+        }
+        return trimmed;
+    }
+
     function parseCodeGitStatus(rawStatus, repoRoot) {
         const lines = String(rawStatus || '').split(/\r?\n/).filter(Boolean);
         const branchLine = lines.find(line => line.startsWith('## ')) || '## main';
@@ -3288,6 +3303,78 @@ You have the following skills available. When a user's request matches a skill's
         }
     });
 
+    server.post('/api/code/workspace/create', (req, res) => {
+        try {
+            const { workspacePath, parentPath, name, type, content } = req.body || {};
+            const safeName = assertSafeCodeName(name);
+            const kind = type === 'directory' ? 'directory' : 'file';
+            const { resolvedTarget: resolvedParent } = resolveCodeWorkspacePath(workspacePath, parentPath || workspacePath);
+            if (!fs.existsSync(resolvedParent) || !fs.statSync(resolvedParent).isDirectory()) {
+                return res.status(400).json({ error: 'Parent path is not a directory' });
+            }
+            const nextPath = path.join(resolvedParent, safeName);
+            resolveCodeWorkspacePath(workspacePath, nextPath);
+            if (fs.existsSync(nextPath)) return res.status(409).json({ error: 'Target already exists' });
+            if (kind === 'directory') {
+                fs.mkdirSync(nextPath, { recursive: false });
+            } else {
+                fs.writeFileSync(nextPath, typeof content === 'string' ? content : '', 'utf8');
+            }
+            const stat = fs.statSync(nextPath);
+            res.json({
+                name: path.basename(nextPath),
+                path: nextPath,
+                type: kind,
+                size: stat.size || 0,
+                mtime: stat.mtime.toISOString(),
+            });
+        } catch (err) {
+            res.status(err.statusCode || 500).json({ error: err.message || 'Failed to create entry' });
+        }
+    });
+
+    server.post('/api/code/workspace/rename', (req, res) => {
+        try {
+            const { workspacePath, path: targetPath, newName } = req.body || {};
+            const safeName = assertSafeCodeName(newName);
+            const { workspaceRoot, resolvedTarget } = resolveCodeWorkspacePath(workspacePath, targetPath);
+            if (!fs.existsSync(resolvedTarget)) return res.status(404).json({ error: 'Target does not exist' });
+            if (resolvedTarget === workspaceRoot) return res.status(400).json({ error: 'Cannot rename workspace root' });
+            const nextPath = path.join(path.dirname(resolvedTarget), safeName);
+            resolveCodeWorkspacePath(workspacePath, nextPath);
+            if (fs.existsSync(nextPath)) return res.status(409).json({ error: 'Target already exists' });
+            fs.renameSync(resolvedTarget, nextPath);
+            const stat = fs.statSync(nextPath);
+            res.json({
+                name: path.basename(nextPath),
+                path: nextPath,
+                type: stat.isDirectory() ? 'directory' : 'file',
+                size: stat.size || 0,
+                mtime: stat.mtime.toISOString(),
+            });
+        } catch (err) {
+            res.status(err.statusCode || 500).json({ error: err.message || 'Failed to rename entry' });
+        }
+    });
+
+    server.post('/api/code/workspace/delete', (req, res) => {
+        try {
+            const { workspacePath, path: targetPath } = req.body || {};
+            const { workspaceRoot, resolvedTarget } = resolveCodeWorkspacePath(workspacePath, targetPath);
+            if (!fs.existsSync(resolvedTarget)) return res.status(404).json({ error: 'Target does not exist' });
+            if (resolvedTarget === workspaceRoot) return res.status(400).json({ error: 'Cannot delete workspace root' });
+            const stat = fs.statSync(resolvedTarget);
+            if (stat.isDirectory()) {
+                fs.rmSync(resolvedTarget, { recursive: true, force: false });
+            } else {
+                fs.unlinkSync(resolvedTarget);
+            }
+            res.json({ ok: true, path: resolvedTarget });
+        } catch (err) {
+            res.status(err.statusCode || 500).json({ error: err.message || 'Failed to delete entry' });
+        }
+    });
+
     server.post('/api/code/workspace/command', async (req, res) => {
         const startedAt = Date.now();
         try {
@@ -3314,6 +3401,30 @@ You have the following skills available. When a user's request matches a skill's
             res.json(await getCodeGitStatus(workspaceRoot));
         } catch (err) {
             res.status(err.statusCode || 500).json({ error: err.message || 'Failed to read git status' });
+        }
+    });
+
+    server.post('/api/code/workspace/git/restore-file', async (req, res) => {
+        const startedAt = Date.now();
+        try {
+            const { workspacePath, path: targetPath } = req.body || {};
+            const { workspaceRoot, resolvedTarget } = resolveCodeWorkspacePath(workspacePath, targetPath);
+            const status = await getCodeGitStatus(workspaceRoot);
+            if (!status.isRepo) return res.status(400).json({ error: 'Selected workspace is not a Git repository' });
+            const repoRoot = status.repoRoot || workspaceRoot;
+            if (!isPathInside(repoRoot, resolvedTarget)) return res.status(403).json({ error: 'File is outside the Git repository' });
+            const relativePath = path.relative(repoRoot, resolvedTarget);
+            const result = await runCodeGitCommand(repoRoot, ['restore', '--', relativePath], 30000);
+            const nextStatus = await getCodeGitStatus(repoRoot).catch(() => status);
+            res.json({
+                action: 'restore_file',
+                output: result.output || (result.ok ? 'File restored' : 'Git restore failed'),
+                isError: !result.ok,
+                durationMs: Date.now() - startedAt,
+                status: nextStatus,
+            });
+        } catch (err) {
+            res.status(err.statusCode || 500).json({ error: err.message || 'Failed to restore file' });
         }
     });
 

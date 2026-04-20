@@ -26,6 +26,7 @@ import AdminAnnouncements from './components/admin/AdminAnnouncements';
 import ChatsPage from './components/ChatsPage';
 import CustomizePage from './components/CustomizePage';
 import ProjectsPage from './components/ProjectsPage';
+import CoworkPage from './components/CoworkPage';
 import CodePage from './components/CodePage';
 import { useClientLanguageText } from './utils/chineseClientText';
 
@@ -326,6 +327,8 @@ const Layout = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const isCodeRoute = location.pathname === '/code';
+  const isCoworkRoute = location.pathname === '/cowork';
+  const isChatRoute = !isCodeRoute && !isCoworkRoute;
 
   // Navigation history for back/forward buttons
   const [navHistory, setNavHistory] = useState<string[]>([location.pathname + location.search + location.hash]);
@@ -650,14 +653,18 @@ const Layout = () => {
             <Tooltip text="Chat" shortcut="Ctrl+1">
               <button
                 onClick={() => navigate('/')}
-                className={`px-3.5 py-1 text-[13px] font-medium rounded-[10px] transition-colors ${isCodeRoute ? 'text-claude-textSecondary hover:text-claude-text' : 'text-claude-text shadow-sm'}`}
-                style={{ backgroundColor: isCodeRoute ? 'transparent' : 'var(--bg-mode-tab-active)', fontFamily: 'Inter, system-ui, -apple-system, sans-serif', letterSpacing: '0.01em' }}
+                className={`px-3.5 py-1 text-[13px] font-medium rounded-[10px] transition-colors ${isChatRoute ? 'text-claude-text shadow-sm' : 'text-claude-textSecondary hover:text-claude-text'}`}
+                style={{ backgroundColor: isChatRoute ? 'var(--bg-mode-tab-active)' : 'transparent', fontFamily: 'Inter, system-ui, -apple-system, sans-serif', letterSpacing: '0.01em' }}
               >
                 聊天
               </button>
             </Tooltip>
             <Tooltip text="Cowork" shortcut="Ctrl+2">
-              <button className="px-3.5 py-1 text-[13px] font-medium rounded-[10px] text-claude-textSecondary hover:text-claude-text transition-colors" style={{ fontFamily: 'Inter, system-ui, -apple-system, sans-serif', letterSpacing: '0.01em' }}>
+              <button
+                onClick={() => navigate('/cowork')}
+                className={`px-3.5 py-1 text-[13px] font-medium rounded-[10px] transition-colors ${isCoworkRoute ? 'text-claude-text shadow-sm' : 'text-claude-textSecondary hover:text-claude-text'}`}
+                style={{ backgroundColor: isCoworkRoute ? 'var(--bg-mode-tab-active)' : 'transparent', fontFamily: 'Inter, system-ui, -apple-system, sans-serif', letterSpacing: '0.01em' }}
+              >
                 协作
               </button>
             </Tooltip>
@@ -704,7 +711,7 @@ const Layout = () => {
             {/* Main Content Area - takes remaining width after panel */}
             <div className="flex-1 flex flex-col h-full min-w-0">
               {/* Header - Only render here if NOT in Artifacts-only mode */}
-              {isChatMode && (!showArtifacts || documentPanelDoc) && !showSettings && !showUpgrade && location.pathname !== '/chats' && location.pathname !== '/customize' && location.pathname !== '/projects' && location.pathname !== '/artifacts' && location.pathname !== '/code' && (
+              {isChatMode && (!showArtifacts || documentPanelDoc) && !showSettings && !showUpgrade && location.pathname !== '/chats' && location.pathname !== '/customize' && location.pathname !== '/projects' && location.pathname !== '/artifacts' && location.pathname !== '/code' && location.pathname !== '/cowork' && (
                 <ChatHeader
                   title={currentChatTitle}
                   showArtifacts={showArtifacts}
@@ -729,6 +736,8 @@ const Layout = () => {
                 }} />
               ) : location.pathname === '/projects' ? (
                 <ProjectsPage />
+              ) : location.pathname === '/cowork' ? (
+                <CoworkPage />
               ) : location.pathname === '/code' ? (
                 <CodePage />
               ) : location.pathname === '/artifacts' ? (
@@ -851,6 +860,7 @@ const App = () => {
         <Route path="/chats" element={<Layout />} />
         <Route path="/customize" element={<Layout />} />
         <Route path="/projects" element={<Layout />} />
+        <Route path="/cowork" element={<Layout />} />
         <Route path="/code" element={<Layout />} />
         <Route path="/artifacts" element={<Layout />} />
         <Route path="/chat/:id" element={<Layout />} />

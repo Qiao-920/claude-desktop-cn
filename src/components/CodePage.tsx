@@ -7,14 +7,21 @@ import {
   Download,
   ExternalLink,
   File,
+  FilePlus,
   Folder,
+  FolderPlus,
   FolderOpen,
   GitBranch,
+  GitCompare,
+  Pencil,
   Play,
   RefreshCw,
+  RotateCcw,
   Save,
   Shield,
   Terminal,
+  Trash2,
+  Undo2,
   Upload,
 } from 'lucide-react';
 import {
@@ -22,10 +29,14 @@ import {
   CodeFileResult,
   CodeGitStatusResult,
   CodeWorkspaceEntry,
+  createCodeEntry,
+  deleteCodeEntry,
   getAgentConfig,
   getCodeGitStatus,
   listCodeWorkspace,
   readCodeFile,
+  renameCodeEntry,
+  restoreCodeFileFromGit,
   runCodeCommand,
   runCodeGitAction,
   saveCodeFile,
@@ -36,6 +47,12 @@ import { copyToClipboard } from '../utils/clipboard';
 
 type PermissionMode = 'workspace_write' | 'full_access';
 type GitAction = 'pull' | 'stage_all' | 'commit' | 'push';
+type DiffLine = {
+  type: 'same' | 'add' | 'remove';
+  oldLine?: number;
+  newLine?: number;
+  text: string;
+};
 
 const formatBytes = (bytes: number) => {
   if (!bytes) return '0 B';
@@ -60,6 +77,55 @@ const getRelativePath = (root: string, target: string) => {
 };
 
 const splitPath = (value: string) => value.split(/[\\/]+/).filter(Boolean);
+
+const buildLineDiff = (oldText: string, newText: string): DiffLine[] => {
+  const oldLines = oldText.split(/\r?\n/);
+  const newLines = newText.split(/\r?\n/);
+  const oldCount = oldLines.length;
+  const newCount = newLines.length;
+  if (oldCount * newCount > 90000) {
+    const rows: DiffLine[] = [];
+    const max = Math.max(oldCount, newCount);
+    for (let i = 0; i < max; i += 1) {
+      if (oldLines[i] === newLines[i]) {
+        rows.push({ type: 'same', oldLine: i + 1, newLine: i + 1, text: oldLines[i] || '' });
+      } else {
+        if (i < oldCount) rows.push({ type: 'remove', oldLine: i + 1, text: oldLines[i] || '' });
+        if (i < newCount) rows.push({ type: 'add', newLine: i + 1, text: newLines[i] || '' });
+      }
+    }
+    return rows;
+  }
+
+  const dp = Array.from({ length: oldCount + 1 }, () => Array(newCount + 1).fill(0));
+  for (let i = oldCount - 1; i >= 0; i -= 1) {
+    for (let j = newCount - 1; j >= 0; j -= 1) {
+      dp[i][j] = oldLines[i] === newLines[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+
+  const rows: DiffLine[] = [];
+  let i = 0;
+  let j = 0;
+  let oldLine = 1;
+  let newLine = 1;
+  while (i < oldCount && j < newCount) {
+    if (oldLines[i] === newLines[j]) {
+      rows.push({ type: 'same', oldLine: oldLine++, newLine: newLine++, text: oldLines[i] });
+      i += 1;
+      j += 1;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      rows.push({ type: 'remove', oldLine: oldLine++, text: oldLines[i] });
+      i += 1;
+    } else {
+      rows.push({ type: 'add', newLine: newLine++, text: newLines[j] });
+      j += 1;
+    }
+  }
+  while (i < oldCount) rows.push({ type: 'remove', oldLine: oldLine++, text: oldLines[i++] });
+  while (j < newCount) rows.push({ type: 'add', newLine: newLine++, text: newLines[j++] });
+  return rows;
+};
 
 const gitActionLabel = (action: GitAction, isZh: boolean) => {
   const zh: Record<GitAction, string> = {
@@ -98,12 +164,16 @@ const CodePage = () => {
   const [runningCommand, setRunningCommand] = useState(false);
   const [loadingGit, setLoadingGit] = useState(false);
   const [gitBusyAction, setGitBusyAction] = useState<GitAction | null>(null);
+  const [fileOperationBusy, setFileOperationBusy] = useState(false);
+  const [showDiff, setShowDiff] = useState(false);
   const [error, setError] = useState('');
 
   const relativeCurrentPath = useMemo(() => getRelativePath(workspacePath, currentPath || workspacePath), [workspacePath, currentPath]);
   const breadcrumbParts = useMemo(() => splitPath(relativeCurrentPath === '.' ? '' : relativeCurrentPath), [relativeCurrentPath]);
   const isEditableFile = !!selectedFile && !selectedFile.binary && !selectedFile.truncated;
   const isDirty = isEditableFile && editorContent !== originalContent;
+  const diffLines = useMemo(() => buildLineDiff(originalContent, editorContent), [editorContent, originalContent]);
+  const changedDiffLines = useMemo(() => diffLines.filter(line => line.type !== 'same').length, [diffLines]);
 
   const refreshAgentConfig = useCallback(async () => {
     try {
@@ -177,6 +247,7 @@ const CodePage = () => {
     setSelectedFile(null);
     setEditorContent('');
     setOriginalContent('');
+    setShowDiff(false);
     localStorage.setItem('code_workspace_path', dir);
     await loadDirectory(dir, dir);
     await refreshGitStatus(dir);
@@ -192,6 +263,7 @@ const CodePage = () => {
       setSelectedFile(null);
       setEditorContent('');
       setOriginalContent('');
+      setShowDiff(false);
       await loadDirectory(entry.path);
       return;
     }
@@ -202,6 +274,7 @@ const CodePage = () => {
       setSelectedFile(file);
       setEditorContent(file.content || '');
       setOriginalContent(file.content || '');
+      setShowDiff(false);
     } catch (err: any) {
       setError(err?.message || (isZh ? '读取文件失败' : 'Failed to read file'));
     } finally {
@@ -216,6 +289,7 @@ const CodePage = () => {
     try {
       const saved = await saveCodeFile(workspacePath, selectedFile.path, editorContent);
       setOriginalContent(editorContent);
+      setShowDiff(false);
       setSelectedFile(prev => prev ? { ...prev, content: editorContent, size: saved.size, mimeType: saved.mimeType, truncated: false } : prev);
       await loadDirectory(currentPath);
       await refreshGitStatus();
@@ -223,6 +297,113 @@ const CodePage = () => {
       setError(err?.message || (isZh ? '保存文件失败' : 'Failed to save file'));
     } finally {
       setSavingFile(false);
+    }
+  };
+
+  const revertEditorChanges = () => {
+    if (!isEditableFile || !isDirty) return;
+    setEditorContent(originalContent);
+    setShowDiff(false);
+  };
+
+  const createEntry = async (type: 'file' | 'directory') => {
+    if (!workspacePath || fileOperationBusy) return;
+    const label = type === 'file'
+      ? (isZh ? '新文件名' : 'New file name')
+      : (isZh ? '新文件夹名' : 'New folder name');
+    const name = window.prompt(label);
+    if (!name?.trim()) return;
+    setFileOperationBusy(true);
+    setError('');
+    try {
+      const created = await createCodeEntry(workspacePath, currentPath || workspacePath, name.trim(), type);
+      await loadDirectory(currentPath || workspacePath);
+      await refreshGitStatus();
+      if (type === 'file' && created.path) {
+        const file = await readCodeFile(workspacePath, created.path);
+        setSelectedFile(file);
+        setEditorContent(file.content || '');
+        setOriginalContent(file.content || '');
+        setShowDiff(false);
+      }
+    } catch (err: any) {
+      setError(err?.message || (isZh ? '创建失败' : 'Failed to create entry'));
+    } finally {
+      setFileOperationBusy(false);
+    }
+  };
+
+  const renameSelectedFile = async () => {
+    if (!selectedFile || fileOperationBusy) return;
+    const nextName = window.prompt(isZh ? '重命名为' : 'Rename to', selectedFile.name);
+    if (!nextName?.trim() || nextName.trim() === selectedFile.name) return;
+    setFileOperationBusy(true);
+    setError('');
+    try {
+      const renamed = await renameCodeEntry(workspacePath, selectedFile.path, nextName.trim());
+      await loadDirectory(currentPath || workspacePath);
+      await refreshGitStatus();
+      if (renamed.path) {
+        const file = await readCodeFile(workspacePath, renamed.path);
+        setSelectedFile(file);
+        setEditorContent(file.content || '');
+        setOriginalContent(file.content || '');
+        setShowDiff(false);
+      }
+    } catch (err: any) {
+      setError(err?.message || (isZh ? '重命名失败' : 'Failed to rename file'));
+    } finally {
+      setFileOperationBusy(false);
+    }
+  };
+
+  const deleteSelectedFile = async () => {
+    if (!selectedFile || fileOperationBusy) return;
+    const ok = window.confirm(isZh ? `确定删除 ${selectedFile.name} 吗？` : `Delete ${selectedFile.name}?`);
+    if (!ok) return;
+    setFileOperationBusy(true);
+    setError('');
+    try {
+      await deleteCodeEntry(workspacePath, selectedFile.path);
+      setSelectedFile(null);
+      setEditorContent('');
+      setOriginalContent('');
+      setShowDiff(false);
+      await loadDirectory(currentPath || workspacePath);
+      await refreshGitStatus();
+    } catch (err: any) {
+      setError(err?.message || (isZh ? '删除失败' : 'Failed to delete file'));
+    } finally {
+      setFileOperationBusy(false);
+    }
+  };
+
+  const restoreSelectedFile = async () => {
+    if (!selectedFile || fileOperationBusy) return;
+    const ok = window.confirm(isZh ? `从 Git 恢复 ${selectedFile.name}？当前未保存和未提交修改会被丢弃。` : `Restore ${selectedFile.name} from Git? Unsaved and uncommitted changes will be discarded.`);
+    if (!ok) return;
+    setFileOperationBusy(true);
+    setError('');
+    try {
+      const result = await restoreCodeFileFromGit(workspacePath, selectedFile.path);
+      setCommandHistory(prev => [{
+        cwd: gitStatus?.repoRoot || workspacePath,
+        command: `git restore -- ${getRelativePath(gitStatus?.repoRoot || workspacePath, selectedFile.path)}`,
+        output: result.output,
+        isError: result.isError,
+        durationMs: result.durationMs || 0,
+      }, ...prev].slice(0, 12));
+      if (result.status) setGitStatus(result.status);
+      const file = await readCodeFile(workspacePath, selectedFile.path);
+      setSelectedFile(file);
+      setEditorContent(file.content || '');
+      setOriginalContent(file.content || '');
+      setShowDiff(false);
+      await loadDirectory(currentPath || workspacePath);
+    } catch (err: any) {
+      setError(err?.message || (isZh ? '恢复失败' : 'Failed to restore file'));
+    } finally {
+      setFileOperationBusy(false);
     }
   };
 
@@ -457,6 +638,12 @@ const CodePage = () => {
                     </React.Fragment>
                   ))}
                 </div>
+                <button onClick={() => createEntry('file')} disabled={fileOperationBusy} className="p-1.5 rounded-md hover:bg-claude-hover text-claude-textSecondary disabled:opacity-50" title={isZh ? '新建文件' : 'New file'}>
+                  <FilePlus size={14} />
+                </button>
+                <button onClick={() => createEntry('directory')} disabled={fileOperationBusy} className="p-1.5 rounded-md hover:bg-claude-hover text-claude-textSecondary disabled:opacity-50" title={isZh ? '新建文件夹' : 'New folder'}>
+                  <FolderPlus size={14} />
+                </button>
                 <button onClick={() => loadDirectory(currentPath)} className="p-1.5 rounded-md hover:bg-claude-hover text-claude-textSecondary" title={isZh ? '刷新' : 'Refresh'}>
                   <RefreshCw size={14} className={loadingTree ? 'animate-spin' : ''} />
                 </button>
@@ -502,6 +689,27 @@ const CodePage = () => {
                   {selectedFile && (
                     <>
                       <span className="text-[11px] text-claude-textSecondary">{formatBytes(selectedFile.size)}</span>
+                      {isEditableFile && (
+                        <button onClick={() => setShowDiff(prev => !prev)} disabled={!isDirty} className={`p-1.5 rounded-md hover:bg-claude-hover disabled:opacity-40 disabled:cursor-not-allowed ${showDiff ? 'text-[#2E7CF6]' : 'text-claude-textSecondary'}`} title={isZh ? '差异预览' : 'Diff preview'}>
+                          <GitCompare size={14} />
+                        </button>
+                      )}
+                      {isEditableFile && (
+                        <button onClick={revertEditorChanges} disabled={!isDirty} className="p-1.5 rounded-md hover:bg-claude-hover text-claude-textSecondary disabled:opacity-40 disabled:cursor-not-allowed" title={isZh ? '撤销当前文件未保存修改' : 'Discard unsaved changes'}>
+                          <Undo2 size={14} />
+                        </button>
+                      )}
+                      {gitStatus?.isRepo && (
+                        <button onClick={restoreSelectedFile} disabled={fileOperationBusy} className="p-1.5 rounded-md hover:bg-claude-hover text-claude-textSecondary disabled:opacity-40 disabled:cursor-not-allowed" title={isZh ? '从 Git 恢复这个文件' : 'Restore this file from Git'}>
+                          <RotateCcw size={14} />
+                        </button>
+                      )}
+                      <button onClick={renameSelectedFile} disabled={fileOperationBusy} className="p-1.5 rounded-md hover:bg-claude-hover text-claude-textSecondary disabled:opacity-40 disabled:cursor-not-allowed" title={isZh ? '重命名文件' : 'Rename file'}>
+                        <Pencil size={14} />
+                      </button>
+                      <button onClick={deleteSelectedFile} disabled={fileOperationBusy} className="p-1.5 rounded-md hover:bg-claude-hover text-[#C6613F] disabled:opacity-40 disabled:cursor-not-allowed" title={isZh ? '删除文件' : 'Delete file'}>
+                        <Trash2 size={14} />
+                      </button>
                       <button onClick={() => copyToClipboard(selectedFile.binary ? selectedFile.path : editorContent)} className="p-1.5 rounded-md hover:bg-claude-hover text-claude-textSecondary" title={isZh ? '复制内容' : 'Copy content'}>
                         <Copy size={14} />
                       </button>
@@ -538,6 +746,32 @@ const CodePage = () => {
                       {editorContent}
                       {'\n\n... file truncated at 1 MB; editing is disabled for safety.'}
                     </pre>
+                  ) : showDiff ? (
+                    <div className="h-full overflow-auto bg-claude-bg">
+                      <div className="sticky top-0 z-10 h-9 px-4 border-b border-claude-border bg-claude-bg/95 backdrop-blur flex items-center justify-between text-[12px]">
+                        <span className="text-claude-textSecondary">{isZh ? '差异预览' : 'Diff preview'}</span>
+                        <span className="text-claude-textSecondary">{changedDiffLines === 0 ? (isZh ? '没有差异' : 'No changes') : `${changedDiffLines} ${isZh ? '处变化' : 'changed lines'}`}</span>
+                      </div>
+                      <div className="font-mono text-[11px] leading-5">
+                        {diffLines.map((line, index) => (
+                          <div
+                            key={`${line.type}-${index}`}
+                            className={`grid grid-cols-[48px_48px_24px_minmax(0,1fr)] px-3 border-b border-claude-border/30 ${
+                              line.type === 'add'
+                                ? 'bg-emerald-500/10 text-emerald-400'
+                                : line.type === 'remove'
+                                  ? 'bg-[#C6613F]/10 text-[#C6613F]'
+                                  : 'text-claude-textSecondary'
+                            }`}
+                          >
+                            <span className="select-none text-right pr-3 opacity-60">{line.oldLine ?? ''}</span>
+                            <span className="select-none text-right pr-3 opacity-60">{line.newLine ?? ''}</span>
+                            <span className="select-none opacity-70">{line.type === 'add' ? '+' : line.type === 'remove' ? '-' : ' '}</span>
+                            <span className="whitespace-pre-wrap break-words text-claude-text">{line.text || ' '}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   ) : (
                     <textarea
                       value={editorContent}
