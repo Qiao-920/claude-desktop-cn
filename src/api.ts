@@ -510,6 +510,39 @@ export interface AgentConfig {
   permissionMode: 'workspace_write' | 'full_access';
 }
 
+export interface CodeWorkspaceEntry {
+  name: string;
+  path: string;
+  type: 'file' | 'directory';
+  size: number;
+  mtime: string;
+}
+
+export interface CodeWorkspaceListResult {
+  workspacePath: string;
+  path: string;
+  parentPath: string | null;
+  entries: CodeWorkspaceEntry[];
+}
+
+export interface CodeFileResult {
+  path: string;
+  name: string;
+  size: number;
+  mimeType: string;
+  binary: boolean;
+  truncated: boolean;
+  content: string;
+}
+
+export interface CodeCommandResult {
+  cwd: string;
+  command: string;
+  output: string;
+  isError: boolean;
+  durationMs: number;
+}
+
 export async function getAgentConfig(): Promise<AgentConfig> {
   const res = await fetch(`${API_BASE}/agent-config`);
   if (!res.ok) throw new Error('Failed to get agent config');
@@ -525,6 +558,45 @@ export async function updateAgentConfig(config: Partial<AgentConfig>): Promise<A
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to update agent config');
+  }
+  return res.json();
+}
+
+export async function listCodeWorkspace(workspacePath: string, path?: string): Promise<CodeWorkspaceListResult> {
+  const res = await fetch(`${API_BASE}/code/workspace/list`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspacePath, path }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to list workspace');
+  }
+  return res.json();
+}
+
+export async function readCodeFile(workspacePath: string, path: string): Promise<CodeFileResult> {
+  const res = await fetch(`${API_BASE}/code/workspace/read`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspacePath, path }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to read file');
+  }
+  return res.json();
+}
+
+export async function runCodeCommand(workspacePath: string, command: string, timeout = 120000): Promise<CodeCommandResult> {
+  const res = await fetch(`${API_BASE}/code/workspace/command`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspacePath, command, timeout }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to run command');
   }
   return res.json();
 }

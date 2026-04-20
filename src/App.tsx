@@ -26,6 +26,7 @@ import AdminAnnouncements from './components/admin/AdminAnnouncements';
 import ChatsPage from './components/ChatsPage';
 import CustomizePage from './components/CustomizePage';
 import ProjectsPage from './components/ProjectsPage';
+import CodePage from './components/CodePage';
 import { useClientLanguageText } from './utils/chineseClientText';
 
 const Tooltip = ({ children, text, shortcut }: { children: React.ReactNode; text: string; shortcut?: string }) => {
@@ -324,6 +325,7 @@ const Layout = () => {
 
   const location = useLocation();
   const navigate = useNavigate();
+  const isCodeRoute = location.pathname === '/code';
 
   // Navigation history for back/forward buttons
   const [navHistory, setNavHistory] = useState<string[]>([location.pathname + location.search + location.hash]);
@@ -646,18 +648,26 @@ const Layout = () => {
             style={{ pointerEvents: 'auto', WebkitAppRegion: 'no-drag', backgroundColor: 'var(--bg-mode-tabs)' } as React.CSSProperties}
           >
             <Tooltip text="Chat" shortcut="Ctrl+1">
-              <button className="px-3.5 py-1 text-[13px] font-medium rounded-[10px] text-claude-text shadow-sm transition-colors" style={{ backgroundColor: 'var(--bg-mode-tab-active)', fontFamily: 'Inter, system-ui, -apple-system, sans-serif', letterSpacing: '0.01em' }}>
-                Chat
+              <button
+                onClick={() => navigate('/')}
+                className={`px-3.5 py-1 text-[13px] font-medium rounded-[10px] transition-colors ${isCodeRoute ? 'text-claude-textSecondary hover:text-claude-text' : 'text-claude-text shadow-sm'}`}
+                style={{ backgroundColor: isCodeRoute ? 'transparent' : 'var(--bg-mode-tab-active)', fontFamily: 'Inter, system-ui, -apple-system, sans-serif', letterSpacing: '0.01em' }}
+              >
+                聊天
               </button>
             </Tooltip>
             <Tooltip text="Cowork" shortcut="Ctrl+2">
               <button className="px-3.5 py-1 text-[13px] font-medium rounded-[10px] text-claude-textSecondary hover:text-claude-text transition-colors" style={{ fontFamily: 'Inter, system-ui, -apple-system, sans-serif', letterSpacing: '0.01em' }}>
-                Cowork
+                协作
               </button>
             </Tooltip>
             <Tooltip text="Code" shortcut="Ctrl+3">
-              <button className="px-3.5 py-1 text-[13px] font-medium rounded-[10px] text-claude-textSecondary hover:text-claude-text transition-colors" style={{ fontFamily: 'Inter, system-ui, -apple-system, sans-serif', letterSpacing: '0.01em' }}>
-                Code
+              <button
+                onClick={() => navigate('/code')}
+                className={`px-3.5 py-1 text-[13px] font-medium rounded-[10px] transition-colors ${isCodeRoute ? 'text-claude-text shadow-sm' : 'text-claude-textSecondary hover:text-claude-text'}`}
+                style={{ backgroundColor: isCodeRoute ? 'var(--bg-mode-tab-active)' : 'transparent', fontFamily: 'Inter, system-ui, -apple-system, sans-serif', letterSpacing: '0.01em' }}
+              >
+                代码
               </button>
             </Tooltip>
           </div>
@@ -694,7 +704,7 @@ const Layout = () => {
             {/* Main Content Area - takes remaining width after panel */}
             <div className="flex-1 flex flex-col h-full min-w-0">
               {/* Header - Only render here if NOT in Artifacts-only mode */}
-              {isChatMode && (!showArtifacts || documentPanelDoc) && !showSettings && !showUpgrade && location.pathname !== '/chats' && location.pathname !== '/customize' && location.pathname !== '/projects' && location.pathname !== '/artifacts' && (
+              {isChatMode && (!showArtifacts || documentPanelDoc) && !showSettings && !showUpgrade && location.pathname !== '/chats' && location.pathname !== '/customize' && location.pathname !== '/projects' && location.pathname !== '/artifacts' && location.pathname !== '/code' && (
                 <ChatHeader
                   title={currentChatTitle}
                   showArtifacts={showArtifacts}
@@ -719,6 +729,8 @@ const Layout = () => {
                 }} />
               ) : location.pathname === '/projects' ? (
                 <ProjectsPage />
+              ) : location.pathname === '/code' ? (
+                <CodePage />
               ) : location.pathname === '/artifacts' ? (
                 <ArtifactsPage onTryPrompt={(prompt) => {
                   if (prompt === '__remix__') {
@@ -839,6 +851,7 @@ const App = () => {
         <Route path="/chats" element={<Layout />} />
         <Route path="/customize" element={<Layout />} />
         <Route path="/projects" element={<Layout />} />
+        <Route path="/code" element={<Layout />} />
         <Route path="/artifacts" element={<Layout />} />
         <Route path="/chat/:id" element={<Layout />} />
         <Route path="*" element={<Navigate to="/" replace />} />

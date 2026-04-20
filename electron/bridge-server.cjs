@@ -3078,6 +3078,138 @@ You have the following skills available. When a user's request matches a skill's
         }
     });
 
+    const CODE_SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'build', '.next', '.cache', 'coverage', '__pycache__']);
+    const CODE_BINARY_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.ico', '.webp', '.mp3', '.mp4', '.avi', '.mov', '.zip', '.tar', '.gz', '.rar', '.7z', '.exe', '.dll', '.so', '.dylib', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.woff', '.woff2', '.ttf', '.eot']);
+
+    function isPathInside(rootPath, targetPath) {
+        const root = path.resolve(rootPath);
+        const target = path.resolve(targetPath);
+        return target === root || target.startsWith(root + path.sep);
+    }
+
+    function resolveCodeWorkspacePath(workspacePath, targetPath) {
+        if (!workspacePath || typeof workspacePath !== 'string') {
+            const err = new Error('Missing workspacePath');
+            err.statusCode = 400;
+            throw err;
+        }
+        const workspaceRoot = path.resolve(workspacePath);
+        if (!fs.existsSync(workspaceRoot) || !fs.statSync(workspaceRoot).isDirectory()) {
+            const err = new Error('Workspace does not exist or is not a directory');
+            err.statusCode = 404;
+            throw err;
+        }
+        const rawTarget = targetPath && typeof targetPath === 'string' ? targetPath : workspaceRoot;
+        const resolvedTarget = path.isAbsolute(rawTarget) ? path.resolve(rawTarget) : path.resolve(workspaceRoot, rawTarget);
+        if (readAgentConfig().permissionMode !== 'full_access' && !isPathInside(workspaceRoot, resolvedTarget)) {
+            const err = new Error('Path is outside the selected workspace. Switch to full access to browse outside it.');
+            err.statusCode = 403;
+            throw err;
+        }
+        return { workspaceRoot, resolvedTarget };
+    }
+
+    function toCodeEntry(absPath, entry) {
+        const fullPath = path.join(absPath, entry.name);
+        const stat = fs.statSync(fullPath);
+        return {
+            name: entry.name,
+            path: fullPath,
+            type: entry.isDirectory() ? 'directory' : 'file',
+            size: stat.size || 0,
+            mtime: stat.mtime.toISOString(),
+        };
+    }
+
+    server.post('/api/code/workspace/list', (req, res) => {
+        try {
+            const { workspacePath, path: targetPath } = req.body || {};
+            const { workspaceRoot, resolvedTarget } = resolveCodeWorkspacePath(workspacePath, targetPath);
+            if (!fs.existsSync(resolvedTarget) || !fs.statSync(resolvedTarget).isDirectory()) {
+                return res.status(400).json({ error: 'Target path is not a directory' });
+            }
+
+            const entries = fs.readdirSync(resolvedTarget, { withFileTypes: true })
+                .filter(entry => !CODE_SKIP_DIRS.has(entry.name))
+                .map(entry => {
+                    try { return toCodeEntry(resolvedTarget, entry); } catch (_) { return null; }
+                })
+                .filter(Boolean)
+                .sort((a, b) => {
+                    if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
+                    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+                });
+
+            const parentPath = resolvedTarget === workspaceRoot ? null : path.dirname(resolvedTarget);
+            res.json({
+                workspacePath: workspaceRoot,
+                path: resolvedTarget,
+                parentPath: parentPath && (readAgentConfig().permissionMode === 'full_access' || isPathInside(workspaceRoot, parentPath)) ? parentPath : null,
+                entries,
+            });
+        } catch (err) {
+            res.status(err.statusCode || 500).json({ error: err.message || 'Failed to list workspace' });
+        }
+    });
+
+    server.post('/api/code/workspace/read', (req, res) => {
+        try {
+            const { workspacePath, path: targetPath } = req.body || {};
+            const { resolvedTarget } = resolveCodeWorkspacePath(workspacePath, targetPath);
+            if (!fs.existsSync(resolvedTarget) || !fs.statSync(resolvedTarget).isFile()) {
+                return res.status(400).json({ error: 'Target path is not a file' });
+            }
+            const stat = fs.statSync(resolvedTarget);
+            const ext = path.extname(resolvedTarget).toLowerCase();
+            const binary = CODE_BINARY_EXTS.has(ext);
+            if (binary) {
+                return res.json({
+                    path: resolvedTarget,
+                    name: path.basename(resolvedTarget),
+                    size: stat.size || 0,
+                    mimeType: guessMimeType(resolvedTarget),
+                    binary: true,
+                    truncated: false,
+                    content: '',
+                });
+            }
+            const MAX_FILE_BYTES = 1024 * 1024;
+            const raw = fs.readFileSync(resolvedTarget);
+            const truncated = raw.length > MAX_FILE_BYTES;
+            const slice = truncated ? raw.subarray(0, MAX_FILE_BYTES) : raw;
+            res.json({
+                path: resolvedTarget,
+                name: path.basename(resolvedTarget),
+                size: stat.size || 0,
+                mimeType: guessMimeType(resolvedTarget),
+                binary: false,
+                truncated,
+                content: slice.toString('utf8'),
+            });
+        } catch (err) {
+            res.status(err.statusCode || 500).json({ error: err.message || 'Failed to read file' });
+        }
+    });
+
+    server.post('/api/code/workspace/command', async (req, res) => {
+        const startedAt = Date.now();
+        try {
+            const { workspacePath, command, timeout } = req.body || {};
+            if (!command || typeof command !== 'string') return res.status(400).json({ error: 'Missing command' });
+            const { workspaceRoot } = resolveCodeWorkspacePath(workspacePath, workspacePath);
+            const result = await executeTool('Bash', { command, timeout: timeout || 120000 }, workspaceRoot);
+            res.json({
+                cwd: workspaceRoot,
+                command,
+                output: result.content || '',
+                isError: !!result.is_error,
+                durationMs: Date.now() - startedAt,
+            });
+        } catch (err) {
+            res.status(err.statusCode || 500).json({ error: err.message || 'Failed to run command' });
+        }
+    });
+
     server.post('/api/projects/:id/github/sources/:sourceId/sync', async (req, res) => {
         const token = loadGithubToken();
         if (!token?.access_token) return res.status(401).json({ error: 'Not connected' });
