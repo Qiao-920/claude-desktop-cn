@@ -3121,6 +3121,77 @@ You have the following skills available. When a user's request matches a skill's
         };
     }
 
+    function runCodeGitCommand(cwd, args, timeout = 30000) {
+        return new Promise((resolve) => {
+            require('child_process').execFile('git', args, {
+                cwd,
+                windowsHide: true,
+                timeout,
+                maxBuffer: 1024 * 1024 * 4,
+                encoding: 'utf8',
+            }, (error, stdout, stderr) => {
+                resolve({
+                    ok: !error,
+                    code: error && typeof error.code !== 'undefined' ? error.code : 0,
+                    output: `${stdout || ''}${stderr || ''}`.trim(),
+                });
+            });
+        });
+    }
+
+    function parseCodeGitStatus(rawStatus, repoRoot) {
+        const lines = String(rawStatus || '').split(/\r?\n/).filter(Boolean);
+        const branchLine = lines.find(line => line.startsWith('## ')) || '## main';
+        const files = lines
+            .filter(line => !line.startsWith('## '))
+            .map(line => ({
+                code: line.slice(0, 2).trim() || '??',
+                path: line.slice(3).trim(),
+            }))
+            .filter(item => item.path);
+        const aheadMatch = branchLine.match(/ahead\s+(\d+)/i);
+        const behindMatch = branchLine.match(/behind\s+(\d+)/i);
+        const branch = branchLine
+            .replace(/^##\s*/, '')
+            .replace(/\.\.\..*$/, '')
+            .replace(/\s*\[.*\]\s*$/, '')
+            .trim() || 'detached';
+        return {
+            isRepo: true,
+            repoRoot,
+            branch,
+            ahead: aheadMatch ? Number(aheadMatch[1]) : 0,
+            behind: behindMatch ? Number(behindMatch[1]) : 0,
+            clean: files.length === 0,
+            files,
+            summary: files.length === 0 ? 'Working tree clean' : `${files.length} changed file${files.length > 1 ? 's' : ''}`,
+        };
+    }
+
+    async function getCodeGitStatus(workspaceRoot) {
+        const rootResult = await runCodeGitCommand(workspaceRoot, ['rev-parse', '--show-toplevel'], 10000);
+        if (!rootResult.ok) {
+            return {
+                isRepo: false,
+                repoRoot: workspaceRoot,
+                branch: '',
+                ahead: 0,
+                behind: 0,
+                clean: true,
+                files: [],
+                diffStat: '',
+                summary: rootResult.output || 'Not a Git repository',
+            };
+        }
+        const repoRoot = path.resolve(rootResult.output.split(/\r?\n/)[0].trim());
+        const statusResult = await runCodeGitCommand(repoRoot, ['status', '--short', '--branch'], 15000);
+        const diffResult = await runCodeGitCommand(repoRoot, ['diff', '--stat'], 15000);
+        return {
+            ...parseCodeGitStatus(statusResult.output, repoRoot),
+            diffStat: diffResult.output || '',
+        };
+    }
+
     server.post('/api/code/workspace/list', (req, res) => {
         try {
             const { workspacePath, path: targetPath } = req.body || {};
@@ -3191,6 +3262,32 @@ You have the following skills available. When a user's request matches a skill's
         }
     });
 
+    server.post('/api/code/workspace/write', (req, res) => {
+        try {
+            const { workspacePath, path: targetPath, content } = req.body || {};
+            if (!targetPath || typeof targetPath !== 'string') return res.status(400).json({ error: 'Missing file path' });
+            if (typeof content !== 'string') return res.status(400).json({ error: 'Missing file content' });
+            const { resolvedTarget } = resolveCodeWorkspacePath(workspacePath, targetPath);
+            const ext = path.extname(resolvedTarget).toLowerCase();
+            if (CODE_BINARY_EXTS.has(ext)) return res.status(400).json({ error: 'Binary files cannot be edited here' });
+            if (fs.existsSync(resolvedTarget) && fs.statSync(resolvedTarget).isDirectory()) {
+                return res.status(400).json({ error: 'Target path is a directory' });
+            }
+            fs.mkdirSync(path.dirname(resolvedTarget), { recursive: true });
+            fs.writeFileSync(resolvedTarget, content, 'utf8');
+            const stat = fs.statSync(resolvedTarget);
+            res.json({
+                path: resolvedTarget,
+                name: path.basename(resolvedTarget),
+                size: stat.size || 0,
+                mtime: stat.mtime.toISOString(),
+                mimeType: guessMimeType(resolvedTarget),
+            });
+        } catch (err) {
+            res.status(err.statusCode || 500).json({ error: err.message || 'Failed to write file' });
+        }
+    });
+
     server.post('/api/code/workspace/command', async (req, res) => {
         const startedAt = Date.now();
         try {
@@ -3207,6 +3304,50 @@ You have the following skills available. When a user's request matches a skill's
             });
         } catch (err) {
             res.status(err.statusCode || 500).json({ error: err.message || 'Failed to run command' });
+        }
+    });
+
+    server.post('/api/code/workspace/git/status', async (req, res) => {
+        try {
+            const { workspacePath } = req.body || {};
+            const { workspaceRoot } = resolveCodeWorkspacePath(workspacePath, workspacePath);
+            res.json(await getCodeGitStatus(workspaceRoot));
+        } catch (err) {
+            res.status(err.statusCode || 500).json({ error: err.message || 'Failed to read git status' });
+        }
+    });
+
+    server.post('/api/code/workspace/git/action', async (req, res) => {
+        const startedAt = Date.now();
+        try {
+            const { workspacePath, action, message } = req.body || {};
+            const { workspaceRoot } = resolveCodeWorkspacePath(workspacePath, workspacePath);
+            const status = await getCodeGitStatus(workspaceRoot);
+            if (!status.isRepo) return res.status(400).json({ error: 'Selected workspace is not a Git repository' });
+
+            const repoRoot = status.repoRoot || workspaceRoot;
+            let args = null;
+            if (action === 'pull') args = ['pull', '--ff-only'];
+            if (action === 'stage_all') args = ['add', '-A'];
+            if (action === 'commit') {
+                const commitMessage = typeof message === 'string' ? message.trim() : '';
+                if (!commitMessage) return res.status(400).json({ error: 'Commit message is required' });
+                args = ['commit', '-m', commitMessage];
+            }
+            if (action === 'push') args = ['push'];
+            if (!args) return res.status(400).json({ error: 'Unsupported git action' });
+
+            const result = await runCodeGitCommand(repoRoot, args, action === 'push' || action === 'pull' ? 120000 : 60000);
+            const nextStatus = await getCodeGitStatus(repoRoot).catch(() => status);
+            res.json({
+                action,
+                output: result.output || (result.ok ? 'Done' : 'Git command failed'),
+                isError: !result.ok,
+                durationMs: Date.now() - startedAt,
+                status: nextStatus,
+            });
+        } catch (err) {
+            res.status(err.statusCode || 500).json({ error: err.message || 'Failed to run git action' });
         }
     });
 

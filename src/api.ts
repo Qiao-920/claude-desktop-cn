@@ -535,12 +535,45 @@ export interface CodeFileResult {
   content: string;
 }
 
+export interface CodeSaveResult {
+  path: string;
+  name: string;
+  size: number;
+  mtime: string;
+  mimeType: string;
+}
+
 export interface CodeCommandResult {
   cwd: string;
   command: string;
   output: string;
   isError: boolean;
   durationMs: number;
+}
+
+export interface CodeGitFile {
+  code: string;
+  path: string;
+}
+
+export interface CodeGitStatusResult {
+  isRepo: boolean;
+  repoRoot: string;
+  branch: string;
+  ahead: number;
+  behind: number;
+  clean: boolean;
+  files: CodeGitFile[];
+  diffStat?: string;
+  summary: string;
+}
+
+export interface CodeGitActionResult {
+  action: string;
+  output: string;
+  isError: boolean;
+  durationMs: number;
+  status?: CodeGitStatusResult;
 }
 
 export async function getAgentConfig(): Promise<AgentConfig> {
@@ -588,6 +621,19 @@ export async function readCodeFile(workspacePath: string, path: string): Promise
   return res.json();
 }
 
+export async function saveCodeFile(workspacePath: string, path: string, content: string): Promise<CodeSaveResult> {
+  const res = await fetch(`${API_BASE}/code/workspace/write`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspacePath, path, content }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to save file');
+  }
+  return res.json();
+}
+
 export async function runCodeCommand(workspacePath: string, command: string, timeout = 120000): Promise<CodeCommandResult> {
   const res = await fetch(`${API_BASE}/code/workspace/command`, {
     method: 'POST',
@@ -597,6 +643,32 @@ export async function runCodeCommand(workspacePath: string, command: string, tim
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to run command');
+  }
+  return res.json();
+}
+
+export async function getCodeGitStatus(workspacePath: string): Promise<CodeGitStatusResult> {
+  const res = await fetch(`${API_BASE}/code/workspace/git/status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspacePath }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to read git status');
+  }
+  return res.json();
+}
+
+export async function runCodeGitAction(workspacePath: string, action: 'pull' | 'stage_all' | 'commit' | 'push', message?: string): Promise<CodeGitActionResult> {
+  const res = await fetch(`${API_BASE}/code/workspace/git/action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspacePath, action, message }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to run git action');
   }
   return res.json();
 }
