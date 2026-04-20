@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { ChevronDown, FileText, ArrowUp, RotateCcw, Pencil, Copy, Check, Paperclip, ListCollapse, Globe, Clock, Info, Github, Plus, X, Loader2, Shield } from 'lucide-react';
+import { ChevronDown, FileText, ArrowUp, RotateCcw, Pencil, Copy, Check, Paperclip, ListCollapse, Globe, Clock, Info, Github, Plus, X, Loader2, Shield, Gauge } from 'lucide-react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { IconPlus, IconVoice, IconPencil, IconProjects, IconResearch, IconWebSearch } from './Icons';
 import ClaudeLogo from './ClaudeLogo';
@@ -249,6 +249,14 @@ function formatTokensPerSecond(value?: number): string {
 function formatModelBadge(model?: string | null): string {
   if (!model) return '';
   return stripThinking(model);
+}
+
+type PermissionMode = 'workspace_write' | 'project' | 'full_access';
+
+function getPermissionLabel(mode: PermissionMode, language: UiLanguage) {
+  if (mode === 'full_access') return language === 'zh-CN' ? '完全访问' : 'Full access';
+  if (mode === 'project') return language === 'zh-CN' ? '项目权限' : 'Project';
+  return language === 'zh-CN' ? '安全模式' : 'Safe mode';
 }
 
 function withThinking(base: string, thinking: boolean) {
@@ -1127,29 +1135,41 @@ const MessageList = React.memo<MessageListProps>(({
                   ))}
                 </div>
               )}
-              {!!(msg.responseStats || msg.message_stats) && (
-                <div className="flex flex-wrap items-center gap-3 mt-3 mb-1 text-claude-textSecondary" style={{ fontSize: 'var(--chat-metadata-font-size)' }}>
-                  {(() => {
-                    const stats = msg.responseStats || msg.message_stats;
-                    const modelBadge = formatModelBadge(stats.model || msg.model || currentModelString);
-                    return modelBadge ? (
-                      <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full border border-claude-border bg-claude-input/60">
+              {!!(msg.responseStats || msg.message_stats) && (() => {
+                const stats = msg.responseStats || msg.message_stats;
+                const modelBadge = formatModelBadge(stats.model || msg.model || currentModelString);
+                const tokenText = stats.output_tokens ? `${stats.output_tokens.toLocaleString()} tokens` : '';
+                const elapsedText = formatElapsedMs(stats.elapsed_ms);
+                const speedText = formatTokensPerSecond(stats.tokens_per_second);
+                return (
+                  <div className="flex flex-wrap items-center gap-1.5 mt-3 mb-1 text-claude-textSecondary" style={{ fontSize: 'var(--chat-metadata-font-size)' }}>
+                    {modelBadge && (
+                      <span className="inline-flex items-center gap-1.5 h-6 px-2 rounded-md border border-claude-border bg-claude-input/80">
                         <ClaudeLogo style={{ width: '12px', height: '12px' }} />
-                        <span>{modelBadge}</span>
+                        <span className="max-w-[220px] truncate">{modelBadge}</span>
                       </span>
-                    ) : null;
-                  })()}
-                  {(msg.responseStats?.output_tokens || msg.message_stats?.output_tokens) ? (
-                    <span>{`${(msg.responseStats?.output_tokens || msg.message_stats?.output_tokens).toLocaleString()} tokens`}</span>
-                  ) : null}
-                  {formatElapsedMs(msg.responseStats?.elapsed_ms || msg.message_stats?.elapsed_ms) ? (
-                    <span>{formatElapsedMs(msg.responseStats?.elapsed_ms || msg.message_stats?.elapsed_ms)}</span>
-                  ) : null}
-                  {formatTokensPerSecond(msg.responseStats?.tokens_per_second || msg.message_stats?.tokens_per_second) ? (
-                    <span>{formatTokensPerSecond(msg.responseStats?.tokens_per_second || msg.message_stats?.tokens_per_second)}</span>
-                  ) : null}
-                </div>
-              )}
+                    )}
+                    {tokenText && (
+                      <span className="inline-flex items-center gap-1.5 h-6 px-2 rounded-md border border-claude-border bg-claude-input/70">
+                        <Info size={12} />
+                        {tokenText}
+                      </span>
+                    )}
+                    {elapsedText && (
+                      <span className="inline-flex items-center gap-1.5 h-6 px-2 rounded-md border border-claude-border bg-claude-input/70">
+                        <Clock size={12} />
+                        {elapsedText}
+                      </span>
+                    )}
+                    {speedText && (
+                      <span className="inline-flex items-center gap-1.5 h-6 px-2 rounded-md border border-[#2E7CF6]/30 bg-[#2E7CF6]/10 text-[#2E7CF6] font-medium">
+                        <Gauge size={12} />
+                        {speedText}
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
               {loading && idx === messages.length - 1 && !msg.content && !msg.thinking && !msg.searchStatus && normalizeDocumentDrafts(msg).length === 0 && !(msg.toolCalls && msg.toolCalls.length > 0) && (
                 <span className="inline-block ml-1 align-middle" style={{ verticalAlign: 'middle' }}>
                   <ClaudeLogo breathe style={{ width: '40px', height: '40px', display: 'inline-block' }} />
@@ -1419,7 +1439,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
   const [availableChatStyles, setAvailableChatStyles] = useState<ChatStyle[]>(() => getAllChatStyles());
   const [defaultChatStyleId, setDefaultChatStyle] = useState(() => getDefaultChatStyleId());
   const [selectedChatStyleId, setSelectedChatStyleId] = useState(() => getEffectiveChatStyle(null).id);
-  const [permissionMode, setPermissionMode] = useState<'workspace_write' | 'full_access'>('full_access');
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>('full_access');
   const [researchMode, setResearchMode] = useState(false);
   const [openedResearchMsgId, setOpenedResearchMsgId] = useState<string | null>(null);
   const toggleResearchMode = useCallback(async () => {
@@ -1647,7 +1667,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
     setSelectedChatStyleId(styleId || getDefaultChatStyleId());
   }, [activeId]);
 
-  const handlePermissionModeChange = useCallback(async (mode: 'workspace_write' | 'full_access') => {
+  const handlePermissionModeChange = useCallback(async (mode: PermissionMode) => {
     setPermissionMode(mode);
     setShowPermissionMenu(false);
     try {
@@ -4340,13 +4360,15 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                         className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border transition-colors ${
                           permissionMode === 'full_access'
                             ? 'border-[#C6613F]/40 bg-[#C6613F]/10 text-[#C6613F]'
+                            : permissionMode === 'project'
+                              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-500'
                             : 'border-claude-border bg-claude-input text-claude-textSecondary'
                         }`}
                         style={{ fontSize: 'var(--chat-metadata-font-size)' }}
-                        title={permissionMode === 'full_access' ? 'Full access enabled' : 'Workspace-only access'}
+                        title={getPermissionLabel(permissionMode, uiLanguage)}
                       >
                         <Shield size={13} />
-                        <span>{permissionMode === 'full_access' ? (uiLanguage === 'zh-CN' ? '完全访问权限' : 'Full access') : (uiLanguage === 'zh-CN' ? '默认权限' : 'Default')}</span>
+                        <span>{getPermissionLabel(permissionMode, uiLanguage)}</span>
                         <ChevronDown size={12} className={`transition-transform ${showPermissionMenu ? 'rotate-180' : ''}`} />
                       </button>
                       {showPermissionMenu && (
@@ -4359,17 +4381,27 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                             className="w-full flex items-start justify-between gap-3 px-4 py-2.5 text-left hover:bg-claude-hover transition-colors"
                           >
                             <div>
-                              <div className="text-[13px] text-claude-text">{uiLanguage === 'zh-CN' ? '默认权限' : 'Default'}</div>
-                              <div className="text-[11px] text-claude-textSecondary mt-1">{uiLanguage === 'zh-CN' ? '限制为当前工作区，禁用 shell' : 'Workspace-only file access, shell disabled'}</div>
+                              <div className="text-[13px] text-claude-text">{uiLanguage === 'zh-CN' ? '安全模式' : 'Safe mode'}</div>
+                              <div className="text-[11px] text-claude-textSecondary mt-1">{uiLanguage === 'zh-CN' ? '限制为当前工作区，禁用命令执行' : 'Workspace-only file access, shell disabled'}</div>
                             </div>
                             {permissionMode === 'workspace_write' && <Check size={14} className="text-[#2E7CF6] mt-0.5" />}
+                          </button>
+                          <button
+                            onClick={() => handlePermissionModeChange('project')}
+                            className="w-full flex items-start justify-between gap-3 px-4 py-2.5 text-left hover:bg-claude-hover transition-colors"
+                          >
+                            <div>
+                              <div className="text-[13px] text-claude-text">{uiLanguage === 'zh-CN' ? '项目权限' : 'Project'}</div>
+                              <div className="text-[11px] text-claude-textSecondary mt-1">{uiLanguage === 'zh-CN' ? '允许当前工作区文件操作与命令执行' : 'Workspace files and shell commands'}</div>
+                            </div>
+                            {permissionMode === 'project' && <Check size={14} className="text-[#2E7CF6] mt-0.5" />}
                           </button>
                           <button
                             onClick={() => handlePermissionModeChange('full_access')}
                             className="w-full flex items-start justify-between gap-3 px-4 py-2.5 text-left hover:bg-claude-hover transition-colors"
                           >
                             <div>
-                              <div className="text-[13px] text-claude-text">{uiLanguage === 'zh-CN' ? '完全访问权限' : 'Full access'}</div>
+                              <div className="text-[13px] text-claude-text">{uiLanguage === 'zh-CN' ? '完全访问' : 'Full access'}</div>
                               <div className="text-[11px] text-claude-textSecondary mt-1">{uiLanguage === 'zh-CN' ? '允许全盘文件操作与命令执行' : 'System-wide file access and shell commands'}</div>
                             </div>
                             {permissionMode === 'full_access' && <Check size={14} className="text-[#2E7CF6] mt-0.5" />}

@@ -507,7 +507,7 @@ export async function createProjectConversation(projectId: string, title?: strin
 }
 
 export interface AgentConfig {
-  permissionMode: 'workspace_write' | 'full_access';
+  permissionMode: 'workspace_write' | 'project' | 'full_access';
 }
 
 export interface CodeWorkspaceEntry {
@@ -563,6 +563,8 @@ export interface CodeCommandResult {
 export interface CodeGitFile {
   code: string;
   path: string;
+  staged?: boolean;
+  unstaged?: boolean;
 }
 
 export interface CodeGitStatusResult {
@@ -583,6 +585,15 @@ export interface CodeGitActionResult {
   isError: boolean;
   durationMs: number;
   status?: CodeGitStatusResult;
+  path?: string;
+}
+
+export interface CodeGitFileDiffResult {
+  path: string;
+  statusCode?: string;
+  diff: string;
+  stagedDiff?: string;
+  unstagedDiff?: string;
 }
 
 export async function getAgentConfig(): Promise<AgentConfig> {
@@ -723,6 +734,36 @@ export async function runCodeGitAction(workspacePath: string, action: 'pull' | '
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to run git action');
+  }
+  return res.json();
+}
+
+export async function getCodeGitFileDiff(workspacePath: string, path: string): Promise<CodeGitFileDiffResult> {
+  const res = await fetch(`${API_BASE}/code/workspace/git/diff-file`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspacePath, path }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to read git diff');
+  }
+  return res.json();
+}
+
+export async function runCodeGitFileAction(
+  workspacePath: string,
+  path: string,
+  action: 'stage_file' | 'unstage_file' | 'discard_file'
+): Promise<CodeGitActionResult> {
+  const res = await fetch(`${API_BASE}/code/workspace/git/file-action`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspacePath, path, action }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to run git file action');
   }
   return res.json();
 }

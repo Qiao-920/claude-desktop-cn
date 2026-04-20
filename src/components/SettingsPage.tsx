@@ -16,6 +16,7 @@ const WORK_OPTIONS = [
 ];
 
 type Tab = 'general' | 'models' | 'account' | 'usage';
+type PermissionMode = 'workspace_write' | 'project' | 'full_access';
 
 const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const [tab, setTab] = useState<Tab>('general');
@@ -50,7 +51,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const [newlineKey, setNewlineKey] = useState(localStorage.getItem('newlineKey') || (localStorage.getItem('sendKey') === 'enter' ? 'shift_enter' : 'enter'));
   const [uiLanguage, setUiLanguage] = useState<UiLanguage>(getStoredUiLanguage());
   const [uiDensity, setUiDensity] = useState(localStorage.getItem('ui_density') || 'compact');
-  const [permissionMode, setPermissionMode] = useState<'workspace_write' | 'full_access'>('full_access');
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>('full_access');
   const [chatStyles, setChatStyles] = useState<ChatStyle[]>(() => getAllChatStyles());
   const [defaultChatStyle, setDefaultChatStyle] = useState(() => getDefaultChatStyleId());
   const [newStyleName, setNewStyleName] = useState('');
@@ -183,7 +184,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     document.documentElement.setAttribute('data-ui-density', density);
   };
 
-  const applyPermissionMode = async (mode: 'workspace_write' | 'full_access') => {
+  const applyPermissionMode = async (mode: PermissionMode) => {
     setPermissionMode(mode);
     try {
       const config = await updateAgentConfig({ permissionMode: mode });
@@ -933,15 +934,20 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
             {([
               {
                 value: 'workspace_write',
-                label: uiLanguage === 'zh-CN' ? '默认权限' : 'Default',
-                desc: uiLanguage === 'zh-CN' ? '只允许当前工作区文件操作，禁用 shell' : 'Workspace-only file access, shell disabled',
+                label: uiLanguage === 'zh-CN' ? '安全模式' : 'Safe mode',
+                desc: uiLanguage === 'zh-CN' ? '只允许当前工作区文件操作，禁用命令执行' : 'Workspace file access only, shell disabled',
+              },
+              {
+                value: 'project',
+                label: uiLanguage === 'zh-CN' ? '项目权限' : 'Project',
+                desc: uiLanguage === 'zh-CN' ? '允许当前工作区内文件操作和命令执行，不能越界访问全盘' : 'Workspace files and commands only, no system-wide access',
               },
               {
                 value: 'full_access',
-                label: uiLanguage === 'zh-CN' ? '完全访问权限' : 'Full access',
+                label: uiLanguage === 'zh-CN' ? '完全访问' : 'Full access',
                 desc: uiLanguage === 'zh-CN' ? '允许全盘文件操作与命令执行' : 'System-wide file access and shell commands',
               },
-            ] as const).map(opt => {
+            ] as Array<{ value: PermissionMode; label: string; desc: string }>).map(opt => {
               const active = permissionMode === opt.value;
               return (
                 <button

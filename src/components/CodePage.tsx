@@ -27,11 +27,14 @@ import {
 import {
   CodeCommandResult,
   CodeFileResult,
+  CodeGitFile,
+  CodeGitFileDiffResult,
   CodeGitStatusResult,
   CodeWorkspaceEntry,
   createCodeEntry,
   deleteCodeEntry,
   getAgentConfig,
+  getCodeGitFileDiff,
   getCodeGitStatus,
   listCodeWorkspace,
   readCodeFile,
@@ -39,14 +42,16 @@ import {
   restoreCodeFileFromGit,
   runCodeCommand,
   runCodeGitAction,
+  runCodeGitFileAction,
   saveCodeFile,
   updateAgentConfig,
 } from '../api';
 import { getStoredUiLanguage } from '../utils/chineseClientText';
 import { copyToClipboard } from '../utils/clipboard';
 
-type PermissionMode = 'workspace_write' | 'full_access';
+type PermissionMode = 'workspace_write' | 'project' | 'full_access';
 type GitAction = 'pull' | 'stage_all' | 'commit' | 'push';
+type GitFileAction = 'stage_file' | 'unstage_file' | 'discard_file';
 type DiffLine = {
   type: 'same' | 'add' | 'remove';
   oldLine?: number;
@@ -143,6 +148,47 @@ const gitActionLabel = (action: GitAction, isZh: boolean) => {
   return isZh ? zh[action] : en[action];
 };
 
+const gitFileActionLabel = (action: GitFileAction, isZh: boolean) => {
+  const zh: Record<GitFileAction, string> = {
+    stage_file: '暂存文件',
+    unstage_file: '取消暂存',
+    discard_file: '丢弃改动',
+  };
+  const en: Record<GitFileAction, string> = {
+    stage_file: 'Stage file',
+    unstage_file: 'Unstage',
+    discard_file: 'Discard',
+  };
+  return isZh ? zh[action] : en[action];
+};
+
+const getGitDisplayPath = (value: string) => {
+  const normalized = (value || '').replace(/\\/g, '/');
+  const arrowIndex = normalized.lastIndexOf(' -> ');
+  return arrowIndex >= 0 ? normalized.slice(arrowIndex + 4) : normalized;
+};
+
+const getPermissionCopy = (mode: PermissionMode, isZh: boolean) => {
+  const copy: Record<PermissionMode, { label: string; desc: string; tone: string }> = {
+    workspace_write: {
+      label: isZh ? '安全模式' : 'Safe mode',
+      desc: isZh ? '只允许当前工作区文件操作，禁用命令执行。' : 'Workspace file access only, shell disabled.',
+      tone: 'border-[#2E7CF6]/70 bg-[#2E7CF6]/10 text-claude-text',
+    },
+    project: {
+      label: isZh ? '项目权限' : 'Project',
+      desc: isZh ? '允许当前工作区内文件操作和命令执行，不能越界访问全盘。' : 'Workspace files and commands only, no system-wide access.',
+      tone: 'border-emerald-500/60 bg-emerald-500/10 text-emerald-500',
+    },
+    full_access: {
+      label: isZh ? '完全访问' : 'Full access',
+      desc: isZh ? '允许全盘文件操作和命令执行，请谨慎使用。' : 'System-wide file access and shell commands. Use carefully.',
+      tone: 'border-[#C6613F]/60 bg-[#C6613F]/10 text-[#C6613F]',
+    },
+  };
+  return copy[mode];
+};
+
 const CodePage = () => {
   const uiLanguage = getStoredUiLanguage();
   const isZh = uiLanguage === 'zh-CN';
@@ -156,6 +202,8 @@ const CodePage = () => {
   const [command, setCommand] = useState('');
   const [commandHistory, setCommandHistory] = useState<CodeCommandResult[]>([]);
   const [gitStatus, setGitStatus] = useState<CodeGitStatusResult | null>(null);
+  const [selectedGitFile, setSelectedGitFile] = useState<CodeGitFile | null>(null);
+  const [gitFileDiff, setGitFileDiff] = useState<CodeGitFileDiffResult | null>(null);
   const [commitMessage, setCommitMessage] = useState('');
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('full_access');
   const [loadingTree, setLoadingTree] = useState(false);
@@ -163,7 +211,9 @@ const CodePage = () => {
   const [savingFile, setSavingFile] = useState(false);
   const [runningCommand, setRunningCommand] = useState(false);
   const [loadingGit, setLoadingGit] = useState(false);
+  const [loadingGitDiff, setLoadingGitDiff] = useState(false);
   const [gitBusyAction, setGitBusyAction] = useState<GitAction | null>(null);
+  const [gitFileBusyAction, setGitFileBusyAction] = useState<GitFileAction | null>(null);
   const [fileOperationBusy, setFileOperationBusy] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
   const [error, setError] = useState('');
@@ -189,6 +239,10 @@ const CodePage = () => {
     try {
       const status = await getCodeGitStatus(root);
       setGitStatus(status);
+      if (!status.files.length) {
+        setSelectedGitFile(null);
+        setGitFileDiff(null);
+      }
     } catch (err: any) {
       setGitStatus(null);
       setError(err?.message || (isZh ? '读取 Git 状态失败' : 'Failed to read Git status'));
@@ -463,6 +517,133 @@ const CodePage = () => {
     }
   };
 
+  const openGitStatusFile = async (file: CodeGitFile) => {
+    if (!gitStatus?.repoRoot) return;
+    const displayPath = getGitDisplayPath(file.path);
+    const separator = gitStatus.repoRoot.includes('/') ? '/' : '\\';
+    const absolutePath = gitStatus.repoRoot.replace(/[\\/]+$/, '') + separator + displayPath.split('/').join(separator);
+    try {
+      const loaded = await readCodeFile(workspacePath, absolutePath);
+      setSelectedFile(loaded);
+      setEditorContent(loaded.content || '');
+      setOriginalContent(loaded.content || '');
+      setShowDiff(false);
+    } catch (err: any) {
+      setError(err?.message || (isZh ? '打开 Git 文件失败' : 'Failed to open Git file'));
+    }
+  };
+
+  const loadGitFileDiff = async (file: CodeGitFile | null) => {
+    if (!file || !workspacePath) {
+      setGitFileDiff(null);
+      return;
+    }
+    setLoadingGitDiff(true);
+    setError('');
+    try {
+      const diff = await getCodeGitFileDiff(workspacePath, file.path);
+      setGitFileDiff(diff);
+    } catch (err: any) {
+      setGitFileDiff(null);
+      setError(err?.message || (isZh ? '读取文件差异失败' : 'Failed to read file diff'));
+    } finally {
+      setLoadingGitDiff(false);
+    }
+  };
+
+  const selectGitFile = async (file: CodeGitFile) => {
+    setSelectedGitFile(file);
+    await loadGitFileDiff(file);
+  };
+
+  const runGitFileAction = async (action: GitFileAction, file = selectedGitFile) => {
+    if (!workspacePath || !file || gitFileBusyAction) return;
+    if (action === 'discard_file') {
+      const ok = window.confirm(isZh ? `丢弃 ${getGitDisplayPath(file.path)} 的 Git 改动？这个操作不能撤销。` : `Discard Git changes in ${getGitDisplayPath(file.path)}? This cannot be undone.`);
+      if (!ok) return;
+    }
+    setGitFileBusyAction(action);
+    setError('');
+    try {
+      const result = await runCodeGitFileAction(workspacePath, file.path, action);
+      setCommandHistory(prev => [{
+        cwd: gitStatus?.repoRoot || workspacePath,
+        command: `git ${gitFileActionLabel(action, false).toLowerCase()} -- ${getGitDisplayPath(file.path)}`,
+        output: result.output,
+        isError: result.isError,
+        durationMs: result.durationMs || 0,
+      }, ...prev].slice(0, 12));
+      if (result.status) {
+        setGitStatus(result.status);
+        const refreshedFile = result.status.files.find(item => getGitDisplayPath(item.path) === getGitDisplayPath(file.path)) || null;
+        setSelectedGitFile(refreshedFile);
+        if (refreshedFile) await loadGitFileDiff(refreshedFile);
+        else setGitFileDiff(null);
+      } else {
+        await refreshGitStatus();
+        await loadGitFileDiff(file);
+      }
+      await loadDirectory(currentPath || workspacePath);
+      if (selectedFile && getGitDisplayPath(file.path).replace(/\//g, '\\') === getRelativePath(gitStatus?.repoRoot || workspacePath, selectedFile.path).replace(/\//g, '\\')) {
+        try {
+          const reloaded = await readCodeFile(workspacePath, selectedFile.path);
+          setSelectedFile(reloaded);
+          setEditorContent(reloaded.content || '');
+          setOriginalContent(reloaded.content || '');
+          setShowDiff(false);
+        } catch (_) {
+          setSelectedFile(null);
+          setEditorContent('');
+          setOriginalContent('');
+          setShowDiff(false);
+        }
+      }
+    } catch (err: any) {
+      setError(err?.message || (isZh ? 'Git 文件操作失败' : 'Git file action failed'));
+    } finally {
+      setGitFileBusyAction(null);
+    }
+  };
+
+  const renderRawDiff = (diffText: string) => {
+    if (!diffText) {
+      return (
+        <div className="p-3 text-[12px] text-claude-textSecondary">
+          {isZh ? '没有可显示的差异。' : 'No diff to show.'}
+        </div>
+      );
+    }
+    return (
+      <div className="font-mono text-[10px] leading-[18px]">
+        {diffText.split(/\r?\n/).slice(0, 900).map((line, index) => {
+          const isAdd = line.startsWith('+') && !line.startsWith('+++');
+          const isRemove = line.startsWith('-') && !line.startsWith('---');
+          const isHunk = line.startsWith('@@');
+          const isHeader = line.startsWith('diff --git') || line.startsWith('index ') || line.startsWith('+++') || line.startsWith('---');
+          return (
+            <div
+              key={`${index}-${line.slice(0, 12)}`}
+              className={`grid grid-cols-[42px_minmax(0,1fr)] px-2 border-b border-claude-border/20 ${
+                isAdd
+                  ? 'bg-emerald-500/10 text-emerald-400'
+                  : isRemove
+                    ? 'bg-[#C6613F]/10 text-[#C6613F]'
+                    : isHunk
+                      ? 'bg-[#2E7CF6]/10 text-[#2E7CF6]'
+                      : isHeader
+                        ? 'bg-claude-hover/40 text-claude-text'
+                        : 'text-claude-textSecondary'
+              }`}
+            >
+              <span className="select-none text-right pr-3 opacity-50">{index + 1}</span>
+              <span className="whitespace-pre-wrap break-words">{line || ' '}</span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   const goToBreadcrumb = async (index: number) => {
     if (index < 0) {
       await loadDirectory(workspacePath);
@@ -511,18 +692,69 @@ const CodePage = () => {
           )}
         </div>
 
-        <div className="max-h-[132px] overflow-auto rounded-md border border-claude-border bg-claude-input">
+        <div className="max-h-[160px] overflow-auto rounded-md border border-claude-border bg-claude-input">
           {gitStatus.files.length === 0 ? (
             <div className="p-3 text-[12px] text-claude-textSecondary">{isZh ? '没有未提交改动。' : 'No pending changes.'}</div>
           ) : gitStatus.files.slice(0, 24).map(file => (
-            <div key={`${file.code}-${file.path}`} className="h-7 px-3 border-b border-claude-border/60 last:border-b-0 flex items-center gap-2 text-[12px]">
+            <button
+              key={`${file.code}-${file.path}`}
+              onClick={() => selectGitFile(file)}
+              className={`w-full min-h-7 px-3 border-b border-claude-border/60 last:border-b-0 flex items-center gap-2 text-left text-[12px] hover:bg-claude-hover ${
+                selectedGitFile?.path === file.path ? 'bg-claude-hover text-claude-text' : ''
+              }`}
+            >
               <span className="w-7 shrink-0 font-mono text-[#C6613F]">{file.code}</span>
               <span className="truncate text-claude-textSecondary">{file.path}</span>
-            </div>
+            </button>
           ))}
         </div>
 
-        {gitStatus.diffStat && (
+        {selectedGitFile && (
+          <div className="rounded-md border border-claude-border bg-claude-input overflow-hidden">
+            <div className="px-3 py-2 border-b border-claude-border flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-[12px] font-medium truncate">{getGitDisplayPath(selectedGitFile.path)}</div>
+                <div className="text-[10px] text-claude-textSecondary">{isZh ? '单文件 Git 差异' : 'Single-file Git diff'}</div>
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => openGitStatusFile(selectedGitFile)}
+                  className="h-7 px-2 rounded-md border border-claude-border text-[11px] hover:bg-claude-hover"
+                >
+                  {isZh ? '打开' : 'Open'}
+                </button>
+                <button
+                  onClick={() => runGitFileAction('stage_file', selectedGitFile)}
+                  disabled={!!gitFileBusyAction || (!selectedGitFile.unstaged && selectedGitFile.code !== '??')}
+                  className="h-7 px-2 rounded-md border border-claude-border text-[11px] hover:bg-claude-hover disabled:opacity-40"
+                >
+                  {gitFileBusyAction === 'stage_file' ? (isZh ? '处理中' : 'Working') : gitFileActionLabel('stage_file', isZh)}
+                </button>
+                <button
+                  onClick={() => runGitFileAction('unstage_file', selectedGitFile)}
+                  disabled={!!gitFileBusyAction || !selectedGitFile.staged}
+                  className="h-7 px-2 rounded-md border border-claude-border text-[11px] hover:bg-claude-hover disabled:opacity-40"
+                >
+                  {gitFileBusyAction === 'unstage_file' ? (isZh ? '处理中' : 'Working') : gitFileActionLabel('unstage_file', isZh)}
+                </button>
+                <button
+                  onClick={() => runGitFileAction('discard_file', selectedGitFile)}
+                  disabled={!!gitFileBusyAction}
+                  className="h-7 px-2 rounded-md border border-[#C6613F]/40 text-[#C6613F] text-[11px] hover:bg-[#C6613F]/10 disabled:opacity-40"
+                >
+                  {gitFileBusyAction === 'discard_file' ? (isZh ? '处理中' : 'Working') : gitFileActionLabel('discard_file', isZh)}
+                </button>
+              </div>
+            </div>
+            <div className="max-h-[220px] overflow-auto bg-claude-bg">
+              {loadingGitDiff ? (
+                <div className="p-3 text-[12px] text-claude-textSecondary">{isZh ? '正在读取差异...' : 'Reading diff...'}</div>
+              ) : renderRawDiff(gitFileDiff?.diff || '')}
+            </div>
+          </div>
+        )}
+
+        {!selectedGitFile && gitStatus.diffStat && (
           <pre className="m-0 max-h-[92px] overflow-auto rounded-md border border-claude-border bg-claude-input p-2 text-[10px] leading-4 text-claude-textSecondary">
             {gitStatus.diffStat}
           </pre>
@@ -575,22 +807,24 @@ const CodePage = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => switchPermission('workspace_write')}
-              className={`h-8 px-3 rounded-md border text-[12px] flex items-center gap-1.5 transition-colors ${permissionMode === 'workspace_write' ? 'border-[#2E7CF6]/70 bg-[#2E7CF6]/10 text-claude-text' : 'border-claude-border text-claude-textSecondary hover:bg-claude-hover'}`}
-            >
-              <Shield size={13} />
-              {isZh ? '默认权限' : 'Default'}
-              {permissionMode === 'workspace_write' && <Check size={13} />}
-            </button>
-            <button
-              onClick={() => switchPermission('full_access')}
-              className={`h-8 px-3 rounded-md border text-[12px] flex items-center gap-1.5 transition-colors ${permissionMode === 'full_access' ? 'border-[#C6613F]/60 bg-[#C6613F]/10 text-[#C6613F]' : 'border-claude-border text-claude-textSecondary hover:bg-claude-hover'}`}
-            >
-              <Shield size={13} />
-              {isZh ? '完全访问权限' : 'Full access'}
-              {permissionMode === 'full_access' && <Check size={13} />}
-            </button>
+            {(['workspace_write', 'project', 'full_access'] as PermissionMode[]).map(mode => {
+              const copy = getPermissionCopy(mode, isZh);
+              const active = permissionMode === mode;
+              return (
+                <button
+                  key={mode}
+                  onClick={() => switchPermission(mode)}
+                  title={copy.desc}
+                  className={`h-8 px-3 rounded-md border text-[12px] flex items-center gap-1.5 transition-colors ${
+                    active ? copy.tone : 'border-claude-border text-claude-textSecondary hover:bg-claude-hover'
+                  }`}
+                >
+                  <Shield size={13} />
+                  {copy.label}
+                  {active && <Check size={13} />}
+                </button>
+              );
+            })}
             <button onClick={chooseWorkspace} className="h-8 px-3 rounded-md bg-claude-text text-claude-bg text-[12px] font-medium hover:opacity-90">
               {isZh ? '选择工作区' : 'Choose workspace'}
             </button>
@@ -827,10 +1061,8 @@ const CodePage = () => {
               </div>
 
               <div className="p-3 border-b border-claude-border">
-                <div className={`mb-2 rounded-md border px-3 py-2 text-[12px] leading-5 ${permissionMode === 'full_access' ? 'border-[#C6613F]/30 bg-[#C6613F]/10 text-[#C6613F]' : 'border-claude-border bg-claude-input text-claude-textSecondary'}`}>
-                  {permissionMode === 'full_access'
-                    ? (isZh ? '完全访问权限已启用：允许命令执行和全盘文件操作。' : 'Full access is enabled: commands and system-wide file operations are allowed.')
-                    : (isZh ? '默认权限：命令面板会被后端拒绝，文件编辑限制在当前工作区内。' : 'Default mode: command panel is blocked by the backend; file editing stays inside the workspace.')}
+                <div className={`mb-2 rounded-md border px-3 py-2 text-[12px] leading-5 ${permissionMode === 'full_access' ? 'border-[#C6613F]/30 bg-[#C6613F]/10 text-[#C6613F]' : permissionMode === 'project' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500' : 'border-claude-border bg-claude-input text-claude-textSecondary'}`}>
+                  {getPermissionCopy(permissionMode, isZh).desc}
                 </div>
                 <textarea
                   value={command}
@@ -843,11 +1075,15 @@ const CodePage = () => {
                 />
                 <button
                   onClick={submitCommand}
-                  disabled={!command.trim() || runningCommand}
+                  disabled={!command.trim() || runningCommand || permissionMode === 'workspace_write'}
                   className="mt-2 h-8 w-full rounded-md bg-claude-text text-claude-bg text-[12px] font-medium flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Play size={13} />
-                  {runningCommand ? (isZh ? '执行中...' : 'Running...') : (isZh ? '执行命令 Ctrl+Enter' : 'Run command Ctrl+Enter')}
+                  {permissionMode === 'workspace_write'
+                    ? (isZh ? '切到项目权限后可执行命令' : 'Switch to Project to run commands')
+                    : runningCommand
+                      ? (isZh ? '执行中...' : 'Running...')
+                      : (isZh ? '执行命令 Ctrl+Enter' : 'Run command Ctrl+Enter')}
                 </button>
               </div>
 

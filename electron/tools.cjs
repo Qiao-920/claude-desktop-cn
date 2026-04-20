@@ -35,6 +35,11 @@ function isFullAccessMode() {
     return getPermissionMode() === 'full_access';
 }
 
+function canRunShellCommands() {
+    const mode = getPermissionMode();
+    return mode === 'project' || mode === 'full_access';
+}
+
 function ensureWorkspacePath(resolvedPath, cwd, operation) {
     if (isFullAccessMode()) return null;
     const workspaceRoot = path.resolve(cwd);
@@ -249,9 +254,9 @@ function toolEdit(input, cwd) {
 
 // ── Bash ──
 function toolBash(input, cwd) {
-    if (!isFullAccessMode()) {
+    if (!canRunShellCommands()) {
         return Promise.resolve({
-            content: `Bash is disabled outside full access mode.\nCurrent workspace: ${path.resolve(cwd)}\nSwitch to full access in settings to allow shell commands.`,
+            content: `Shell commands are disabled in safe mode.\nCurrent workspace: ${path.resolve(cwd)}\nSwitch to project mode or full access to allow commands.`,
             is_error: true,
         });
     }

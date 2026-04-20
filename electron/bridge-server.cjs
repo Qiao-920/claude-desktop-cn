@@ -208,13 +208,17 @@ function initServer(mainWindow) {
     const dbPath = path.join(userDataPath, 'claude-desktop.json');
     const agentConfigPath = path.join(userDataPath, 'agent-config.json');
     setAccessConfigPath(agentConfigPath);
+    const validPermissionModes = new Set(['workspace_write', 'project', 'full_access']);
     const defaultAgentConfig = {
         permissionMode: 'full_access',
     };
+    const normalizePermissionMode = (mode) => validPermissionModes.has(mode) ? mode : defaultAgentConfig.permissionMode;
     const readAgentConfig = () => {
         try {
             if (fs.existsSync(agentConfigPath)) {
-                return { ...defaultAgentConfig, ...JSON.parse(fs.readFileSync(agentConfigPath, 'utf8')) };
+                const parsed = { ...defaultAgentConfig, ...JSON.parse(fs.readFileSync(agentConfigPath, 'utf8')) };
+                parsed.permissionMode = normalizePermissionMode(parsed.permissionMode);
+                return parsed;
             }
         } catch (_) { }
         return { ...defaultAgentConfig };
@@ -3067,7 +3071,7 @@ You have the following skills available. When a user's request matches a skill's
     });
     server.post('/api/agent-config', (req, res) => {
         const permissionMode = req.body && req.body.permissionMode;
-        if (permissionMode !== 'workspace_write' && permissionMode !== 'full_access') {
+        if (!validPermissionModes.has(permissionMode)) {
             return res.status(400).json({ error: 'Invalid permission mode' });
         }
         try {
@@ -3161,6 +3165,8 @@ You have the following skills available. When a user's request matches a skill's
             .filter(line => !line.startsWith('## '))
             .map(line => ({
                 code: line.slice(0, 2).trim() || '??',
+                staged: !!(line[0] && line[0] !== ' ' && line[0] !== '?'),
+                unstaged: !!(line[1] && line[1] !== ' ' && line[1] !== '?'),
                 path: line.slice(3).trim(),
             }))
             .filter(item => item.path);
@@ -3181,6 +3187,61 @@ You have the following skills available. When a user's request matches a skill's
             files,
             summary: files.length === 0 ? 'Working tree clean' : `${files.length} changed file${files.length > 1 ? 's' : ''}`,
         };
+    }
+
+    function normalizeGitRelativePath(value) {
+        return String(value || '').replace(/\\/g, '/').replace(/^"|"$/g, '');
+    }
+
+    function getGitDisplayPath(value) {
+        const normalized = normalizeGitRelativePath(value);
+        const arrowIndex = normalized.lastIndexOf(' -> ');
+        return arrowIndex >= 0 ? normalized.slice(arrowIndex + 4) : normalized;
+    }
+
+    function buildSyntheticNewFileDiff(repoRoot, relativePath) {
+        const absolutePath = path.resolve(repoRoot, relativePath);
+        if (!fs.existsSync(absolutePath) || !fs.statSync(absolutePath).isFile()) {
+            return '';
+        }
+        const ext = path.extname(absolutePath).toLowerCase();
+        if (CODE_BINARY_EXTS.has(ext)) {
+            return `diff --git a/${relativePath} b/${relativePath}\nnew file mode 100644\n--- /dev/null\n+++ b/${relativePath}\n@@\n+Binary file not shown`;
+        }
+        const MAX_DIFF_BYTES = 512 * 1024;
+        const raw = fs.readFileSync(absolutePath);
+        const slice = raw.length > MAX_DIFF_BYTES ? raw.subarray(0, MAX_DIFF_BYTES) : raw;
+        const body = slice.toString('utf8').split(/\r?\n/).map(line => `+${line}`).join('\n');
+        const tail = raw.length > MAX_DIFF_BYTES ? '\n+... truncated for preview' : '';
+        return `diff --git a/${relativePath} b/${relativePath}\nnew file mode 100644\n--- /dev/null\n+++ b/${relativePath}\n@@\n${body}${tail}`;
+    }
+
+    async function resolveCodeGitTarget(workspacePath, targetPath) {
+        const { workspaceRoot } = resolveCodeWorkspacePath(workspacePath, workspacePath);
+        const status = await getCodeGitStatus(workspaceRoot);
+        if (!status.isRepo) {
+            const err = new Error('Selected workspace is not a Git repository');
+            err.statusCode = 400;
+            throw err;
+        }
+        const repoRoot = path.resolve(status.repoRoot || workspaceRoot);
+        const displayPath = getGitDisplayPath(targetPath);
+        const resolvedTarget = path.isAbsolute(displayPath)
+            ? path.resolve(displayPath)
+            : path.resolve(repoRoot, displayPath);
+        if (!isPathInside(repoRoot, resolvedTarget)) {
+            const err = new Error('File is outside the Git repository');
+            err.statusCode = 403;
+            throw err;
+        }
+        if (readAgentConfig().permissionMode !== 'full_access' && !isPathInside(workspaceRoot, resolvedTarget)) {
+            const err = new Error('File is outside the selected workspace. Switch to full access to operate on it.');
+            err.statusCode = 403;
+            throw err;
+        }
+        const relativePath = normalizeGitRelativePath(path.relative(repoRoot, resolvedTarget));
+        const statusFile = status.files.find(file => getGitDisplayPath(file.path) === relativePath || normalizeGitRelativePath(file.path) === relativePath) || null;
+        return { workspaceRoot, repoRoot, resolvedTarget, relativePath, status, statusFile };
     }
 
     async function getCodeGitStatus(workspaceRoot) {
@@ -3401,6 +3462,76 @@ You have the following skills available. When a user's request matches a skill's
             res.json(await getCodeGitStatus(workspaceRoot));
         } catch (err) {
             res.status(err.statusCode || 500).json({ error: err.message || 'Failed to read git status' });
+        }
+    });
+
+    server.post('/api/code/workspace/git/diff-file', async (req, res) => {
+        try {
+            const { workspacePath, path: targetPath } = req.body || {};
+            if (!targetPath || typeof targetPath !== 'string') return res.status(400).json({ error: 'Missing file path' });
+            const { repoRoot, relativePath, statusFile } = await resolveCodeGitTarget(workspacePath, targetPath);
+            const unstagedResult = await runCodeGitCommand(repoRoot, ['diff', '--', relativePath], 30000);
+            const stagedResult = await runCodeGitCommand(repoRoot, ['diff', '--staged', '--', relativePath], 30000);
+            const isUntracked = statusFile?.code === '??';
+            const unstagedDiff = isUntracked && !unstagedResult.output
+                ? buildSyntheticNewFileDiff(repoRoot, relativePath)
+                : (unstagedResult.output || '');
+            const stagedDiff = stagedResult.output || '';
+            res.json({
+                path: relativePath,
+                statusCode: statusFile?.code || '',
+                stagedDiff,
+                unstagedDiff,
+                diff: [stagedDiff, unstagedDiff].filter(Boolean).join('\n\n'),
+            });
+        } catch (err) {
+            res.status(err.statusCode || 500).json({ error: err.message || 'Failed to read git diff' });
+        }
+    });
+
+    server.post('/api/code/workspace/git/file-action', async (req, res) => {
+        const startedAt = Date.now();
+        try {
+            const { workspacePath, path: targetPath, action } = req.body || {};
+            if (!targetPath || typeof targetPath !== 'string') return res.status(400).json({ error: 'Missing file path' });
+            const { repoRoot, resolvedTarget, relativePath, status, statusFile } = await resolveCodeGitTarget(workspacePath, targetPath);
+
+            let result;
+            if (action === 'stage_file') {
+                result = await runCodeGitCommand(repoRoot, ['add', '--', relativePath], 30000);
+            } else if (action === 'unstage_file') {
+                result = await runCodeGitCommand(repoRoot, ['restore', '--staged', '--', relativePath], 30000);
+                if (!result.ok) {
+                    result = await runCodeGitCommand(repoRoot, ['reset', 'HEAD', '--', relativePath], 30000);
+                }
+            } else if (action === 'discard_file') {
+                if (statusFile?.code === '??') {
+                    if (fs.existsSync(resolvedTarget)) {
+                        if (resolvedTarget === repoRoot) return res.status(400).json({ error: 'Cannot remove repository root' });
+                        fs.rmSync(resolvedTarget, { recursive: true, force: true });
+                    }
+                    result = { ok: true, output: 'Untracked file removed' };
+                } else {
+                    result = await runCodeGitCommand(repoRoot, ['restore', '--source=HEAD', '--staged', '--worktree', '--', relativePath], 30000);
+                    if (!result.ok) {
+                        result = await runCodeGitCommand(repoRoot, ['restore', '--', relativePath], 30000);
+                    }
+                }
+            } else {
+                return res.status(400).json({ error: 'Unsupported git file action' });
+            }
+
+            const nextStatus = await getCodeGitStatus(repoRoot).catch(() => status);
+            res.json({
+                action,
+                path: relativePath,
+                output: result.output || (result.ok ? 'Done' : 'Git file action failed'),
+                isError: !result.ok,
+                durationMs: Date.now() - startedAt,
+                status: nextStatus,
+            });
+        } catch (err) {
+            res.status(err.statusCode || 500).json({ error: err.message || 'Failed to run git file action' });
         }
     });
 
@@ -4028,6 +4159,8 @@ You have the following skills available. When a user's request matches a skill's
         sysPrompt += '\n\n<tool_access_policy>\nPermission mode: ' + agentConfig.permissionMode + '\n';
         if (agentConfig.permissionMode === 'full_access') {
             sysPrompt += 'The desktop app may read, write, and execute shell commands on the local machine. Use this power carefully and explain risky actions before taking them.\n';
+        } else if (agentConfig.permissionMode === 'project') {
+            sysPrompt += 'The desktop app may read and write files inside the selected workspace and execute shell commands with that workspace as cwd. It may not browse or modify paths outside the selected workspace.\n';
         } else {
             sysPrompt += 'The desktop app is limited to the current workspace for file access, and shell execution is disabled.\n';
         }
