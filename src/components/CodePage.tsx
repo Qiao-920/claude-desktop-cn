@@ -627,7 +627,8 @@ const CodePage = () => {
     setRunningCommand(true);
     setError('');
     try {
-      const result = await runCodeCommand(workspacePath, trimmed);
+      const shellPreference = localStorage.getItem('integrated_shell') || 'powershell';
+      const result = await runCodeCommand(workspacePath, trimmed, 120000, shellPreference);
       setCommandHistory(prev => [result, ...prev].slice(0, 12));
       if (!commandOverride) setCommand('');
       await refreshGitStatus();

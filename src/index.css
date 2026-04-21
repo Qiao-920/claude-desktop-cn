@@ -46,6 +46,24 @@
   --markdown-gap-scale: 0.74;
 }
 
+:root[data-ui-density="standard"] {
+  --chat-body-font-size: 15px;
+  --chat-user-font-size: 14.5px;
+  --chat-input-font-size: 14.5px;
+  --chat-metadata-font-size: 11.5px;
+  --chat-message-line-height: 1.43;
+  --markdown-gap-scale: 0.84;
+}
+
+:root[data-ui-density="comfortable"] {
+  --chat-body-font-size: 16px;
+  --chat-user-font-size: 15.5px;
+  --chat-input-font-size: 15.5px;
+  --chat-metadata-font-size: 12.5px;
+  --chat-message-line-height: 1.56;
+  --markdown-gap-scale: 1;
+}
+
 .dark {
   --bg-claude-main: #1F1F1E;
   --bg-claude-sidebar: #1E1E1C;

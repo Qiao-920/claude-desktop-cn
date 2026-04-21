@@ -3143,6 +3143,56 @@ You have the following skills available. When a user's request matches a skill's
         });
     }
 
+    function runCodeShellCommand(cwd, command, shellPreference = 'powershell', timeout = 120000) {
+        return new Promise((resolve) => {
+            const normalizedShell = String(shellPreference || 'powershell').toLowerCase();
+            let executable = '';
+            let args = [];
+
+            if (process.platform === 'win32') {
+                const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+                const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+                const programFilesX64 = process.env.ProgramW6432 || programFiles;
+                const localAppData = process.env.LocalAppData || '';
+
+                if (normalizedShell === 'cmd') {
+                    executable = path.join(systemRoot, 'System32', 'cmd.exe');
+                    args = ['/d', '/s', '/c', command];
+                } else if (normalizedShell === 'git-bash') {
+                    executable = [
+                        path.join(programFiles, 'Git', 'bin', 'bash.exe'),
+                        path.join(programFilesX64, 'Git', 'bin', 'bash.exe'),
+                        path.join(localAppData, 'Programs', 'Git', 'bin', 'bash.exe'),
+                    ].find(candidate => fs.existsSync(candidate)) || path.join(programFiles, 'Git', 'bin', 'bash.exe');
+                    args = ['-lc', command];
+                } else if (normalizedShell === 'wsl') {
+                    executable = path.join(systemRoot, 'System32', 'wsl.exe');
+                    args = ['bash', '-lc', command];
+                } else {
+                    executable = path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+                    args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command];
+                }
+            } else {
+                executable = process.env.SHELL || '/bin/bash';
+                args = ['-lc', command];
+            }
+
+            require('child_process').execFile(executable, args, {
+                cwd,
+                windowsHide: true,
+                timeout,
+                maxBuffer: 1024 * 1024 * 8,
+                encoding: 'utf8',
+            }, (error, stdout, stderr) => {
+                resolve({
+                    ok: !error,
+                    code: error && typeof error.code !== 'undefined' ? error.code : 0,
+                    output: `${stdout || ''}${stderr || ''}`.trim(),
+                });
+            });
+        });
+    }
+
     function assertSafeCodeName(name) {
         if (!name || typeof name !== 'string') {
             const err = new Error('Missing name');
@@ -3439,15 +3489,15 @@ You have the following skills available. When a user's request matches a skill's
     server.post('/api/code/workspace/command', async (req, res) => {
         const startedAt = Date.now();
         try {
-            const { workspacePath, command, timeout } = req.body || {};
+            const { workspacePath, command, timeout, shell } = req.body || {};
             if (!command || typeof command !== 'string') return res.status(400).json({ error: 'Missing command' });
             const { workspaceRoot } = resolveCodeWorkspacePath(workspacePath, workspacePath);
-            const result = await executeTool('Bash', { command, timeout: timeout || 120000 }, workspaceRoot);
+            const result = await runCodeShellCommand(workspaceRoot, command, shell || 'powershell', timeout || 120000);
             res.json({
                 cwd: workspaceRoot,
                 command,
-                output: result.content || '',
-                isError: !!result.is_error,
+                output: result.output || '',
+                isError: !result.ok,
                 durationMs: Date.now() - startedAt,
             });
         } catch (err) {

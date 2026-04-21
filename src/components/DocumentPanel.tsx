@@ -50,6 +50,7 @@ const DocumentPanel: React.FC<DocumentPanelProps> = ({ document: doc, onClose })
   const isReact = ['jsx', 'tsx'].includes(fmt) || ['jsx', 'tsx'].includes(ext);
   const isRenderable = isHtml || isReact;
   const isCode = !isBinary && !isMarkdown && !isRenderable;
+  const displayFormat = isHtml ? 'html' : isReact ? ext || fmt : fmt;
 
   const [viewMode, setViewMode] = useState<'preview' | 'code'>(isCode ? 'code' : 'preview');
   const [showCopyMenu, setShowCopyMenu] = useState(false);
@@ -192,8 +193,8 @@ const DocumentPanel: React.FC<DocumentPanelProps> = ({ document: doc, onClose })
           )}
           <div className="flex items-center min-w-0 text-[14px] truncate">
             <span className="text-claude-text font-normal truncate">{doc.title}</span>
-            {!doc.title.toLowerCase().endsWith(`.${fmt}`) && (
-              <span className="text-claude-textSecondary font-normal ml-1 flex-shrink-0">· {fmt.toUpperCase()}</span>
+            {!doc.title.toLowerCase().endsWith(`.${displayFormat}`) && (
+              <span className="text-claude-textSecondary font-normal ml-1 flex-shrink-0">· {displayFormat.toUpperCase()}</span>
             )}
           </div>
         </div>

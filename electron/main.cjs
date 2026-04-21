@@ -32,6 +32,58 @@ let mainWindow;
 
 const isDev = process.env.NODE_ENV === 'development';
 
+function spawnDetached(command, args, options = {}) {
+    try {
+        const child = require('child_process').spawn(command, args, {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: true,
+            ...options,
+        });
+        child.unref();
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+function firstExistingPath(candidates) {
+    return candidates.find(candidate => candidate && fs.existsSync(candidate)) || null;
+}
+
+function findPyCharmExe() {
+    const directCandidates = [
+        path.join(process.env['ProgramFiles'] || '', 'JetBrains', 'PyCharm Community Edition 2025.1', 'bin', 'pycharm64.exe'),
+        path.join(process.env['ProgramFiles'] || '', 'JetBrains', 'PyCharm Community Edition 2024.3', 'bin', 'pycharm64.exe'),
+        path.join(process.env['ProgramFiles'] || '', 'JetBrains', 'PyCharm 2025.1', 'bin', 'pycharm64.exe'),
+        path.join(process.env['ProgramFiles'] || '', 'JetBrains', 'PyCharm 2024.3', 'bin', 'pycharm64.exe'),
+        path.join(process.env['LocalAppData'] || '', 'Programs', 'PyCharm Community', 'bin', 'pycharm64.exe'),
+    ];
+    const direct = firstExistingPath(directCandidates);
+    if (direct) return direct;
+
+    const toolboxRoot = path.join(process.env['LocalAppData'] || '', 'JetBrains', 'Toolbox', 'apps', 'PyCharm-C');
+    if (!fs.existsSync(toolboxRoot)) return null;
+    try {
+        const channels = fs.readdirSync(toolboxRoot, { withFileTypes: true })
+            .filter(entry => entry.isDirectory())
+            .map(entry => entry.name);
+        for (const channel of channels) {
+            const channelPath = path.join(toolboxRoot, channel);
+            const versions = fs.readdirSync(channelPath, { withFileTypes: true })
+                .filter(entry => entry.isDirectory())
+                .map(entry => entry.name)
+                .sort()
+                .reverse();
+            for (const version of versions) {
+                const exe = path.join(channelPath, version, 'bin', 'pycharm64.exe');
+                if (fs.existsSync(exe)) return exe;
+            }
+        }
+    } catch (_) {}
+    return null;
+}
+
 function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1150,
@@ -282,6 +334,59 @@ ipcMain.handle('open-folder', (event, folderPath) => {
     }
     shell.openPath(folderPath);
     return true;
+});
+
+ipcMain.handle('open-path-with-target', async (event, targetPath, target) => {
+    if (!targetPath || !fs.existsSync(targetPath)) {
+        return { ok: false, error: 'Path not found' };
+    }
+
+    const normalizedTarget = String(target || 'default').toLowerCase();
+    const resolvedPath = path.resolve(targetPath);
+
+    if (normalizedTarget === 'explorer' || normalizedTarget === 'default') {
+        await shell.openPath(resolvedPath);
+        return { ok: true };
+    }
+
+    if (normalizedTarget === 'vscode') {
+        const codeExe = firstExistingPath([
+            path.join(process.env['LocalAppData'] || '', 'Programs', 'Microsoft VS Code', 'Code.exe'),
+            path.join(process.env['ProgramFiles'] || '', 'Microsoft VS Code', 'Code.exe'),
+            path.join(process.env['LocalAppData'] || '', 'Programs', 'Microsoft VS Code Insiders', 'Code - Insiders.exe'),
+        ]);
+        const opened = codeExe
+            ? spawnDetached(codeExe, ['-n', resolvedPath], { cwd: path.dirname(resolvedPath) })
+            : spawnDetached('code', ['-n', resolvedPath], { cwd: path.dirname(resolvedPath) });
+        if (opened) return { ok: true };
+        await shell.openPath(resolvedPath);
+        return { ok: false, fallback: 'explorer' };
+    }
+
+    if (normalizedTarget === 'git-bash') {
+        const gitBash = firstExistingPath([
+            path.join(process.env['ProgramFiles'] || '', 'Git', 'git-bash.exe'),
+            path.join(process.env['ProgramW6432'] || '', 'Git', 'git-bash.exe'),
+            path.join(process.env['LocalAppData'] || '', 'Programs', 'Git', 'git-bash.exe'),
+        ]);
+        if (gitBash && spawnDetached(gitBash, [`--cd=${resolvedPath}`], { cwd: resolvedPath })) {
+            return { ok: true };
+        }
+        await shell.openPath(resolvedPath);
+        return { ok: false, fallback: 'explorer' };
+    }
+
+    if (normalizedTarget === 'pycharm') {
+        const pycharmExe = findPyCharmExe();
+        if (pycharmExe && spawnDetached(pycharmExe, [resolvedPath], { cwd: path.dirname(resolvedPath) })) {
+            return { ok: true };
+        }
+        await shell.openPath(resolvedPath);
+        return { ok: false, fallback: 'explorer' };
+    }
+
+    await shell.openPath(resolvedPath);
+    return { ok: true, fallback: 'explorer' };
 });
 
 ipcMain.handle('select-directory', async () => {

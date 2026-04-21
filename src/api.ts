@@ -699,11 +699,11 @@ export async function deleteCodeEntry(workspacePath: string, path: string): Prom
   return res.json();
 }
 
-export async function runCodeCommand(workspacePath: string, command: string, timeout = 120000): Promise<CodeCommandResult> {
+export async function runCodeCommand(workspacePath: string, command: string, timeout = 120000, shell = 'powershell'): Promise<CodeCommandResult> {
   const res = await fetch(`${API_BASE}/code/workspace/command`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ workspacePath, command, timeout }),
+    body: JSON.stringify({ workspacePath, command, timeout, shell }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));

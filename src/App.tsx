@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation, useParams, useNavigate } from 'react-router-dom';
-import { FileText, ChevronDown, Trash, Pencil, Star, BellRing, Menu, Folder, ArrowLeft, ArrowRight } from 'lucide-react';
+import { FileText, ChevronDown, Trash, Pencil, Star, BellRing, Menu, Folder, ArrowLeft, ArrowRight, HelpCircle, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import MainContent from './components/MainContent';
 import { IconSidebarToggle } from './components/Icons';
@@ -217,8 +217,12 @@ const ChatHeader = ({
               const res = await fetch(`http://127.0.0.1:30080/api/conversations/${id}`);
               if (!res.ok) return;
               const data = await res.json();
-              if (data.workspace_path && (window as any).electronAPI?.openFolder) {
-                (window as any).electronAPI.openFolder(data.workspace_path);
+              if (data.workspace_path && (window as any).electronAPI?.openPathWithTarget) {
+                const target = localStorage.getItem('default_open_target') || 'vscode';
+                const result = await (window as any).electronAPI.openPathWithTarget(data.workspace_path, target);
+                if (!result?.ok && (window as any).electronAPI?.openFolder) {
+                  await (window as any).electronAPI.openFolder(data.workspace_path);
+                }
               }
             } catch (e) { console.error('Open folder failed:', e); }
           }}
@@ -272,6 +276,8 @@ const Layout = () => {
   });
   const [showSettings, setShowSettings] = useState(false);
   const [showUpgrade, setShowUpgrade] = useState(false);
+  const [showAppMenu, setShowAppMenu] = useState(false);
+  const [showSupportModal, setShowSupportModal] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(() => !localStorage.getItem('onboarding_done'));
   const [needsGitBash, setNeedsGitBash] = useState(false);
 
@@ -298,11 +304,13 @@ const Layout = () => {
   const [documentPanelDoc, setDocumentPanelDoc] = useState<DocumentInfo | null>(null);
   const [showArtifacts, setShowArtifacts] = useState(false);
   const [artifacts, setArtifacts] = useState<DocumentInfo[]>([]);
-  const [documentPanelWidth, setDocumentPanelWidth] = useState(50); // percent of remaining space (1:1 default)
+  const [documentPanelWidth, setDocumentPanelWidth] = useState(62); // wider by default so HTML previews are closer to desktop width
   const [isChatMode, setIsChatMode] = useState(false);
   const [currentChatTitle, setCurrentChatTitle] = useState('');
   const sidebarWasCollapsedRef = useRef(false);
   const contentContainerRef = useRef<HTMLDivElement>(null);
+  const appMenuRef = useRef<HTMLDivElement>(null);
+  const appMenuButtonRef = useRef<HTMLButtonElement>(null);
 
   // Detect macOS for traffic light padding
   const [isMac, setIsMac] = useState(false);
@@ -324,11 +332,31 @@ const Layout = () => {
     }
   }, []);
 
+  useEffect(() => {
+    if (!showAppMenu) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        appMenuRef.current &&
+        !appMenuRef.current.contains(event.target as Node) &&
+        appMenuButtonRef.current &&
+        !appMenuButtonRef.current.contains(event.target as Node)
+      ) {
+        setShowAppMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showAppMenu]);
+
   const location = useLocation();
   const navigate = useNavigate();
   const isCodeRoute = location.pathname === '/code';
   const isCoworkRoute = location.pathname === '/cowork';
   const isChatRoute = !isCodeRoute && !isCoworkRoute;
+
+  useEffect(() => {
+    setShowAppMenu(false);
+  }, [location.pathname, showSettings, showUpgrade]);
 
   // Navigation history for back/forward buttons
   const [navHistory, setNavHistory] = useState<string[]>([location.pathname + location.search + location.hash]);
@@ -599,7 +627,8 @@ const Layout = () => {
           >
             <Tooltip text="Menu">
               <button
-                onClick={() => { }}
+                ref={appMenuButtonRef}
+                onClick={() => setShowAppMenu((prev) => !prev)}
                 className="p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded-md text-claude-textSecondary hover:text-claude-text transition-colors"
               >
                 <Menu size={18} className="opacity-80" />
@@ -642,6 +671,55 @@ const Layout = () => {
               <span className="p-1.5" style={{ color: '#B7B5B0' }}>
                 <ArrowRight size={16} strokeWidth={1.5} />
               </span>
+            )}
+            {showAppMenu && (
+              <div
+                ref={appMenuRef}
+                className="absolute left-2 top-[46px] z-[80] w-[240px] overflow-hidden rounded-2xl border border-claude-border bg-claude-input p-1.5 shadow-[0_18px_40px_rgba(0,0,0,0.28)]"
+                style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+              >
+                <button
+                  onClick={() => {
+                    setShowAppMenu(false);
+                    handleNewChat();
+                  }}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] text-claude-text hover:bg-claude-hover"
+                >
+                  <MessageSquarePlus size={16} className="text-claude-textSecondary" />
+                  新建聊天
+                </button>
+                <button
+                  onClick={() => {
+                    setShowAppMenu(false);
+                    setIsSidebarCollapsed((prev) => !prev);
+                  }}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] text-claude-text hover:bg-claude-hover"
+                >
+                  {isSidebarCollapsed ? <PanelLeftOpen size={16} className="text-claude-textSecondary" /> : <PanelLeftClose size={16} className="text-claude-textSecondary" />}
+                  {isSidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+                </button>
+                <button
+                  onClick={() => {
+                    setShowAppMenu(false);
+                    setShowSettings(true);
+                    setShowUpgrade(false);
+                  }}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] text-claude-text hover:bg-claude-hover"
+                >
+                  <Settings size={16} className="text-claude-textSecondary" />
+                  设置
+                </button>
+                <button
+                  onClick={() => {
+                    setShowAppMenu(false);
+                    setShowSupportModal(true);
+                  }}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] text-claude-text hover:bg-claude-hover"
+                >
+                  <HelpCircle size={16} className="text-claude-textSecondary" />
+                  售后支持
+                </button>
+              </div>
             )}
           </div>
 
@@ -799,6 +877,28 @@ const Layout = () => {
           </div>
         </div>
       </div>
+      {showSupportModal && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 px-4" onClick={() => setShowSupportModal(false)}>
+          <div
+            className="w-full max-w-[360px] rounded-2xl border border-claude-border bg-claude-input p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="mb-2 text-[16px] font-semibold text-claude-text">售后支持</h3>
+            <p className="mb-3 text-[14px] text-claude-textSecondary">售后 QQ：</p>
+            <div className="mb-6 rounded-xl bg-claude-btn-hover px-4 py-3 text-center text-[20px] font-semibold tracking-wide text-claude-text select-all">
+              2592056451
+            </div>
+            <div className="flex justify-end">
+              <button
+                onClick={() => setShowSupportModal(false)}
+                className="rounded-lg bg-claude-btn-hover px-4 py-2 text-[13px] text-claude-text hover:bg-claude-hover transition-colors"
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {activeAnnouncement && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/45 px-4">
           <div className="w-full max-w-2xl rounded-2xl bg-white dark:bg-[#1F1F1F] shadow-2xl border border-black/5 dark:border-white/10">

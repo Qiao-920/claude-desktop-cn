@@ -1,10 +1,31 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AppWindow,
+  Archive,
+  BarChart3,
+  Bot,
   Check,
   ChevronRight,
+  ChevronsUpDown,
+  Code2,
+  FolderCog,
+  FolderGit2,
+  FolderOpen,
+  Gauge,
+  GitBranch,
+  Globe2,
+  Languages,
   LogOut,
+  MonitorCog,
   MonitorIcon,
+  Palette,
+  PlugZap,
+  ShieldCheck,
   Smartphone,
+  TerminalSquare,
+  UserCog,
+  UserRound,
+  Workflow,
 } from 'lucide-react';
 import {
   changePassword,
@@ -66,6 +87,47 @@ const WORK_OPTIONS = [
   '其他',
 ];
 
+const OPEN_TARGET_OPTIONS: PickerOption[] = [
+  { value: 'vscode', label: 'VS Code', description: '优先在 VS Code 中打开工作区，适合继续编码。', icon: Code2 },
+  { value: 'default', label: '默认应用', description: '交给系统默认应用决定如何打开当前路径。', icon: AppWindow },
+  { value: 'explorer', label: '文件资源管理器', description: '直接在系统文件夹里查看内容。', icon: FolderOpen },
+  { value: 'git-bash', label: 'Git Bash', description: '把工作区作为起点打开 Git Bash。', icon: FolderGit2 },
+  { value: 'pycharm', label: 'PyCharm', description: '检测到 JetBrains 环境时用 PyCharm 打开。', icon: FolderCog },
+];
+
+const SHELL_OPTIONS: PickerOption[] = [
+  { value: 'powershell', label: 'PowerShell', description: 'Windows 下最稳妥，适合大多数命令。', icon: TerminalSquare },
+  { value: 'cmd', label: 'Command Prompt', description: '兼容老脚本和传统批处理命令。', icon: MonitorCog },
+  { value: 'git-bash', label: 'Git Bash', description: '更适合 Git、Node 和类 Unix 命令。', icon: GitBranch },
+  { value: 'wsl', label: 'WSL', description: '如果你装了 WSL，可直接用 Linux 环境执行。', icon: Workflow },
+];
+
+const LANGUAGE_OPTIONS: PickerOption[] = [
+  { value: 'zh-CN', label: '简体中文', description: '优先显示完整中文界面。', icon: Languages },
+  { value: 'en', label: 'English', description: '切回英文界面，方便对照原生 Claude/Codex。', icon: Globe2 },
+];
+
+const DENSITY_OPTIONS: PickerOption[] = [
+  { value: 'compact', label: '紧凑', description: '信息密度更高，适合长时间工作。', icon: Gauge },
+  { value: 'standard', label: '标准', description: '在可读性和紧凑度之间取一个中间值。', icon: Smartphone },
+  { value: 'comfortable', label: '舒适', description: '更大的间距和更松的排版。', icon: MonitorIcon },
+];
+
+const SETTING_NAV_META: Record<SettingsSection, { label: string; icon: React.ComponentType<{ size?: number; className?: string }>; badge?: string }> = {
+  general: { label: '常规', icon: MonitorCog },
+  appearance: { label: '外观', icon: Palette },
+  models: { label: '模型', icon: Bot },
+  personalization: { label: '个性化', icon: UserRound },
+  permissions: { label: '权限', icon: ShieldCheck },
+  git: { label: 'Git', icon: GitBranch, badge: '骨架' },
+  mcp: { label: 'MCP 服务器', icon: PlugZap, badge: '骨架' },
+  environment: { label: '环境', icon: MonitorCog, badge: '骨架' },
+  worktree: { label: '工作树', icon: Workflow, badge: '骨架' },
+  archived: { label: '已归档聊天', icon: Archive, badge: '骨架' },
+  usage: { label: '使用情况', icon: BarChart3 },
+  account: { label: '账号', icon: UserCog },
+};
+
 const formatTime = (value?: string) => {
   if (!value) return '—';
   const normalized = value.includes(' ') && !value.includes('T') ? value.replace(' ', 'T') : value;
@@ -105,6 +167,103 @@ const SectionCard = ({
     {children}
   </section>
 );
+
+type PickerOption = {
+  value: string;
+  label: string;
+  description: string;
+  icon: React.ComponentType<{ size?: number; className?: string }>;
+};
+
+const SettingPickerCard = ({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: PickerOption[];
+  onChange: (value: string) => void;
+}) => {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const current = options.find((option) => option.value === value) || options[0];
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [open]);
+
+  const CurrentIcon = current.icon;
+
+  return (
+    <div ref={rootRef} className="relative rounded-2xl border border-claude-border bg-claude-bg p-4">
+      <div className="mb-2 text-[12px] font-medium uppercase tracking-[0.08em] text-claude-textSecondary/80">{label}</div>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-3 text-left transition-colors ${
+          open ? 'border-[#2E7CF6]/40 bg-[#2E7CF6]/8' : 'border-claude-border hover:bg-claude-hover'
+        }`}
+      >
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-claude-input text-claude-textSecondary shadow-sm">
+            <CurrentIcon size={18} />
+          </div>
+          <div className="min-w-0">
+            <div className="truncate text-[14px] font-medium text-claude-text">{current.label}</div>
+            <div className="mt-0.5 text-[12px] leading-5 text-claude-textSecondary">{current.description}</div>
+          </div>
+        </div>
+        <ChevronsUpDown size={16} className="shrink-0 text-claude-textSecondary" />
+      </button>
+
+      {open && (
+        <div className="absolute left-0 right-0 top-full z-40 mt-2 overflow-hidden rounded-2xl border border-claude-border bg-claude-input shadow-[0_14px_40px_rgba(0,0,0,0.22)]">
+          <div className="max-h-[320px] overflow-y-auto p-2">
+            {options.map((option) => {
+              const OptionIcon = option.icon;
+              const active = option.value === value;
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => {
+                    onChange(option.value);
+                    setOpen(false);
+                  }}
+                  className={`flex w-full items-start gap-3 rounded-xl px-3 py-3 text-left transition-colors ${
+                    active ? 'bg-[#2E7CF6]/12' : 'hover:bg-claude-hover'
+                  }`}
+                >
+                  <div className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
+                    active ? 'bg-[#2E7CF6]/16 text-[#2E7CF6]' : 'bg-claude-bg text-claude-textSecondary'
+                  }`}>
+                    <OptionIcon size={17} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="truncate text-[14px] font-medium text-claude-text">{option.label}</div>
+                      {active && <Check size={15} className="shrink-0 text-[#2E7CF6]" />}
+                    </div>
+                    <div className="mt-0.5 text-[12px] leading-5 text-claude-textSecondary">{option.description}</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const PlaceholderSection = ({
   title,
@@ -440,58 +599,39 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
           <div className="space-y-5">
             <SectionCard title="常规" subtitle="先把常用的基础选项收在这里，尽量对齐原生 Claude / Codex 的设置结构。">
               <div className="grid grid-cols-2 gap-4">
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-3">
-                  <div className="text-[13px] text-claude-textSecondary mb-1">默认打开目标</div>
-                  <select
-                    value={defaultOpenTarget}
-                    onChange={(e) => {
-                      setDefaultOpenTarget(e.target.value);
-                      localStorage.setItem('default_open_target', e.target.value);
-                    }}
-                    className="w-full bg-transparent text-[14px] text-claude-text outline-none"
-                  >
-                    <option value="vscode">VS Code</option>
-                    <option value="folder">系统文件夹</option>
-                    <option value="internal">应用内打开</option>
-                  </select>
-                </div>
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-3">
-                  <div className="text-[13px] text-claude-textSecondary mb-1">集成终端 Shell</div>
-                  <select
-                    value={integratedShell}
-                    onChange={(e) => {
-                      setIntegratedShell(e.target.value);
-                      localStorage.setItem('integrated_shell', e.target.value);
-                    }}
-                    className="w-full bg-transparent text-[14px] text-claude-text outline-none"
-                  >
-                    <option value="powershell">PowerShell</option>
-                    <option value="cmd">CMD</option>
-                    <option value="git-bash">Git Bash</option>
-                  </select>
-                </div>
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-3">
-                  <div className="text-[13px] text-claude-textSecondary mb-1">语言</div>
-                  <select
-                    value={uiLanguage}
-                    onChange={(e) => applyLanguage(e.target.value as UiLanguage)}
-                    className="w-full bg-transparent text-[14px] text-claude-text outline-none"
-                  >
-                    <option value="zh-CN">中文（中国）</option>
-                    <option value="en">English</option>
-                  </select>
-                </div>
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-3">
-                  <div className="text-[13px] text-claude-textSecondary mb-1">详细级别</div>
-                  <select
-                    value={uiDensity}
-                    onChange={(e) => applyUiDensity(e.target.value)}
-                    className="w-full bg-transparent text-[14px] text-claude-text outline-none"
-                  >
-                    <option value="compact">紧凑</option>
-                    <option value="comfortable">舒适</option>
-                  </select>
-                </div>
+                <SettingPickerCard
+                  label="默认打开目标"
+                  value={defaultOpenTarget}
+                  options={OPEN_TARGET_OPTIONS}
+                  onChange={(next) => {
+                    setDefaultOpenTarget(next);
+                    localStorage.setItem('default_open_target', next);
+                  }}
+                />
+                <SettingPickerCard
+                  label="集成终端 Shell"
+                  value={integratedShell}
+                  options={SHELL_OPTIONS}
+                  onChange={(next) => {
+                    setIntegratedShell(next);
+                    localStorage.setItem('integrated_shell', next);
+                  }}
+                />
+                <SettingPickerCard
+                  label="语言"
+                  value={uiLanguage}
+                  options={LANGUAGE_OPTIONS}
+                  onChange={(next) => applyLanguage(next as UiLanguage)}
+                />
+                <SettingPickerCard
+                  label="详细级别"
+                  value={uiDensity}
+                  options={DENSITY_OPTIONS}
+                  onChange={applyUiDensity}
+                />
+              </div>
+              <div className="mt-4 rounded-xl border border-[#2E7CF6]/18 bg-[#2E7CF6]/8 px-4 py-3 text-[12px] leading-6 text-claude-textSecondary">
+                说明：`默认打开目标` 会影响聊天页右上角“打开工作区”的行为；`集成终端 Shell` 会影响 Code 模式命令面板使用的默认解释器。
               </div>
             </SectionCard>
 
@@ -1114,7 +1254,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
 
   return (
     <div className="flex h-full bg-claude-bg text-claude-text">
-      <aside className="w-[240px] shrink-0 border-r border-claude-border px-5 pt-14 pb-6">
+      <aside className="w-[220px] shrink-0 border-r border-claude-border px-4 pt-12 pb-6">
         <button
           onClick={onClose}
           className="mb-6 inline-flex items-center gap-2 text-[12px] text-claude-textSecondary hover:text-claude-text"
@@ -1122,10 +1262,11 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
           <ChevronRight size={14} className="rotate-180" />
           返回应用
         </button>
-        <h1 className="mb-6 text-[30px] font-[Spectral] font-semibold tracking-tight">设置</h1>
+        <h1 className="mb-5 text-[28px] font-[Spectral] font-semibold tracking-tight">设置</h1>
         <nav className="space-y-1">
           {navItems.map((item) => {
             const active = section === item.key;
+            const Icon = SETTING_NAV_META[item.key].icon;
             return (
               <button
                 key={item.key}
@@ -1134,7 +1275,14 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                   active ? 'bg-claude-btn-hover text-claude-text' : 'text-claude-textSecondary hover:bg-claude-hover'
                 }`}
               >
-                <span className="text-[14px] font-medium">{item.label}</span>
+                <span className="flex items-center gap-2.5">
+                  <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${
+                    active ? 'bg-claude-bg text-claude-text' : 'bg-claude-bg/50 text-claude-textSecondary'
+                  }`}>
+                    <Icon size={16} />
+                  </span>
+                  <span className="text-[14px] font-medium">{item.label}</span>
+                </span>
                 {item.badge && (
                   <span className="rounded-full bg-claude-hover px-2 py-0.5 text-[10px] text-claude-textSecondary">
                     {item.badge}
@@ -1146,8 +1294,8 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
         </nav>
       </aside>
 
-      <main className="flex-1 overflow-y-auto px-10 pt-14 pb-24">
-        <div className="mx-auto max-w-[980px]">
+      <main className="flex-1 overflow-y-auto px-8 pt-12 pb-20">
+        <div className="mx-auto max-w-[1120px]">
           {currentSection}
         </div>
       </main>
