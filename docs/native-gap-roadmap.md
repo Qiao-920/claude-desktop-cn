@@ -1,95 +1,105 @@
 # Claude Desktop CN Native Gap Roadmap
 
-This roadmap tracks the highest-value work needed to align this app with the native Claude app and Claude Code experience, while keeping the current self-hosted strengths.
+这份路线图只记录“对标原生 Claude / Claude Code，接下来最值得继续补的东西”，不再把已经完成的基础项和真正的缺口混在一起。
 
-## Product Position
+## 当前已落地
 
-Today this project is strongest as a self-hosted Claude-style desktop client with:
+最近几轮已经完成的关键工作：
 
-- chat
-- projects
-- artifacts
-- research panel
-- GitHub import
-- provider/model management
+- GitHub OAuth 已切到用户自有 App 方案
+- GitHub 导入链路可用
+- 中文化基础完成，并支持中英文 UI 切换
+- `Code` 页已经具备真实工作区能力：
+  - 选择工作区
+  - 文件树浏览
+  - 编辑 / 保存
+  - HTML 预览
+  - 新建 / 删除 / 重命名
+  - Git 状态与单文件 diff
+  - 单文件恢复
+  - 提交 / 推送
+- `Settings` 页中原先标记为“骨架”的多个区域，已经接入真实状态与入口
+- `Cowork` 页已经从空白占位升级为协作总览页第一版
 
-The biggest remaining gap is not visual polish. It is workflow completeness.
+## 现在最大的差距
 
-## Phase 1: Claude App Parity
+当前差距已经不再是“有没有页面”，而是“这些页面是不是能形成真正闭环”。
 
-### P0
+最大的缺口主要有三类：
 
-1. Real project knowledge workflows
-   - project-level GitHub linking and sync
-   - clear project file provenance
-   - stronger project instructions editing
-   - prepare for large-project retrieval workflows
+1. 协作闭环还不完整
+2. 项目级规则 / 记忆 / 自动化还不够强
+3. 与原生 Claude Code 相比，工作区行为和设置体系还不够深
 
-2. Integrations foundation
-   - keep GitHub first-class
-   - add connector architecture that can support Google Drive, Gmail, and Calendar
-
-3. Styles system
-   - preset styles
-   - custom styles
-   - per-chat style selection
-
-### P1
-
-4. Research workflow polish
-   - research mode entry point
-   - better source summaries
-   - clearer progress states
-
-5. Artifact workflow polish
-   - stronger create/edit/remix loop
-   - better artifact organization
-
-## Phase 2: Claude Code Parity
+## Phase 1：把现有入口做成完整闭环
 
 ### P0
 
-1. Turn the Code tab into a real mode
-   - workspace picker
-   - workspace status
-   - recent workspaces
-   - code-oriented conversation defaults
+1. Cowork 变成真的协作区
+   - 任务列表
+   - 状态流转
+   - 审阅记录
+   - 与项目 / 聊天 / 代码页的互跳
 
-2. Expose project memory
-   - workspace memory entrypoint
-   - project rules surface
-   - CLAUDE.md style guidance in UI
+2. Settings 页彻底去骨架化
+   - Git 默认行为补全
+   - MCP 服务管理增强
+   - 环境与工作树参数补全
+   - 已归档与历史会话体验补全
 
-3. Expose tooling controls
-   - permissions state
-   - tool visibility
-   - MCP server management
+3. Code 页继续补齐工程能力
+   - 更稳定的预览体验
+   - 更清晰的文件操作反馈
+   - 更完整的 Git 工作流
 
 ### P1
 
-4. IDE and repo workflows
-   - open current workspace in editor
-   - repo review flow
-   - diff awareness
-   - PR-oriented GitHub actions
+4. 项目规则与工作记忆
+   - 项目级说明
+   - 类似 `CLAUDE.md` 的入口
+   - 项目记忆与知识关联
 
-5. Hooks and automation
-   - project hooks UI
-   - pre/post action automation
+5. 更贴近原生的体验整理
+   - 更紧凑的排版
+   - 更清晰的状态提示
+   - 更少的“只显示不动作”的按钮
 
-## Current Implementation Batch
+## Phase 2：继续向 Claude Code 靠拢
 
-This batch starts with the highest-leverage project workflow gap:
+### P0
 
-- add project-level GitHub import and sync
-- persist linked GitHub sources on each project
-- update project workspaces to preserve nested imported paths
-- point publish metadata at the user-owned GitHub repository
+1. 工作区与权限体系继续下沉
+   - 权限策略更明确
+   - 工作区默认行为更完整
+   - Shell / 编辑器 / Git 偏好更可控
 
-## Next Recommended Batch
+2. 项目与代码联动
+   - 项目直接打开工作区
+   - 项目规则传递到代码工作流
+   - 项目级 GitHub 源与本地文件联动
 
-After this batch lands, the next implementation target should be:
+3. 自动化与扩展能力
+   - MCP 管理增强
+   - Hook / 自动化入口
+   - 更明确的 Skill 管理体验
 
-1. project-level file configuration UI for linked repos
-2. style presets and custom styles
-3. dedicated Code mode workspace panel
+### P1
+
+4. 更强的工程协作
+   - 审阅面板
+   - 任务执行历史
+   - 项目状态总览
+
+5. 发布与维护体验
+   - 更顺滑的版本发布
+   - 更清晰的更新说明
+   - 更稳定的安装与升级链路
+
+## 当前建议继续推进的主线
+
+下一刀最值得继续做的是：
+
+1. 协作页继续做实
+2. 设置页剩余区域补全
+3. Code 页再补一轮稳定性与体验
+4. 文档、发布说明和版本发布流程标准化

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   AppWindow,
   Archive,
@@ -29,16 +30,25 @@ import {
 } from 'lucide-react';
 import {
   changePassword,
+  CodeGitStatusResult,
   deleteSession,
+  disconnectGithub,
+  getCodeGitStatus,
   getAgentConfig,
+  getConversations,
+  getGithubAuthUrl,
+  getGithubStatus,
   getProviderModels,
+  getProjects,
   getSessions,
+  getSkills,
   getUserProfile,
   getUserUsage,
   logout,
   logoutOtherSessions,
   updateAgentConfig,
   updateUserProfile,
+  Project,
 } from '../api';
 import ProviderSettings from './ProviderSettings';
 import {
@@ -119,11 +129,11 @@ const SETTING_NAV_META: Record<SettingsSection, { label: string; icon: React.Com
   models: { label: '模型', icon: Bot },
   personalization: { label: '个性化', icon: UserRound },
   permissions: { label: '权限', icon: ShieldCheck },
-  git: { label: 'Git', icon: GitBranch, badge: '骨架' },
-  mcp: { label: 'MCP 服务器', icon: PlugZap, badge: '骨架' },
-  environment: { label: '环境', icon: MonitorCog, badge: '骨架' },
-  worktree: { label: '工作树', icon: Workflow, badge: '骨架' },
-  archived: { label: '已归档聊天', icon: Archive, badge: '骨架' },
+  git: { label: 'Git', icon: GitBranch },
+  mcp: { label: 'MCP 服务器', icon: PlugZap },
+  environment: { label: '环境', icon: MonitorCog },
+  worktree: { label: '工作树', icon: Workflow },
+  archived: { label: '已归档聊天', icon: Archive },
   usage: { label: '使用情况', icon: BarChart3 },
   account: { label: '账号', icon: UserCog },
 };
@@ -296,8 +306,26 @@ const PlaceholderSection = ({
 );
 
 const SettingsPage = ({ onClose }: SettingsPageProps) => {
+  const navigate = useNavigate();
   const isSelfHosted = localStorage.getItem('user_mode') === 'selfhosted';
-  const [section, setSection] = useState<SettingsSection>('general');
+  const [section, setSection] = useState<SettingsSection>(() => {
+    const saved = localStorage.getItem('settings_section') as SettingsSection | null;
+    const validSections: SettingsSection[] = [
+      'general',
+      'appearance',
+      'models',
+      'personalization',
+      'permissions',
+      'git',
+      'mcp',
+      'environment',
+      'worktree',
+      'archived',
+      'usage',
+      'account',
+    ];
+    return saved && validSections.includes(saved) ? saved : 'general';
+  });
   const [uiLanguage, setUiLanguage] = useState<UiLanguage>(getStoredUiLanguage());
   const [uiDensity, setUiDensity] = useState(localStorage.getItem('ui_density') || 'compact');
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
@@ -315,6 +343,24 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const [usage, setUsage] = useState<any>(null);
   const [sessions, setSessions] = useState<any[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState('');
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [recentConversations, setRecentConversations] = useState<any[]>([]);
+  const [githubConnected, setGithubConnected] = useState<boolean | null>(null);
+  const [gitStatus, setGitStatus] = useState<CodeGitStatusResult | null>(null);
+  const [skillStats, setSkillStats] = useState({ enabled: 0, builtIn: 0, custom: 0 });
+  const [codeCommandTimeout, setCodeCommandTimeout] = useState(localStorage.getItem('code_command_timeout_ms') || '120000');
+  const [persistCommandHistory, setPersistCommandHistory] = useState(localStorage.getItem('code_persist_command_history') !== '0');
+  const [rememberWorkspace, setRememberWorkspace] = useState(localStorage.getItem('code_remember_workspace') !== '0');
+  const [gitPushAfterCommit, setGitPushAfterCommit] = useState(localStorage.getItem('git_push_after_commit') === '1');
+  const [recentWorkspaces, setRecentWorkspaces] = useState<string[]>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem('code_recent_workspaces') || '[]');
+      return Array.isArray(raw) ? raw.filter((item): item is string => typeof item === 'string') : [];
+    } catch {
+      return [];
+    }
+  });
+  const activeWorkspacePath = localStorage.getItem('code_workspace_path') || '';
 
   const [fullName, setFullName] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -338,6 +384,10 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const [newStyleInstructions, setNewStyleInstructions] = useState('');
   const [styleError, setStyleError] = useState('');
   const [saveMsg, setSaveMsg] = useState('');
+
+  useEffect(() => {
+    localStorage.removeItem('settings_section');
+  }, []);
 
   useEffect(() => {
     const load = async () => {
@@ -380,6 +430,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
         setCurrentSessionId(data.currentSessionId || '');
       } catch {
         setSessions([]);
+        setCurrentSessionId('');
       }
 
       try {
@@ -397,10 +448,56 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
           setProviderModels([]);
         }
       }
+
+      try {
+        const data = await getProjects();
+        setProjects(Array.isArray(data) ? data : []);
+      } catch {
+        setProjects([]);
+      }
+
+      try {
+        const data = await getConversations();
+        setRecentConversations(Array.isArray(data) ? data.slice(0, 8) : []);
+      } catch {
+        setRecentConversations([]);
+      }
+
+      try {
+        const data = await getGithubStatus();
+        setGithubConnected(!!data?.connected);
+      } catch {
+        setGithubConnected(false);
+      }
+
+      if (activeWorkspacePath) {
+        try {
+          const data = await getCodeGitStatus(activeWorkspacePath);
+          setGitStatus(data);
+        } catch {
+          setGitStatus(null);
+        }
+      } else {
+        setGitStatus(null);
+      }
+
+      try {
+        const data = await getSkills();
+        const examples = Array.isArray(data?.examples) ? data.examples : [];
+        const mine = Array.isArray(data?.my_skills) ? data.my_skills : [];
+        const all = [...examples, ...mine];
+        setSkillStats({
+          enabled: all.filter((item: any) => item?.enabled).length,
+          builtIn: examples.length,
+          custom: mine.length,
+        });
+      } catch {
+        setSkillStats({ enabled: 0, builtIn: 0, custom: 0 });
+      }
     };
 
     load();
-  }, [isSelfHosted]);
+  }, [activeWorkspacePath, isSelfHosted]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-ui-density', uiDensity);
@@ -417,11 +514,11 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
       ...(isSelfHosted ? [{ key: 'models', label: '模型' as const }] : []),
       { key: 'personalization', label: '个性化' },
       { key: 'permissions', label: '权限' },
-      { key: 'git', label: 'Git', badge: '骨架' },
-      { key: 'mcp', label: 'MCP 服务器', badge: '骨架' },
-      { key: 'environment', label: '环境', badge: '骨架' },
-      { key: 'worktree', label: '工作树', badge: '骨架' },
-      { key: 'archived', label: '已归档聊天', badge: '骨架' },
+      { key: 'git', label: 'Git' },
+      { key: 'mcp', label: 'MCP 服务器' },
+      { key: 'environment', label: '环境' },
+      { key: 'worktree', label: '工作树' },
+      { key: 'archived', label: '已归档聊天' },
       { key: 'usage', label: '使用情况' },
       ...(!isSelfHosted ? [{ key: 'account', label: '账号' as const }] : []),
     ];
@@ -443,6 +540,14 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const customChatStyles = chatStyles.filter((style) => style.kind === 'custom');
 
   const initials = (displayName || fullName || profile?.nickname || 'U').slice(0, 1).toUpperCase();
+  const archivedProjects = useMemo(
+    () => projects.filter((project) => Number(project.is_archived) === 1),
+    [projects],
+  );
+  const linkedSourceCount = useMemo(
+    () => projects.reduce((total, project) => total + (project.github_sources?.length || 0), 0),
+    [projects],
+  );
 
   const persistProfile = async () => {
     const payload = {
@@ -516,6 +621,61 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
       const config = await updateAgentConfig({ permissionMode: mode });
       setPermissionMode(config.permissionMode || mode);
       window.dispatchEvent(new CustomEvent('agentConfigUpdated', { detail: config }));
+    } catch {
+      // ignore
+    }
+  };
+
+  const saveBooleanPref = (key: string, value: boolean, setter: (value: boolean) => void) => {
+    setter(value);
+    localStorage.setItem(key, value ? '1' : '0');
+  };
+
+  const saveStringPref = (key: string, value: string, setter: (value: string) => void) => {
+    setter(value);
+    localStorage.setItem(key, value);
+  };
+
+  const openCodePage = () => {
+    onClose();
+    navigate('/code');
+  };
+
+  const openProjectsPage = () => {
+    onClose();
+    navigate('/projects');
+  };
+
+  const openChatPage = (conversationId: string) => {
+    onClose();
+    navigate(`/chat/${conversationId}`);
+  };
+
+  const clearWorkspaceHistory = () => {
+    setRecentWorkspaces([]);
+    localStorage.removeItem('code_recent_workspaces');
+  };
+
+  const clearCurrentWorkspace = () => {
+    localStorage.removeItem('code_workspace_path');
+    setGitStatus(null);
+  };
+
+  const handleGithubConnect = async () => {
+    try {
+      const { url } = await getGithubAuthUrl();
+      const api = (window as any).electronAPI;
+      if (api?.openExternal) api.openExternal(url);
+      else window.open(url, '_blank');
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleGithubDisconnect = async () => {
+    try {
+      await disconnectGithub();
+      setGithubConnected(false);
     } catch {
       // ignore
     }
@@ -1047,72 +1207,369 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
 
       case 'git':
         return (
-          <PlaceholderSection
-            title="Git"
-            status="已接骨架"
-            description="这一栏先补成原生化骨架。真正的文件差异、暂存、提交、推送目前已经在代码页右侧面板可用。"
-            bullets={[
-              '当前代码页已支持 Git 状态、单文件差异、暂存/取消暂存、提交、推送。',
-              '下一步适合继续补默认仓库、分支切换、拉取策略、凭据和忽略规则。',
-              '后续这里会成为 Git 全局偏好与默认行为入口。',
-            ]}
-          />
+          <div className="space-y-5">
+            <SectionCard title="Git" subtitle="把当前工作区的仓库状态和默认行为收口到这里，和代码页右侧的 Git 面板互补。">
+              <div className="grid grid-cols-3 gap-4">
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="text-[13px] text-claude-textSecondary">当前工作区</div>
+                  <div className="mt-1 text-[14px] font-medium text-claude-text break-all">
+                    {activeWorkspacePath || '尚未选择工作区'}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="text-[13px] text-claude-textSecondary">仓库状态</div>
+                  <div className="mt-1 text-[14px] font-medium text-claude-text">
+                    {!activeWorkspacePath ? '未初始化' : gitStatus?.isRepo ? '已检测到 Git 仓库' : '不是 Git 仓库'}
+                  </div>
+                  {gitStatus?.isRepo && (
+                    <div className="mt-2 text-[12px] leading-5 text-claude-textSecondary">
+                      分支 {gitStatus.branch || 'unknown'} · {gitStatus.clean ? '工作区干净' : `改动 ${gitStatus.files.length} 个文件`}
+                    </div>
+                  )}
+                </div>
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="text-[13px] text-claude-textSecondary">已连接 GitHub 源</div>
+                  <div className="mt-1 text-[14px] font-medium text-claude-text">{linkedSourceCount}</div>
+                  <div className="mt-2 text-[12px] leading-5 text-claude-textSecondary">
+                    来自项目页绑定的仓库来源总数
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-4">
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="mb-2 text-[13px] text-claude-textSecondary">提交后动作</div>
+                  <button
+                    type="button"
+                    onClick={() => saveBooleanPref('git_push_after_commit', !gitPushAfterCommit, setGitPushAfterCommit)}
+                    className={`inline-flex items-center rounded-full border px-3 py-1.5 text-[12px] transition-colors ${
+                      gitPushAfterCommit
+                        ? 'border-[#2E7CF6]/35 bg-[#2E7CF6]/10 text-[#2E7CF6]'
+                        : 'border-claude-border text-claude-textSecondary hover:bg-claude-hover'
+                    }`}
+                  >
+                    {gitPushAfterCommit ? '已开启：提交后提醒继续推送' : '关闭：提交后不额外提示'}
+                  </button>
+                  <div className="mt-3 text-[12px] leading-6 text-claude-textSecondary">
+                    这是当前桌面端的 Git 偏好开关。代码页下一步会继续把它接到提交成功后的工作流里。
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="mb-2 text-[13px] text-claude-textSecondary">快速入口</div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={openCodePage}
+                      className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-text hover:bg-claude-hover"
+                    >
+                      打开代码页
+                    </button>
+                    <button
+                      type="button"
+                      onClick={openProjectsPage}
+                      className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-text hover:bg-claude-hover"
+                    >
+                      打开项目页
+                    </button>
+                  </div>
+                  <div className="mt-3 text-[12px] leading-6 text-claude-textSecondary">
+                    现在真正的单文件差异、暂存、提交、推送都已经落在代码页里，这里负责总览和默认行为。
+                  </div>
+                </div>
+              </div>
+            </SectionCard>
+          </div>
         );
 
       case 'mcp':
         return (
-          <PlaceholderSection
-            title="MCP 服务器"
-            status="已接骨架"
-            description="这里将对齐原生产品的工具服务器管理位置。"
-            bullets={[
-              '后续可放服务器启停、连接状态、超时设置和作用域控制。',
-              '适合增加每个工具的中文说明、是否允许在聊天/代码页调用。',
-              '这部分会直接影响技能、外部工具和自动化能力的可见性。',
-            ]}
-          />
+          <div className="space-y-5">
+            <SectionCard title="MCP 服务器" subtitle="这一页先做成“工具接入总览”。当前客户端还没有逐台服务器编辑器，但已经能看到与外部能力相关的关键状态。">
+              <div className="grid grid-cols-3 gap-4">
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="text-[13px] text-claude-textSecondary">GitHub 连接</div>
+                  <div className="mt-1 text-[14px] font-medium text-claude-text">
+                    {githubConnected === null ? '检查中…' : githubConnected ? '已连接' : '未连接'}
+                  </div>
+                  <div className="mt-2 text-[12px] leading-5 text-claude-textSecondary">
+                    Add from GitHub 与项目 GitHub 源同步都依赖这里
+                  </div>
+                </div>
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="text-[13px] text-claude-textSecondary">已启用技能</div>
+                  <div className="mt-1 text-[14px] font-medium text-claude-text">{skillStats.enabled}</div>
+                  <div className="mt-2 text-[12px] leading-5 text-claude-textSecondary">
+                    内置 {skillStats.builtIn} · 自定义 {skillStats.custom}
+                  </div>
+                </div>
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="text-[13px] text-claude-textSecondary">当前权限范围</div>
+                  <div className="mt-1 text-[14px] font-medium text-claude-text">
+                    {permissionMode === 'workspace_write'
+                      ? '安全模式'
+                      : permissionMode === 'project'
+                        ? '项目权限'
+                        : '完全访问'}
+                  </div>
+                  <div className="mt-2 text-[12px] leading-5 text-claude-textSecondary">
+                    外部工具和代码能力最终都会受这里约束
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-4">
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="mb-3 text-[13px] text-claude-textSecondary">GitHub 连接管理</div>
+                  <div className="flex flex-wrap gap-2">
+                    {githubConnected ? (
+                      <button
+                        type="button"
+                        onClick={handleGithubDisconnect}
+                        className="rounded-lg border border-[#C6613F]/20 px-3 py-1.5 text-[12px] text-[#C6613F] hover:bg-[#C6613F]/6"
+                      >
+                        断开 GitHub
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleGithubConnect}
+                        className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-text hover:bg-claude-hover"
+                      >
+                        连接 GitHub
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={openProjectsPage}
+                      className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-text hover:bg-claude-hover"
+                    >
+                      管理项目来源
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="mb-2 text-[13px] text-claude-textSecondary">现阶段说明</div>
+                  <div className="text-[12px] leading-6 text-claude-textSecondary">
+                    现在已经能看到技能、GitHub 连接和权限模式这些“会影响工具可见性”的真实状态。下一步再继续补逐台 MCP 服务的启停、作用域、超时和中文说明。
+                  </div>
+                </div>
+              </div>
+            </SectionCard>
+          </div>
         );
 
       case 'environment':
         return (
-          <PlaceholderSection
-            title="环境"
-            status="已接骨架"
-            description="这里以后会放终端、解释器、环境变量和运行时偏好。"
-            bullets={[
-              '适合补默认 Node / Python 路径、代理和 PATH 继承策略。',
-              '你提到希望像 VS Code 那样工作，这里就是未来对应的环境层。',
-              '当前可执行命令主要在代码页右侧控制台完成。',
-            ]}
-          />
+          <div className="space-y-5">
+            <SectionCard title="环境" subtitle="把命令执行时真正会影响体验的几个参数先变成可配：终端、超时、历史保留和工作区记忆。">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="mb-1 text-[13px] text-claude-textSecondary">命令超时</div>
+                  <select
+                    value={codeCommandTimeout}
+                    onChange={(e) => saveStringPref('code_command_timeout_ms', e.target.value, setCodeCommandTimeout)}
+                    className="w-full rounded-xl border border-claude-border bg-claude-input px-4 py-3 text-[14px] text-claude-text outline-none"
+                  >
+                    <option value="60000">60 秒</option>
+                    <option value="120000">120 秒</option>
+                    <option value="300000">300 秒</option>
+                    <option value="600000">600 秒</option>
+                  </select>
+                  <div className="mt-2 text-[12px] leading-6 text-claude-textSecondary">
+                    代码页控制台会按这里的超时上限执行命令。
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="mb-1 text-[13px] text-claude-textSecondary">命令历史保留</div>
+                  <button
+                    type="button"
+                    onClick={() => saveBooleanPref('code_persist_command_history', !persistCommandHistory, setPersistCommandHistory)}
+                    className={`inline-flex items-center rounded-full border px-3 py-1.5 text-[12px] transition-colors ${
+                      persistCommandHistory
+                        ? 'border-[#2E7CF6]/35 bg-[#2E7CF6]/10 text-[#2E7CF6]'
+                        : 'border-claude-border text-claude-textSecondary hover:bg-claude-hover'
+                    }`}
+                  >
+                    {persistCommandHistory ? '已开启：重开应用后保留命令记录' : '关闭：命令记录只保留本次会话'}
+                  </button>
+                  <div className="mt-2 text-[12px] leading-6 text-claude-textSecondary">
+                    这一项会和代码页控制台联动，方便你继续追命令输出。
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-4">
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="mb-1 text-[13px] text-claude-textSecondary">工作区记忆</div>
+                  <button
+                    type="button"
+                    onClick={() => saveBooleanPref('code_remember_workspace', !rememberWorkspace, setRememberWorkspace)}
+                    className={`inline-flex items-center rounded-full border px-3 py-1.5 text-[12px] transition-colors ${
+                      rememberWorkspace
+                        ? 'border-[#2E7CF6]/35 bg-[#2E7CF6]/10 text-[#2E7CF6]'
+                        : 'border-claude-border text-claude-textSecondary hover:bg-claude-hover'
+                    }`}
+                  >
+                    {rememberWorkspace ? '已开启：记住最近工作区' : '关闭：不保留上次工作区'}
+                  </button>
+                  <div className="mt-2 text-[12px] leading-6 text-claude-textSecondary">
+                    你更偏向原生 Claude Code 的工作流，这个开关就是对应的环境层。
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="mb-1 text-[13px] text-claude-textSecondary">当前默认 Shell</div>
+                  <div className="text-[14px] font-medium text-claude-text">
+                    {integratedShell === 'powershell'
+                      ? 'PowerShell'
+                      : integratedShell === 'cmd'
+                        ? 'Command Prompt'
+                        : integratedShell === 'git-bash'
+                          ? 'Git Bash'
+                          : 'WSL'}
+                  </div>
+                  <div className="mt-2 text-[12px] leading-6 text-claude-textSecondary">
+                    如需切换解释器，可回到上方“常规”里的集成终端设置。
+                  </div>
+                </div>
+              </div>
+            </SectionCard>
+          </div>
         );
 
       case 'worktree':
         return (
-          <PlaceholderSection
-            title="工作树"
-            status="已接骨架"
-            description="代码页已经有工作区概念，这里会成为更正式的工作区管理入口。"
-            bullets={[
-              '适合补最近工作区、默认目录、收藏目录与多工作树切换。',
-              '后续可以加入“打开即加载 Git 状态”和“记住上次目录”。',
-              '如果你希望更接近原生 Claude Code，这一层会非常关键。',
-            ]}
-          />
+          <div className="space-y-5">
+            <SectionCard title="工作树" subtitle="这里开始承接代码页的工作区记忆，把当前目录、最近目录和清理动作集中起来。">
+              <div className="grid grid-cols-[1.1fr_0.9fr] gap-4">
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="text-[13px] text-claude-textSecondary">当前工作区</div>
+                  <div className="mt-1 break-all text-[14px] font-medium text-claude-text">
+                    {activeWorkspacePath || '尚未选择工作区'}
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={openCodePage}
+                      className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-text hover:bg-claude-hover"
+                    >
+                      打开代码页
+                    </button>
+                    {activeWorkspacePath && (
+                      <button
+                        type="button"
+                        onClick={clearCurrentWorkspace}
+                        className="rounded-lg border border-[#C6613F]/20 px-3 py-1.5 text-[12px] text-[#C6613F] hover:bg-[#C6613F]/6"
+                      >
+                        清空当前工作区
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="text-[13px] text-claude-textSecondary">最近工作区</div>
+                  <div className="mt-3 space-y-2">
+                    {recentWorkspaces.length > 0 ? (
+                      recentWorkspaces.slice(0, 5).map((item) => (
+                        <div key={item} className="rounded-lg border border-claude-border px-3 py-2 text-[12px] break-all text-claude-textSecondary">
+                          {item}
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-[12px] leading-6 text-claude-textSecondary">
+                        还没有保存的最近工作区记录。
+                      </div>
+                    )}
+                  </div>
+                  {recentWorkspaces.length > 0 && (
+                    <div className="mt-3">
+                      <button
+                        type="button"
+                        onClick={clearWorkspaceHistory}
+                        className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-text hover:bg-claude-hover"
+                      >
+                        清空最近记录
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </SectionCard>
+          </div>
         );
 
       case 'archived':
         return (
-          <PlaceholderSection
-            title="已归档聊天"
-            status="已接骨架"
-            description="原生产品里这部分会负责归档历史、恢复对话和查看旧线程。"
-            bullets={[
-              '现在先把入口补齐，后续再接归档筛选、恢复与批量整理。',
-              '适合加“按项目 / 日期 / 模型”筛选。',
-              '也可以接入自动压缩后的对话摘要浏览。',
-            ]}
-          />
+          <div className="space-y-5">
+            <SectionCard title="已归档聊天" subtitle="当前服务端还没有独立的 archive 字段，所以这页先承接“历史会话总览”与后续归档入口。">
+              <div className="grid grid-cols-3 gap-4">
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="text-[13px] text-claude-textSecondary">当前会话设备数</div>
+                  <div className="mt-1 text-[14px] font-medium text-claude-text">{sessions.length}</div>
+                </div>
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="text-[13px] text-claude-textSecondary">最近聊天数</div>
+                  <div className="mt-1 text-[14px] font-medium text-claude-text">{recentConversations.length}</div>
+                </div>
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="text-[13px] text-claude-textSecondary">归档项目数</div>
+                  <div className="mt-1 text-[14px] font-medium text-claude-text">{archivedProjects.length}</div>
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-4">
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="mb-3 text-[13px] text-claude-textSecondary">最近聊天</div>
+                  <div className="space-y-2">
+                    {recentConversations.length > 0 ? (
+                      recentConversations.slice(0, 6).map((conversation) => (
+                        <button
+                          key={conversation.id}
+                          type="button"
+                          onClick={() => openChatPage(conversation.id)}
+                          className="flex w-full items-center justify-between gap-3 rounded-lg border border-claude-border px-3 py-2 text-left hover:bg-claude-hover"
+                        >
+                          <span className="truncate text-[13px] text-claude-text">
+                            {conversation.title || '未命名聊天'}
+                          </span>
+                          <ChevronRight size={14} className="shrink-0 text-claude-textSecondary" />
+                        </button>
+                      ))
+                    ) : (
+                      <div className="text-[12px] leading-6 text-claude-textSecondary">还没有聊天历史。</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="mb-3 text-[13px] text-claude-textSecondary">已归档项目</div>
+                  <div className="space-y-2">
+                    {archivedProjects.length > 0 ? (
+                      archivedProjects.slice(0, 6).map((project) => (
+                        <button
+                          key={project.id}
+                          type="button"
+                          onClick={openProjectsPage}
+                          className="flex w-full items-center justify-between gap-3 rounded-lg border border-claude-border px-3 py-2 text-left hover:bg-claude-hover"
+                        >
+                          <span className="truncate text-[13px] text-claude-text">{project.name}</span>
+                          <ChevronRight size={14} className="shrink-0 text-claude-textSecondary" />
+                        </button>
+                      ))
+                    ) : (
+                      <div className="text-[12px] leading-6 text-claude-textSecondary">
+                        当前还没有归档项目。后面把聊天归档正式接上后，这里会继续汇总历史线程。
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </SectionCard>
+          </div>
         );
 
       case 'usage':

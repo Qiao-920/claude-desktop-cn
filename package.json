@@ -25,7 +25,7 @@
   },
   "build": {
     "appId": "com.claude.desktop",
-    "productName": "Claude Desktop",
+    "productName": "Claude Desktop CN",
     "directories": {
       "output": "release"
     },

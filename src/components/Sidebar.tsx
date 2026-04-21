@@ -200,7 +200,7 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
       return;
     }
     if (label === 'Code') {
-      // Disabled temporarily
+      navigate('/code');
       return;
     }
   };

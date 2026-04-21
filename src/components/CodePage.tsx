@@ -309,6 +309,41 @@ const CodePage = () => {
       .slice(0, 5);
   }, [commandHistory]);
 
+  const rememberWorkspacePath = useCallback((nextWorkspacePath: string) => {
+    if (!nextWorkspacePath) return;
+    const shouldRemember = localStorage.getItem('code_remember_workspace') !== '0';
+    localStorage.setItem('code_workspace_path', nextWorkspacePath);
+    if (!shouldRemember) return;
+    try {
+      const raw = JSON.parse(localStorage.getItem('code_recent_workspaces') || '[]');
+      const list = Array.isArray(raw) ? raw.filter((item): item is string => typeof item === 'string') : [];
+      const next = [nextWorkspacePath, ...list.filter((item) => item !== nextWorkspacePath)].slice(0, 8);
+      localStorage.setItem('code_recent_workspaces', JSON.stringify(next));
+    } catch {
+      localStorage.setItem('code_recent_workspaces', JSON.stringify([nextWorkspacePath]));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (localStorage.getItem('code_persist_command_history') === '0') return;
+    try {
+      const raw = JSON.parse(localStorage.getItem('code_command_history') || '[]');
+      if (Array.isArray(raw)) {
+        setCommandHistory(raw);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    if (localStorage.getItem('code_persist_command_history') === '0') {
+      localStorage.removeItem('code_command_history');
+      return;
+    }
+    localStorage.setItem('code_command_history', JSON.stringify(commandHistory.slice(0, 12)));
+  }, [commandHistory]);
+
   const refreshAgentConfig = useCallback(async () => {
     try {
       const config = await getAgentConfig();
@@ -346,13 +381,13 @@ const CodePage = () => {
       setCurrentPath(result.path);
       setParentPath(result.parentPath);
       setEntries(result.entries || []);
-      localStorage.setItem('code_workspace_path', result.workspacePath);
+      rememberWorkspacePath(result.workspacePath);
     } catch (err: any) {
       setError(err?.message || (isZh ? '读取工作区失败' : 'Failed to read workspace'));
     } finally {
       setLoadingTree(false);
     }
-  }, [currentPath, isZh, workspacePath]);
+  }, [currentPath, isZh, rememberWorkspacePath, workspacePath]);
 
   useEffect(() => {
     refreshAgentConfig();
@@ -405,7 +440,7 @@ const CodePage = () => {
     setEditorContent('');
     setOriginalContent('');
     setShowDiff(false);
-    localStorage.setItem('code_workspace_path', dir);
+    rememberWorkspacePath(dir);
     await loadDirectory(dir, dir);
     await refreshGitStatus(dir);
   };
@@ -699,7 +734,8 @@ const CodePage = () => {
     setError('');
     try {
       const shellPreference = localStorage.getItem('integrated_shell') || 'powershell';
-      const result = await runCodeCommand(workspacePath, trimmed, 120000, shellPreference);
+      const timeout = Number(localStorage.getItem('code_command_timeout_ms') || '120000') || 120000;
+      const result = await runCodeCommand(workspacePath, trimmed, timeout, shellPreference);
       setCommandHistory(prev => [result, ...prev].slice(0, 12));
       if (!commandOverride) setCommand('');
       await refreshGitStatus();
@@ -721,14 +757,27 @@ const CodePage = () => {
     setError('');
     try {
       const result = await runCodeGitAction(workspacePath, action, commitMessage);
-      setCommandHistory(prev => [{
+      const historyItems: CodeCommandResult[] = [{
         cwd: gitStatus?.repoRoot || workspacePath,
         command: `git ${gitActionLabel(action, false).toLowerCase()}`,
         output: result.output,
         isError: result.isError,
         durationMs: result.durationMs || 0,
-      }, ...prev].slice(0, 12));
-      if (result.status) setGitStatus(result.status);
+      }];
+      let nextStatus = result.status || null;
+      if (action === 'commit' && !result.isError && localStorage.getItem('git_push_after_commit') === '1') {
+        const pushResult = await runCodeGitAction(workspacePath, 'push');
+        historyItems.unshift({
+          cwd: gitStatus?.repoRoot || workspacePath,
+          command: 'git push',
+          output: pushResult.output,
+          isError: pushResult.isError,
+          durationMs: pushResult.durationMs || 0,
+        });
+        if (pushResult.status) nextStatus = pushResult.status;
+      }
+      setCommandHistory(prev => [...historyItems, ...prev].slice(0, 12));
+      if (nextStatus) setGitStatus(nextStatus);
       if (action === 'commit' && !result.isError) setCommitMessage('');
       await loadDirectory(currentPath);
     } catch (err: any) {

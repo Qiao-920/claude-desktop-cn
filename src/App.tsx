@@ -414,6 +414,19 @@ const Layout = () => {
     return () => window.removeEventListener('open-upgrade', handler);
   }, []);
 
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ section?: string }>).detail;
+      if (detail?.section) {
+        localStorage.setItem('settings_section', detail.section);
+      }
+      setShowSettings(true);
+      setShowUpgrade(false);
+    };
+    window.addEventListener('open-settings', handler as EventListener);
+    return () => window.removeEventListener('open-settings', handler as EventListener);
+  }, []);
+
   // Collapse sidebar on Customize page (Removed per user request)
   useEffect(() => {
     // Intentionally empty: do not collapse left sidebar automatically
