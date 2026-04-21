@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Check,
@@ -13,6 +13,7 @@ import {
   FolderOpen,
   GitBranch,
   GitCompare,
+  MoreHorizontal,
   Pencil,
   Play,
   RefreshCw,
@@ -52,11 +53,18 @@ import { copyToClipboard } from '../utils/clipboard';
 type PermissionMode = 'workspace_write' | 'project' | 'full_access';
 type GitAction = 'pull' | 'stage_all' | 'commit' | 'push';
 type GitFileAction = 'stage_file' | 'unstage_file' | 'discard_file';
+type TreeAction = 'open' | 'new_file' | 'new_folder' | 'rename' | 'delete' | 'copy_path' | 'refresh';
 type DiffLine = {
   type: 'same' | 'add' | 'remove';
   oldLine?: number;
   newLine?: number;
   text: string;
+};
+
+type TreeContextMenuState = {
+  x: number;
+  y: number;
+  entry: CodeWorkspaceEntry | null;
 };
 
 const formatBytes = (bytes: number) => {
@@ -82,6 +90,7 @@ const getRelativePath = (root: string, target: string) => {
 };
 
 const splitPath = (value: string) => value.split(/[\\/]+/).filter(Boolean);
+const pathDirname = (value: string) => value.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]+$/, '') || value;
 
 const buildLineDiff = (oldText: string, newText: string): DiffLine[] => {
   const oldLines = oldText.split(/\r?\n/);
@@ -189,6 +198,32 @@ const getPermissionCopy = (mode: PermissionMode, isZh: boolean) => {
   return copy[mode];
 };
 
+const normalizePath = (value: string) => String(value || '').replace(/\//g, '\\').toLowerCase();
+
+const startsWithPath = (value: string, parent: string) => {
+  const normalizedValue = normalizePath(value);
+  const normalizedParent = normalizePath(parent).replace(/[\\]+$/, '');
+  return normalizedValue === normalizedParent || normalizedValue.startsWith(`${normalizedParent}\\`);
+};
+
+const isDangerousCommand = (command: string) => {
+  const normalized = command.trim().toLowerCase();
+  return [
+    /\brm\s+-rf\b/,
+    /\brm\s+-r\b/,
+    /\bdel\s+\/[a-z]*[fqs]/,
+    /\berase\s+/,
+    /\bformat\s+[a-z]:/i,
+    /\bshutdown\b/,
+    /\breboot\b/,
+    /\bpoweroff\b/,
+    /\bmkfs\b/,
+    /\bdd\s+if=/,
+    /\bgit\s+reset\s+--hard\b/,
+    /\bgit\s+clean\s+-fd\b/,
+  ].some((pattern) => pattern.test(normalized));
+};
+
 const CodePage = () => {
   const uiLanguage = getStoredUiLanguage();
   const isZh = uiLanguage === 'zh-CN';
@@ -216,7 +251,9 @@ const CodePage = () => {
   const [gitFileBusyAction, setGitFileBusyAction] = useState<GitFileAction | null>(null);
   const [fileOperationBusy, setFileOperationBusy] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
+  const [treeMenu, setTreeMenu] = useState<TreeContextMenuState | null>(null);
   const [error, setError] = useState('');
+  const treeMenuRef = useRef<HTMLDivElement | null>(null);
 
   const relativeCurrentPath = useMemo(() => getRelativePath(workspacePath, currentPath || workspacePath), [workspacePath, currentPath]);
   const breadcrumbParts = useMemo(() => splitPath(relativeCurrentPath === '.' ? '' : relativeCurrentPath), [relativeCurrentPath]);
@@ -224,6 +261,18 @@ const CodePage = () => {
   const isDirty = isEditableFile && editorContent !== originalContent;
   const diffLines = useMemo(() => buildLineDiff(originalContent, editorContent), [editorContent, originalContent]);
   const changedDiffLines = useMemo(() => diffLines.filter(line => line.type !== 'same').length, [diffLines]);
+  const recentCommands = useMemo(() => {
+    const seen = new Set<string>();
+    return commandHistory
+      .map((item) => item.command)
+      .filter((item) => {
+        const trimmed = item.trim();
+        if (!trimmed || seen.has(trimmed)) return false;
+        seen.add(trimmed);
+        return true;
+      })
+      .slice(0, 5);
+  }, [commandHistory]);
 
   const refreshAgentConfig = useCallback(async () => {
     try {
@@ -288,6 +337,25 @@ const CodePage = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!treeMenu) return;
+    const closeMenu = (event: MouseEvent) => {
+      if (treeMenuRef.current?.contains(event.target as Node)) return;
+      setTreeMenu(null);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setTreeMenu(null);
+    };
+    document.addEventListener('mousedown', closeMenu);
+    document.addEventListener('contextmenu', closeMenu);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('mousedown', closeMenu);
+      document.removeEventListener('contextmenu', closeMenu);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [treeMenu]);
+
   const chooseWorkspace = async () => {
     const api = (window as any).electronAPI;
     if (!api?.selectDirectory) {
@@ -336,6 +404,52 @@ const CodePage = () => {
     }
   };
 
+  const openTreeMenu = (event: React.MouseEvent, entry: CodeWorkspaceEntry | null) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setTreeMenu({
+      x: event.clientX,
+      y: event.clientY,
+      entry,
+    });
+  };
+
+  const handleTreeAction = async (action: TreeAction, entry: CodeWorkspaceEntry | null) => {
+    setTreeMenu(null);
+    const targetEntry = entry || null;
+    const targetDirectory = targetEntry?.type === 'directory'
+      ? targetEntry.path
+      : pathDirname(targetEntry?.path || currentPath || workspacePath);
+
+    if (action === 'refresh') {
+      await loadDirectory(currentPath || workspacePath);
+      return;
+    }
+    if (action === 'copy_path') {
+      await copyToClipboard(targetEntry?.path || currentPath || workspacePath);
+      return;
+    }
+    if (action === 'open' && targetEntry) {
+      await openEntry(targetEntry);
+      return;
+    }
+    if (action === 'new_file') {
+      await createEntry('file', targetDirectory);
+      return;
+    }
+    if (action === 'new_folder') {
+      await createEntry('directory', targetDirectory);
+      return;
+    }
+    if (action === 'rename' && targetEntry) {
+      await renameEntry(targetEntry);
+      return;
+    }
+    if (action === 'delete' && targetEntry) {
+      await deleteEntry(targetEntry);
+    }
+  };
+
   const saveSelectedFile = async () => {
     if (!selectedFile || !isEditableFile || !isDirty || savingFile) return;
     setSavingFile(true);
@@ -360,7 +474,7 @@ const CodePage = () => {
     setShowDiff(false);
   };
 
-  const createEntry = async (type: 'file' | 'directory') => {
+  const createEntry = async (type: 'file' | 'directory', parentOverride?: string) => {
     if (!workspacePath || fileOperationBusy) return;
     const label = type === 'file'
       ? (isZh ? '新文件名' : 'New file name')
@@ -370,8 +484,9 @@ const CodePage = () => {
     setFileOperationBusy(true);
     setError('');
     try {
-      const created = await createCodeEntry(workspacePath, currentPath || workspacePath, name.trim(), type);
-      await loadDirectory(currentPath || workspacePath);
+      const parentPath = parentOverride || currentPath || workspacePath;
+      const created = await createCodeEntry(workspacePath, parentPath, name.trim(), type);
+      await loadDirectory(parentPath);
       await refreshGitStatus();
       if (type === 'file' && created.path) {
         const file = await readCodeFile(workspacePath, created.path);
@@ -387,49 +502,75 @@ const CodePage = () => {
     }
   };
 
-  const renameSelectedFile = async () => {
-    if (!selectedFile || fileOperationBusy) return;
-    const nextName = window.prompt(isZh ? '重命名为' : 'Rename to', selectedFile.name);
-    if (!nextName?.trim() || nextName.trim() === selectedFile.name) return;
+  const renameEntry = async (entry: CodeWorkspaceEntry) => {
+    if (!entry || fileOperationBusy) return;
+    const nextName = window.prompt(isZh ? '閲嶅懡鍚嶄负' : 'Rename to', entry.name);
+    if (!nextName?.trim() || nextName.trim() === entry.name) return;
     setFileOperationBusy(true);
     setError('');
     try {
-      const renamed = await renameCodeEntry(workspacePath, selectedFile.path, nextName.trim());
+      const renamed = await renameCodeEntry(workspacePath, entry.path, nextName.trim());
       await loadDirectory(currentPath || workspacePath);
       await refreshGitStatus();
-      if (renamed.path) {
+      if (selectedFile && normalizePath(selectedFile.path) === normalizePath(entry.path) && renamed.path) {
         const file = await readCodeFile(workspacePath, renamed.path);
         setSelectedFile(file);
         setEditorContent(file.content || '');
         setOriginalContent(file.content || '');
         setShowDiff(false);
+      } else if (selectedFile && startsWithPath(selectedFile.path, entry.path)) {
+        const nextSelectedPath = renamed.path ? selectedFile.path.replace(entry.path, renamed.path) : selectedFile.path;
+        try {
+          const file = await readCodeFile(workspacePath, nextSelectedPath);
+          setSelectedFile(file);
+          setEditorContent(file.content || '');
+          setOriginalContent(file.content || '');
+          setShowDiff(false);
+        } catch (_) {
+          setSelectedFile(null);
+          setEditorContent('');
+          setOriginalContent('');
+          setShowDiff(false);
+        }
       }
     } catch (err: any) {
-      setError(err?.message || (isZh ? '重命名失败' : 'Failed to rename file'));
+      setError(err?.message || (isZh ? '重命名失败' : 'Failed to rename entry'));
     } finally {
       setFileOperationBusy(false);
     }
   };
 
-  const deleteSelectedFile = async () => {
-    if (!selectedFile || fileOperationBusy) return;
-    const ok = window.confirm(isZh ? `确定删除 ${selectedFile.name} 吗？` : `Delete ${selectedFile.name}?`);
+  const deleteEntry = async (entry: CodeWorkspaceEntry) => {
+    if (!entry || fileOperationBusy) return;
+    const ok = window.confirm(isZh ? `纭畾鍒犻櫎 ${entry.name} 鍚楋紵` : `Delete ${entry.name}?`);
     if (!ok) return;
     setFileOperationBusy(true);
     setError('');
     try {
-      await deleteCodeEntry(workspacePath, selectedFile.path);
-      setSelectedFile(null);
-      setEditorContent('');
-      setOriginalContent('');
-      setShowDiff(false);
+      await deleteCodeEntry(workspacePath, entry.path);
+      if (selectedFile && startsWithPath(selectedFile.path, entry.path)) {
+        setSelectedFile(null);
+        setEditorContent('');
+        setOriginalContent('');
+        setShowDiff(false);
+      }
       await loadDirectory(currentPath || workspacePath);
       await refreshGitStatus();
     } catch (err: any) {
-      setError(err?.message || (isZh ? '删除失败' : 'Failed to delete file'));
+      setError(err?.message || (isZh ? '删除失败' : 'Failed to delete entry'));
     } finally {
       setFileOperationBusy(false);
     }
+  };
+
+  const renameSelectedFile = async () => {
+    if (!selectedFile) return;
+    await renameEntry({ path: selectedFile.path, name: selectedFile.name, type: 'file', size: selectedFile.size });
+  };
+
+  const deleteSelectedFile = async () => {
+    if (!selectedFile) return;
+    await deleteEntry({ path: selectedFile.path, name: selectedFile.name, type: 'file', size: selectedFile.size });
   };
 
   const restoreSelectedFile = async () => {
@@ -472,15 +613,23 @@ const CodePage = () => {
     }
   };
 
-  const submitCommand = async () => {
-    const trimmed = command.trim();
+  const submitCommand = async (commandOverride?: string) => {
+    const trimmed = (commandOverride ?? command).trim();
     if (!trimmed || !workspacePath || runningCommand) return;
+    if (isDangerousCommand(trimmed)) {
+      const ok = window.confirm(
+        isZh
+          ? `这条命令可能会删除文件、重置仓库或影响系统：\n\n${trimmed}\n\n确定继续执行吗？`
+          : `This command may delete files, reset Git history, or affect the system:\n\n${trimmed}\n\nDo you want to continue?`
+      );
+      if (!ok) return;
+    }
     setRunningCommand(true);
     setError('');
     try {
       const result = await runCodeCommand(workspacePath, trimmed);
       setCommandHistory(prev => [result, ...prev].slice(0, 12));
-      setCommand('');
+      if (!commandOverride) setCommand('');
       await refreshGitStatus();
       await loadDirectory(currentPath);
     } catch (err: any) {
@@ -654,6 +803,33 @@ const CodePage = () => {
     await loadDirectory(target);
   };
 
+  const treeMenuActions = (() => {
+    if (!treeMenu) return [] as Array<{ action: TreeAction; label: string; danger?: boolean }>;
+    if (!treeMenu.entry) {
+      return [
+        { action: 'new_file' as TreeAction, label: isZh ? '新建文件' : 'New file' },
+        { action: 'new_folder' as TreeAction, label: isZh ? '新建文件夹' : 'New folder' },
+        { action: 'refresh' as TreeAction, label: isZh ? '刷新目录' : 'Refresh' },
+        { action: 'copy_path' as TreeAction, label: isZh ? '复制路径' : 'Copy path' },
+      ];
+    }
+    if (treeMenu.entry.type === 'directory') {
+      return [
+        { action: 'open' as TreeAction, label: isZh ? '打开目录' : 'Open folder' },
+        { action: 'new_file' as TreeAction, label: isZh ? '在这里新建文件' : 'New file here' },
+        { action: 'new_folder' as TreeAction, label: isZh ? '在这里新建文件夹' : 'New folder here' },
+        { action: 'rename' as TreeAction, label: isZh ? '重命名' : 'Rename' },
+        { action: 'copy_path' as TreeAction, label: isZh ? '复制路径' : 'Copy path' },
+        { action: 'delete' as TreeAction, label: isZh ? '删除' : 'Delete', danger: true },
+      ];
+    }
+    return [
+      { action: 'open' as TreeAction, label: isZh ? '打开文件' : 'Open file' },
+      { action: 'rename' as TreeAction, label: isZh ? '重命名' : 'Rename' },
+      { action: 'copy_path' as TreeAction, label: isZh ? '复制路径' : 'Copy path' },
+      { action: 'delete' as TreeAction, label: isZh ? '删除' : 'Delete', danger: true },
+    ];
+  })();
   const renderGitStatus = () => {
     if (!workspacePath) return null;
     if (!gitStatus) {
@@ -671,6 +847,43 @@ const CodePage = () => {
         </div>
       );
     }
+
+    const stagedFiles = gitStatus.files.filter((file) => file.staged);
+    const unstagedFiles = gitStatus.files.filter((file) => file.unstaged || file.code === '??');
+    const renderGroup = (title: string, files: CodeGitFile[], emptyText: string) => (
+      <div className="rounded-md border border-claude-border bg-claude-input overflow-hidden">
+        <div className="flex items-center justify-between px-3 py-2 border-b border-claude-border bg-claude-hover/30">
+          <span className="text-[11px] font-medium text-claude-text">{title}</span>
+          <span className="text-[10px] text-claude-textSecondary">{files.length}</span>
+        </div>
+        {files.length === 0 ? (
+          <div className="p-3 text-[12px] text-claude-textSecondary">{emptyText}</div>
+        ) : (
+          <div className="max-h-[144px] overflow-auto">
+            {files.map((file, index) => {
+              const selected = selectedGitFile?.path === file.path;
+              return (
+                <button
+                  key={`${title}-${file.code}-${file.path}-${index}`}
+                  onClick={() => selectGitFile(file)}
+                  className={`w-full min-h-8 px-3 border-b border-claude-border/40 last:border-b-0 flex items-center gap-2 text-left text-[12px] hover:bg-claude-hover ${
+                    selected ? 'bg-claude-hover text-claude-text' : ''
+                  }`}
+                >
+                  <span className={`w-8 shrink-0 font-mono ${file.code === '??' ? 'text-[#2E7CF6]' : file.code.startsWith('A') ? 'text-emerald-400' : 'text-[#C6613F]'}`}>
+                    {file.code}
+                  </span>
+                  <span className="truncate flex-1 text-claude-textSecondary">{getGitDisplayPath(file.path)}</span>
+                  {file.staged && <span className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-500/30 text-emerald-400">S</span>}
+                  {file.unstaged && <span className="text-[10px] px-1.5 py-0.5 rounded border border-[#C6613F]/30 text-[#C6613F]">U</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+
     return (
       <div className="space-y-2">
         <div className="rounded-md border border-claude-border bg-claude-input p-3">
@@ -692,22 +905,8 @@ const CodePage = () => {
           )}
         </div>
 
-        <div className="max-h-[160px] overflow-auto rounded-md border border-claude-border bg-claude-input">
-          {gitStatus.files.length === 0 ? (
-            <div className="p-3 text-[12px] text-claude-textSecondary">{isZh ? '没有未提交改动。' : 'No pending changes.'}</div>
-          ) : gitStatus.files.slice(0, 24).map(file => (
-            <button
-              key={`${file.code}-${file.path}`}
-              onClick={() => selectGitFile(file)}
-              className={`w-full min-h-7 px-3 border-b border-claude-border/60 last:border-b-0 flex items-center gap-2 text-left text-[12px] hover:bg-claude-hover ${
-                selectedGitFile?.path === file.path ? 'bg-claude-hover text-claude-text' : ''
-              }`}
-            >
-              <span className="w-7 shrink-0 font-mono text-[#C6613F]">{file.code}</span>
-              <span className="truncate text-claude-textSecondary">{file.path}</span>
-            </button>
-          ))}
-        </div>
+        {renderGroup(isZh ? '未暂存' : 'Unstaged', unstagedFiles, isZh ? '没有未暂存改动。' : 'No unstaged changes.')}
+        {renderGroup(isZh ? '已暂存' : 'Staged', stagedFiles, isZh ? '没有已暂存改动。' : 'No staged changes.')}
 
         {selectedGitFile && (
           <div className="rounded-md border border-claude-border bg-claude-input overflow-hidden">
@@ -717,10 +916,7 @@ const CodePage = () => {
                 <div className="text-[10px] text-claude-textSecondary">{isZh ? '单文件 Git 差异' : 'Single-file Git diff'}</div>
               </div>
               <div className="flex items-center gap-1">
-                <button
-                  onClick={() => openGitStatusFile(selectedGitFile)}
-                  className="h-7 px-2 rounded-md border border-claude-border text-[11px] hover:bg-claude-hover"
-                >
+                <button onClick={() => openGitStatusFile(selectedGitFile)} className="h-7 px-2 rounded-md border border-claude-border text-[11px] hover:bg-claude-hover">
                   {isZh ? '打开' : 'Open'}
                 </button>
                 <button
@@ -746,10 +942,26 @@ const CodePage = () => {
                 </button>
               </div>
             </div>
-            <div className="max-h-[220px] overflow-auto bg-claude-bg">
+            <div className="max-h-[260px] overflow-auto bg-claude-bg">
               {loadingGitDiff ? (
                 <div className="p-3 text-[12px] text-claude-textSecondary">{isZh ? '正在读取差异...' : 'Reading diff...'}</div>
-              ) : renderRawDiff(gitFileDiff?.diff || '')}
+              ) : (
+                <div className="space-y-3 p-3">
+                  {!!gitFileDiff?.unstagedDiff && (
+                    <div className="rounded-md border border-[#C6613F]/20 overflow-hidden">
+                      <div className="px-3 py-2 text-[11px] font-medium bg-[#C6613F]/10 text-[#C6613F]">{isZh ? '工作区改动' : 'Working tree'}</div>
+                      <div className="max-h-[180px] overflow-auto bg-claude-bg">{renderRawDiff(gitFileDiff.unstagedDiff)}</div>
+                    </div>
+                  )}
+                  {!!gitFileDiff?.stagedDiff && (
+                    <div className="rounded-md border border-emerald-500/20 overflow-hidden">
+                      <div className="px-3 py-2 text-[11px] font-medium bg-emerald-500/10 text-emerald-400">{isZh ? '暂存区改动' : 'Staged changes'}</div>
+                      <div className="max-h-[180px] overflow-auto bg-claude-bg">{renderRawDiff(gitFileDiff.stagedDiff)}</div>
+                    </div>
+                  )}
+                  {!gitFileDiff?.stagedDiff && !gitFileDiff?.unstagedDiff && renderRawDiff(gitFileDiff?.diff || '')}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -789,7 +1001,6 @@ const CodePage = () => {
       </div>
     );
   };
-
   return (
     <div className="h-full bg-claude-bg text-claude-text overflow-hidden">
       <div className="h-full flex flex-col">
@@ -858,7 +1069,7 @@ const CodePage = () => {
         ) : (
           <div className="flex-1 min-h-0 grid grid-cols-[300px_minmax(0,1fr)_380px]">
             <aside className="border-r border-claude-border min-h-0 flex flex-col">
-              <div className="h-[42px] px-3 border-b border-claude-border flex items-center justify-between">
+              <div className="h-[42px] px-3 border-b border-claude-border flex items-center justify-between gap-2">
                 <div className="min-w-0 flex items-center gap-1.5 text-[12px] text-claude-textSecondary">
                   <button onClick={() => goToBreadcrumb(-1)} className="hover:text-claude-text transition-colors truncate max-w-[88px]">
                     {workspacePath.split(/[\\/]/).filter(Boolean).pop() || workspacePath}
@@ -872,34 +1083,51 @@ const CodePage = () => {
                     </React.Fragment>
                   ))}
                 </div>
-                <button onClick={() => createEntry('file')} disabled={fileOperationBusy} className="p-1.5 rounded-md hover:bg-claude-hover text-claude-textSecondary disabled:opacity-50" title={isZh ? '新建文件' : 'New file'}>
-                  <FilePlus size={14} />
-                </button>
-                <button onClick={() => createEntry('directory')} disabled={fileOperationBusy} className="p-1.5 rounded-md hover:bg-claude-hover text-claude-textSecondary disabled:opacity-50" title={isZh ? '新建文件夹' : 'New folder'}>
-                  <FolderPlus size={14} />
-                </button>
-                <button onClick={() => loadDirectory(currentPath)} className="p-1.5 rounded-md hover:bg-claude-hover text-claude-textSecondary" title={isZh ? '刷新' : 'Refresh'}>
-                  <RefreshCw size={14} className={loadingTree ? 'animate-spin' : ''} />
-                </button>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => createEntry('file')} disabled={fileOperationBusy} className="p-1.5 rounded-md hover:bg-claude-hover text-claude-textSecondary disabled:opacity-50" title={isZh ? '新建文件' : 'New file'}>
+                    <FilePlus size={14} />
+                  </button>
+                  <button onClick={() => createEntry('directory')} disabled={fileOperationBusy} className="p-1.5 rounded-md hover:bg-claude-hover text-claude-textSecondary disabled:opacity-50" title={isZh ? '新建文件夹' : 'New folder'}>
+                    <FolderPlus size={14} />
+                  </button>
+                  <button onClick={() => loadDirectory(currentPath)} className="p-1.5 rounded-md hover:bg-claude-hover text-claude-textSecondary" title={isZh ? '刷新' : 'Refresh'}>
+                    <RefreshCw size={14} className={loadingTree ? 'animate-spin' : ''} />
+                  </button>
+                </div>
               </div>
-              <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2">
+              <div className="flex-1 min-h-0 overflow-y-auto px-2 py-2" onContextMenu={(event) => openTreeMenu(event, null)}>
                 {parentPath && (
                   <button onClick={() => loadDirectory(parentPath)} className="w-full h-8 px-2 rounded-md flex items-center gap-2 text-left text-[13px] text-claude-textSecondary hover:bg-claude-hover mb-1">
                     <Folder size={15} />
                     ..
                   </button>
                 )}
-                {entries.map(entry => (
-                  <button
-                    key={entry.path}
-                    onClick={() => openEntry(entry)}
-                    className={`w-full min-h-8 px-2 rounded-md flex items-center gap-2 text-left text-[13px] hover:bg-claude-hover transition-colors ${selectedFile?.path === entry.path ? 'bg-claude-hover text-claude-text' : 'text-claude-textSecondary'}`}
-                  >
-                    {entry.type === 'directory' ? <Folder size={15} className="shrink-0" /> : <File size={15} className="shrink-0" />}
-                    <span className="truncate flex-1">{entry.name}</span>
-                    {entry.type === 'file' && <span className="text-[10px] opacity-60">{formatBytes(entry.size)}</span>}
-                  </button>
-                ))}
+                {entries.map((entry) => {
+                  const active = selectedFile?.path === entry.path;
+                  return (
+                    <div
+                      key={entry.path}
+                      onContextMenu={(event) => openTreeMenu(event, entry)}
+                      className={`group mb-1 flex items-center gap-1 rounded-md border ${active ? 'border-[#2E7CF6]/30 bg-claude-hover text-claude-text' : 'border-transparent text-claude-textSecondary hover:bg-claude-hover'}`}
+                    >
+                      <button
+                        onClick={() => openEntry(entry)}
+                        className="flex min-h-8 flex-1 items-center gap-2 px-2 text-left text-[13px]"
+                      >
+                        {entry.type === 'directory' ? <Folder size={15} className="shrink-0" /> : <File size={15} className="shrink-0" />}
+                        <span className="truncate flex-1">{entry.name}</span>
+                        {entry.type === 'file' && <span className="text-[10px] opacity-60">{formatBytes(entry.size)}</span>}
+                      </button>
+                      <button
+                        onClick={(event) => openTreeMenu(event, entry)}
+                        className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-claude-textSecondary opacity-0 transition-opacity hover:bg-claude-bg/70 group-hover:opacity-100"
+                        title={isZh ? '更多操作' : 'More actions'}
+                      >
+                        <MoreHorizontal size={14} />
+                      </button>
+                    </div>
+                  );
+                })}
                 {entries.length === 0 && !loadingTree && (
                   <div className="text-[12px] text-claude-textSecondary px-2 py-6 text-center">
                     {isZh ? '这个目录是空的' : 'This folder is empty'}
@@ -907,7 +1135,6 @@ const CodePage = () => {
                 )}
               </div>
             </aside>
-
             <main className="min-w-0 min-h-0 flex flex-col">
               <div className="h-[42px] px-4 border-b border-claude-border flex items-center justify-between">
                 <div className="min-w-0">
@@ -1061,7 +1288,7 @@ const CodePage = () => {
               </div>
 
               <div className="p-3 border-b border-claude-border">
-                <div className={`mb-2 rounded-md border px-3 py-2 text-[12px] leading-5 ${permissionMode === 'full_access' ? 'border-[#C6613F]/30 bg-[#C6613F]/10 text-[#C6613F]' : permissionMode === 'project' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500' : 'border-claude-border bg-claude-input text-claude-textSecondary'}`}>
+                <div className={`mb-2 rounded-md border px-3 py-2 text-[12px] leading-5 ${permissionMode === 'full_access' ? 'border-[#C6613F]/30 bg-[#C6613F]/10 text-[#C6613F]' : permissionMode === 'project' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500' : 'border-claude-border bg-claude-input text-claude-textSecondary'}` }>
                   {getPermissionCopy(permissionMode, isZh).desc}
                 </div>
                 <textarea
@@ -1073,6 +1300,32 @@ const CodePage = () => {
                   placeholder={isZh ? '输入命令，例如：dir 或 npm test' : 'Enter a command, e.g. dir or npm test'}
                   className="w-full h-20 resize-none rounded-md border border-claude-border bg-claude-input px-3 py-2 text-[12px] font-mono outline-none focus:border-[#2E7CF6]/70"
                 />
+                {recentCommands.length > 0 && (
+                  <div className="mt-2 space-y-2">
+                    <div className="text-[11px] text-claude-textSecondary">{isZh ? '最近命令' : 'Recent commands'}</div>
+                    <div className="space-y-1.5">
+                      {recentCommands.map((item) => (
+                        <div key={item} className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => setCommand(item)}
+                            className="min-w-0 flex-1 h-7 rounded-md border border-claude-border bg-claude-input px-2 text-left text-[11px] text-claude-textSecondary hover:bg-claude-hover truncate"
+                            title={item}
+                          >
+                            {item}
+                          </button>
+                          <button
+                            onClick={() => submitCommand(item)}
+                            disabled={runningCommand || permissionMode === 'workspace_write'}
+                            className="h-7 w-8 shrink-0 rounded-md border border-claude-border text-claude-textSecondary hover:bg-claude-hover disabled:opacity-40"
+                            title={isZh ? '重新执行' : 'Run again'}
+                          >
+                            <Play size={12} className="mx-auto" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <button
                   onClick={submitCommand}
                   disabled={!command.trim() || runningCommand || permissionMode === 'workspace_write'}
@@ -1086,7 +1339,6 @@ const CodePage = () => {
                       : (isZh ? '执行命令 Ctrl+Enter' : 'Run command Ctrl+Enter')}
                 </button>
               </div>
-
               <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
                 {commandHistory.length === 0 ? (
                   <div className="text-[12px] text-claude-textSecondary leading-6">
@@ -1110,6 +1362,26 @@ const CodePage = () => {
           </div>
         )}
       </div>
+      {treeMenu && (
+        <div
+          ref={treeMenuRef}
+          className="fixed z-[90] min-w-[188px] rounded-md border border-claude-border bg-[#1B1917] p-1 shadow-[0_12px_48px_rgba(0,0,0,0.4)]"
+          style={{
+            left: Math.min(treeMenu.x, window.innerWidth - 220),
+            top: Math.min(treeMenu.y, window.innerHeight - 260),
+          }}
+        >
+          {treeMenuActions.map((item) => (
+            <button
+              key={`${treeMenu.entry?.path || 'workspace'}-${item.action}`}
+              onClick={() => handleTreeAction(item.action, treeMenu.entry)}
+              className={`flex h-8 w-full items-center rounded-md px-3 text-left text-[12px] ${item.danger ? 'text-[#C6613F] hover:bg-[#C6613F]/10' : 'text-claude-textSecondary hover:bg-claude-hover hover:text-claude-text'}`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 };
