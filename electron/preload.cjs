@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     showItemInFolder: (filePath) => ipcRenderer.invoke('show-item-in-folder', filePath),
     openFolder: (folderPath) => ipcRenderer.invoke('open-folder', folderPath),
     openPathWithTarget: (targetPath, target) => ipcRenderer.invoke('open-path-with-target', targetPath, target),
+    openPreviewHtml: (html, suggestedName) => ipcRenderer.invoke('open-preview-html', html, suggestedName),
 
     // Window resize
     resizeWindow: (width, height) => ipcRenderer.invoke('resize-window', width, height),

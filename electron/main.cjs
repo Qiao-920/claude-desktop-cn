@@ -84,6 +84,16 @@ function findPyCharmExe() {
     return null;
 }
 
+function sanitizePreviewName(name) {
+    const fallback = 'artifact-preview.html';
+    const base = String(name || fallback)
+        .replace(/[<>:"/\\|?*\x00-\x1F]/g, '-')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const withExt = /\.html?$/i.test(base) ? base : `${base || 'artifact-preview'}.html`;
+    return withExt || fallback;
+}
+
 function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1150,
@@ -387,6 +397,24 @@ ipcMain.handle('open-path-with-target', async (event, targetPath, target) => {
 
     await shell.openPath(resolvedPath);
     return { ok: true, fallback: 'explorer' };
+});
+
+ipcMain.handle('open-preview-html', async (event, html, suggestedName) => {
+    try {
+        if (typeof html !== 'string' || !html.trim()) {
+            return { ok: false, error: 'Missing preview html' };
+        }
+        const os = require('os');
+        const previewDir = path.join(os.tmpdir(), 'claude-desktop-cn-previews');
+        fs.mkdirSync(previewDir, { recursive: true });
+        const previewName = `${Date.now()}-${sanitizePreviewName(suggestedName)}`;
+        const previewPath = path.join(previewDir, previewName);
+        fs.writeFileSync(previewPath, html, 'utf8');
+        await shell.openPath(previewPath);
+        return { ok: true, path: previewPath };
+    } catch (error) {
+        return { ok: false, error: error?.message || 'Failed to open preview html' };
+    }
 });
 
 ipcMain.handle('select-directory', async () => {

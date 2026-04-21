@@ -11,7 +11,7 @@ import { copyToClipboard } from '../utils/clipboard';
 import { buildArtifactHtml } from '../utils/artifactRenderer';
 
 /** Renders HTML/React artifact content in a sandboxed iframe */
-const ArtifactPreview: React.FC<{ content: string; type: string }> = ({ content, type }) => {
+const ArtifactPreview: React.FC<{ content: string; type: string; refreshKey: number }> = ({ content, type, refreshKey }) => {
   const [blobUrl, setBlobUrl] = React.useState<string | null>(null);
 
   React.useEffect(() => {
@@ -20,7 +20,7 @@ const ArtifactPreview: React.FC<{ content: string; type: string }> = ({ content,
     const url = URL.createObjectURL(blob);
     setBlobUrl(url);
     return () => URL.revokeObjectURL(url);
-  }, [content, type]);
+  }, [content, type, refreshKey]);
 
   if (!blobUrl) return null;
   return (
@@ -54,6 +54,7 @@ const DocumentPanel: React.FC<DocumentPanelProps> = ({ document: doc, onClose })
 
   const [viewMode, setViewMode] = useState<'preview' | 'code'>(isCode ? 'code' : 'preview');
   const [showCopyMenu, setShowCopyMenu] = useState(false);
+  const [previewRefreshKey, setPreviewRefreshKey] = useState(0);
   const copyMenuRef = useRef<HTMLDivElement>(null);
   const copyBtnRef = useRef<HTMLButtonElement>(null);
   const [copied, setCopied] = useState(false);
@@ -168,6 +169,19 @@ const DocumentPanel: React.FC<DocumentPanelProps> = ({ document: doc, onClose })
     }
   };
 
+  const handleOpenInBrowser = async () => {
+    const html = buildArtifactHtml(doc.content || '', isReact ? 'application/vnd.ant.react' : 'text/html');
+    const electronApi = (window as any).electronAPI;
+    if (electronApi?.openPreviewHtml) {
+      await electronApi.openPreviewHtml(html, doc.title || 'artifact-preview.html');
+      return;
+    }
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank', 'noopener,noreferrer');
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  };
+
   return (
     <div className="flex-1 h-full flex flex-col bg-claude-input border-l border-claude-border min-w-0">
       {/* Header */}
@@ -244,8 +258,18 @@ const DocumentPanel: React.FC<DocumentPanelProps> = ({ document: doc, onClose })
             )}
           </div>
 
+          {isRenderable && (
+            <button
+              onClick={handleOpenInBrowser}
+              className="p-1.5 text-claude-textSecondary hover:text-claude-text hover:bg-claude-btnHover rounded-lg transition-colors"
+              title="Open in browser"
+            >
+              <ExternalLink size={16} />
+            </button>
+          )}
+
           <button
-            onClick={() => {}} // Retry/Refresh logic placeholder
+            onClick={() => setPreviewRefreshKey((prev) => prev + 1)}
             className="p-1.5 text-claude-textSecondary hover:text-claude-text hover:bg-claude-btnHover rounded-lg transition-colors"
             title="Reload"
           >
@@ -266,7 +290,7 @@ const DocumentPanel: React.FC<DocumentPanelProps> = ({ document: doc, onClose })
       <div className={`flex-1 overflow-y-auto chat-font-scope ${fmt === 'docx' || fmt === 'pdf' ? 'px-6 py-6 bg-claude-hover' : 'px-8 py-6'} ${viewMode === 'code' || isCode ? '!p-0 overflow-hidden bg-[#FAFAFA] dark:bg-[#1E1E1E]' : ''} ${viewMode === 'preview' && isRenderable ? '!p-0 !overflow-hidden' : ''}`}>
         {/* Live HTML/React preview */}
         {viewMode === 'preview' && isRenderable && doc.content ? (
-          <ArtifactPreview content={doc.content} type={isReact ? 'application/vnd.ant.react' : 'text/html'} />
+          <ArtifactPreview content={doc.content} type={isReact ? 'application/vnd.ant.react' : 'text/html'} refreshKey={previewRefreshKey} />
         ) : viewMode === 'code' || isCode ? (
              <div className="flex h-full font-mono text-[13px] leading-relaxed relative bg-[#FAFAFA] dark:bg-[#1E1E1E] overflow-hidden">
                  {/* Unified scrollable area with line numbers + code side by side */}
