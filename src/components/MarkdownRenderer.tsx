@@ -235,7 +235,7 @@ export const CodeBlock: React.FC<{ language: string; code: string; className?: s
           padding: '12px',
           paddingTop: language ? '4px' : '12px',
           background: 'transparent',
-          fontSize: '15px',
+          fontSize: '13.5px',
           border: 'none',
           boxShadow: 'none',
         }}
@@ -338,7 +338,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, citations,
           h6({ children, ...props }: any) {
             return (
               <h6
-                className="mt-3 mb-2 text-[15px] leading-[1.4] font-semibold uppercase tracking-[0.02em] opacity-90"
+                className="mt-3 mb-2 text-[14px] leading-[1.35] font-semibold uppercase tracking-[0.02em] opacity-90"
                 style={{ color: 'var(--text-claude-model-body)' }}
                 {...props}
               >

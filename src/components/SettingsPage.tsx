@@ -1,40 +1,169 @@
-import React, { useState, useEffect } from 'react';
-import { ChevronRight, Smartphone, MonitorIcon, LogOut, MoreHorizontal, Check, X } from 'lucide-react';
-import { getUserProfile, updateUserProfile, getUserUsage, getGatewayUsage, getSessions, deleteSession, logoutOtherSessions, changePassword, deleteAccount, logout, getProviderModels, getAgentConfig, updateAgentConfig } from '../api';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  Check,
+  ChevronRight,
+  LogOut,
+  MonitorIcon,
+  Smartphone,
+} from 'lucide-react';
+import {
+  changePassword,
+  deleteSession,
+  getAgentConfig,
+  getProviderModels,
+  getSessions,
+  getUserProfile,
+  getUserUsage,
+  logout,
+  logoutOtherSessions,
+  updateAgentConfig,
+  updateUserProfile,
+} from '../api';
 import ProviderSettings from './ProviderSettings';
+import {
+  ChatStyle,
+  createCustomChatStyle,
+  getAllChatStyles,
+  getChatStyleDescription,
+  getChatStyleLabel,
+  getDefaultChatStyleId,
+  saveCustomChatStyles,
+  setDefaultChatStyleId,
+} from '../utils/chatStyles';
 import { UiLanguage, getStoredUiLanguage, setStoredUiLanguage } from '../utils/chineseClientText';
-import { ChatStyle, createCustomChatStyle, getAllChatStyles, getChatStyleDescription, getChatStyleLabel, getDefaultChatStyleId, saveCustomChatStyles, setDefaultChatStyleId } from '../utils/chatStyles';
 
 interface SettingsPageProps {
   onClose: () => void;
 }
 
+type PermissionMode = 'workspace_write' | 'project' | 'full_access';
+type SettingsSection =
+  | 'general'
+  | 'appearance'
+  | 'models'
+  | 'personalization'
+  | 'permissions'
+  | 'git'
+  | 'mcp'
+  | 'environment'
+  | 'worktree'
+  | 'archived'
+  | 'usage'
+  | 'account';
+
 const WORK_OPTIONS = [
-  '', '软件工程', '产品管理', '数据科学',
-  '市场营销', '设计', '研究', '教育', '金融',
-  '法律', '医疗健康', '其他',
+  '软件工程',
+  '产品经理',
+  '数据科学',
+  '设计',
+  '市场运营',
+  '研究',
+  '教育',
+  '金融',
+  '法律',
+  '医疗健康',
+  '自由职业',
+  '其他',
 ];
 
-type Tab = 'general' | 'models' | 'account' | 'usage';
-type PermissionMode = 'workspace_write' | 'project' | 'full_access';
+const formatTime = (value?: string) => {
+  if (!value) return '—';
+  const normalized = value.includes(' ') && !value.includes('T') ? value.replace(' ', 'T') : value;
+  const withZone = /Z$|[+-]\d{2}:?\d{2}$/.test(normalized) ? normalized : `${normalized}Z`;
+  const date = new Date(withZone);
+  if (Number.isNaN(date.getTime())) return '—';
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+const formatPercent = (value?: number) => `${Math.max(0, Math.min(100, Number(value || 0))).toFixed(0)}%`;
+
+const formatUsageValue = (used?: number, total?: number) => {
+  if (!total) return `${Number(used || 0).toLocaleString()}`;
+  return `${Number(used || 0).toLocaleString()} / ${Number(total || 0).toLocaleString()}`;
+};
+
+const SectionCard = ({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) => (
+  <section className="rounded-2xl border border-claude-border bg-claude-input px-6 py-5">
+    <div className="mb-4">
+      <h3 className="text-[16px] font-semibold text-claude-text">{title}</h3>
+      {subtitle && <p className="mt-1 text-[13px] leading-6 text-claude-textSecondary">{subtitle}</p>}
+    </div>
+    {children}
+  </section>
+);
+
+const PlaceholderSection = ({
+  title,
+  status,
+  description,
+  bullets,
+}: {
+  title: string;
+  status: '已接骨架' | '已接入口' | '规划中';
+  description: string;
+  bullets: string[];
+}) => (
+  <div className="space-y-5">
+    <SectionCard title={title} subtitle={description}>
+      <div className="flex items-center gap-2 mb-4">
+        <span className="inline-flex items-center rounded-full border border-[#2E7CF6]/20 bg-[#2E7CF6]/10 px-2.5 py-1 text-[12px] font-medium text-[#2E7CF6]">
+          {status}
+        </span>
+      </div>
+      <ul className="space-y-2 text-[13px] leading-6 text-claude-textSecondary">
+        {bullets.map((item) => (
+          <li key={item} className="flex gap-2">
+            <span className="mt-[7px] h-1.5 w-1.5 rounded-full bg-claude-textSecondary/60 shrink-0" />
+            <span>{item}</span>
+          </li>
+        ))}
+      </ul>
+    </SectionCard>
+  </div>
+);
 
 const SettingsPage = ({ onClose }: SettingsPageProps) => {
-  const [tab, setTab] = useState<Tab>('general');
+  const isSelfHosted = localStorage.getItem('user_mode') === 'selfhosted';
+  const [section, setSection] = useState<SettingsSection>('general');
+  const [uiLanguage, setUiLanguage] = useState<UiLanguage>(getStoredUiLanguage());
+  const [uiDensity, setUiDensity] = useState(localStorage.getItem('ui_density') || 'compact');
+  const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
+  const [chatFont, setChatFont] = useState(localStorage.getItem('chat_font') || 'default');
+  const [sendKey, setSendKey] = useState(localStorage.getItem('sendKey') || 'enter');
+  const [newlineKey, setNewlineKey] = useState(
+    localStorage.getItem('newlineKey') ||
+      (localStorage.getItem('sendKey') === 'enter' ? 'shift_enter' : 'enter'),
+  );
+  const [defaultOpenTarget, setDefaultOpenTarget] = useState(localStorage.getItem('default_open_target') || 'vscode');
+  const [integratedShell, setIntegratedShell] = useState(localStorage.getItem('integrated_shell') || 'powershell');
+  const [permissionMode, setPermissionMode] = useState<PermissionMode>('full_access');
+
   const [profile, setProfile] = useState<any>(null);
   const [usage, setUsage] = useState<any>(null);
-  const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState('');
+  const [sessions, setSessions] = useState<any[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState('');
 
-  // Form state
   const [fullName, setFullName] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [workFunction, setWorkFunction] = useState('');
   const [personalPreferences, setPersonalPreferences] = useState('');
-  const [theme, setTheme] = useState('light');
-  const [chatFont, setChatFont] = useState('default');
-  const [defaultModel, setDefaultModel] = useState('claude-opus-4-6-thinking');
-  const [sessions, setSessions] = useState<any[]>([]);
-  const [currentSessionId, setCurrentSessionId] = useState('');
+  const [defaultModel, setDefaultModel] = useState(localStorage.getItem('default_model') || 'claude-opus-4-6-thinking');
+  const [providerModels, setProviderModels] = useState<Array<{ base: string; label: string }>>([]);
+
   const [pwdCurrent, setPwdCurrent] = useState('');
   const [pwdNew, setPwdNew] = useState('');
   const [pwdConfirm, setPwdConfirm] = useState('');
@@ -42,118 +171,154 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const [pwdError, setPwdError] = useState('');
   const [pwdSaving, setPwdSaving] = useState(false);
   const [showPwdForm, setShowPwdForm] = useState(false);
-  const [showDeleteAccount, setShowDeleteAccount] = useState(false);
-  const [deletePassword, setDeletePassword] = useState('');
-  const [deleteError, setDeleteError] = useState('');
-  const [deleting, setDeleting] = useState(false);
-  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; sessionId: string } | null>(null);
-  const [sendKey, setSendKey] = useState(localStorage.getItem('sendKey') || 'enter'); // enter or ctrl+enter
-  const [newlineKey, setNewlineKey] = useState(localStorage.getItem('newlineKey') || (localStorage.getItem('sendKey') === 'enter' ? 'shift_enter' : 'enter'));
-  const [uiLanguage, setUiLanguage] = useState<UiLanguage>(getStoredUiLanguage());
-  const [uiDensity, setUiDensity] = useState(localStorage.getItem('ui_density') || 'compact');
-  const [permissionMode, setPermissionMode] = useState<PermissionMode>('full_access');
+
   const [chatStyles, setChatStyles] = useState<ChatStyle[]>(() => getAllChatStyles());
   const [defaultChatStyle, setDefaultChatStyle] = useState(() => getDefaultChatStyleId());
   const [newStyleName, setNewStyleName] = useState('');
   const [newStyleDescription, setNewStyleDescription] = useState('');
   const [newStyleInstructions, setNewStyleInstructions] = useState('');
   const [styleError, setStyleError] = useState('');
+  const [saveMsg, setSaveMsg] = useState('');
 
-  const isSelfHosted = localStorage.getItem('user_mode') === 'selfhosted';
+  useEffect(() => {
+    const load = async () => {
+      try {
+        if (isSelfHosted) {
+          const saved = JSON.parse(localStorage.getItem('user_profile') || '{}');
+          const user = JSON.parse(localStorage.getItem('user') || '{}');
+          const nextProfile = { ...user, ...saved };
+          setProfile(nextProfile);
+          setFullName(nextProfile.full_name || nextProfile.nickname || '');
+          setDisplayName(nextProfile.display_name || nextProfile.nickname || '');
+          setWorkFunction(nextProfile.work_function || '');
+          setPersonalPreferences(nextProfile.personal_preferences || '');
+        } else {
+          const data = await getUserProfile();
+          const nextProfile = data?.user || data || {};
+          setProfile(nextProfile);
+          setFullName(nextProfile.full_name || nextProfile.nickname || '');
+          setDisplayName(nextProfile.display_name || nextProfile.nickname || '');
+          setWorkFunction(nextProfile.work_function || '');
+          setPersonalPreferences(nextProfile.personal_preferences || '');
+          setTheme(nextProfile.theme || localStorage.getItem('theme') || 'dark');
+          setChatFont(nextProfile.chat_font || localStorage.getItem('chat_font') || 'default');
+          setDefaultModel(nextProfile.default_model || localStorage.getItem('default_model') || 'claude-opus-4-6-thinking');
+        }
+      } catch {
+        // ignore
+      }
+
+      try {
+        const data = await getUserUsage();
+        setUsage(data);
+      } catch {
+        setUsage(null);
+      }
+
+      try {
+        const data = await getSessions();
+        setSessions(data.sessions || []);
+        setCurrentSessionId(data.currentSessionId || '');
+      } catch {
+        setSessions([]);
+      }
+
+      try {
+        const config = await getAgentConfig();
+        setPermissionMode(config.permissionMode || 'full_access');
+      } catch {
+        setPermissionMode('full_access');
+      }
+
+      if (isSelfHosted) {
+        try {
+          const models = await getProviderModels();
+          setProviderModels(models.map((m: any) => ({ base: m.id, label: m.name || m.id })));
+        } catch {
+          setProviderModels([]);
+        }
+      }
+    };
+
+    load();
+  }, [isSelfHosted]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-ui-density', uiDensity);
+  }, [uiDensity]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-chat-font', chatFont);
+  }, [chatFont]);
+
+  const navItems = useMemo(() => {
+    const items: Array<{ key: SettingsSection; label: string; badge?: string }> = [
+      { key: 'general', label: '常规' },
+      { key: 'appearance', label: '外观' },
+      ...(isSelfHosted ? [{ key: 'models', label: '模型' as const }] : []),
+      { key: 'personalization', label: '个性化' },
+      { key: 'permissions', label: '权限' },
+      { key: 'git', label: 'Git', badge: '骨架' },
+      { key: 'mcp', label: 'MCP 服务器', badge: '骨架' },
+      { key: 'environment', label: '环境', badge: '骨架' },
+      { key: 'worktree', label: '工作树', badge: '骨架' },
+      { key: 'archived', label: '已归档聊天', badge: '骨架' },
+      { key: 'usage', label: '使用情况' },
+      ...(!isSelfHosted ? [{ key: 'account', label: '账号' as const }] : []),
+    ];
+    return items;
+  }, [isSelfHosted]);
+
+  const defaultModelIsThinking = defaultModel.endsWith('-thinking');
+  const defaultModelBase = defaultModel.replace(/-thinking$/, '');
+  const defaultModelOptions =
+    isSelfHosted && providerModels.length > 0
+      ? providerModels
+      : [
+          { base: 'claude-opus-4-6', label: 'Opus 4.6' },
+          { base: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
+          { base: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
+        ];
+
   const presetChatStyles = chatStyles.filter((style) => style.kind === 'preset');
   const customChatStyles = chatStyles.filter((style) => style.kind === 'custom');
 
-  useEffect(() => {
-    // Load profile: self-hosted uses localStorage, Clawparrot uses backend
-    if (isSelfHosted) {
-      try {
-        const saved = JSON.parse(localStorage.getItem('user_profile') || '{}');
-        const user = JSON.parse(localStorage.getItem('user') || '{}');
-        const p = { ...user, ...saved }; // saved overrides user defaults
-        setProfile(p);
-        setFullName(p.full_name || p.nickname || '');
-        setDisplayName(p.display_name || p.nickname || '');
-        setWorkFunction(p.work_function || '');
-        setPersonalPreferences(p.personal_preferences || '');
-      } catch { }
-    } else {
-      getUserProfile().then((data: any) => {
-        const p = data?.user || data;
-        setProfile(p);
-        setFullName(p?.full_name || p?.nickname || '');
-        setDisplayName(p?.display_name || p?.nickname || '');
-        setWorkFunction(p?.work_function || '');
-        setPersonalPreferences(p?.personal_preferences || '');
-        setTheme(p?.theme || 'light');
-        setChatFont(p?.chat_font || 'default');
-        setDefaultModel(p?.default_model || 'claude-opus-4-6-thinking');
-      }).catch(() => { });
-    }
-    getUserUsage().then(setUsage).catch(() => { });
-    getSessions().then(data => {
-      setSessions(data.sessions || []);
-      setCurrentSessionId(data.currentSessionId || '');
-    }).catch(() => { });
-    getAgentConfig().then(config => {
-      setPermissionMode(config.permissionMode || 'full_access');
-    }).catch(() => { });
-  }, []);
+  const initials = (displayName || fullName || profile?.nickname || 'U').slice(0, 1).toUpperCase();
 
-  const handleSave = async (silent = false) => {
-    if (!silent) {
-      setSaving(true);
-      setSaveMsg('');
-    }
+  const persistProfile = async () => {
+    const payload = {
+      full_name: fullName,
+      display_name: displayName,
+      work_function: workFunction,
+      personal_preferences: personalPreferences,
+      theme,
+      chat_font: chatFont,
+    };
+
     try {
-      const profileData = {
-        full_name: fullName,
-        display_name: displayName,
-        work_function: workFunction,
-        personal_preferences: personalPreferences,
-        theme,
-        chat_font: chatFont,
-      };
       if (isSelfHosted) {
-        // Self-hosted: persist to localStorage
-        localStorage.setItem('user_profile', JSON.stringify(profileData));
-        setProfile(profileData);
+        localStorage.setItem('user_profile', JSON.stringify(payload));
+        setProfile((prev: any) => ({ ...(prev || {}), ...payload }));
       } else {
-        const data = await updateUserProfile(profileData);
-        setProfile(data);
-        const userStr = localStorage.getItem('user');
-        if (userStr) {
-          const user = JSON.parse(userStr);
-          localStorage.setItem('user', JSON.stringify({ ...user, ...data }));
-        }
+        const data = await updateUserProfile(payload);
+        setProfile((prev: any) => ({ ...(prev || {}), ...(data || {}) }));
       }
       window.dispatchEvent(new Event('userProfileUpdated'));
-      if (!silent) {
-        setSaveMsg('已保存');
-        setTimeout(() => setSaveMsg(''), 2000);
-      }
-    } catch (err: any) {
-      if (!silent) setSaveMsg(err.message || '保存失败');
-    } finally {
-      if (!silent) setSaving(false);
+      setSaveMsg('已保存');
+      window.setTimeout(() => setSaveMsg(''), 2000);
+    } catch (error: any) {
+      setSaveMsg(error?.message || '保存失败');
     }
   };
 
-  // Auto-save on blur or selection
-  const handleAutoSave = () => {
-    // Optional: implement auto-save debounce if needed, currently manual save button is also fine
-    // The screenshot shows a clean interface, maybe we can auto-save
-    // But for now, let's keep the explicit save button as it's safer for "no new function" logic, 
-    // or just match the UI. Official Claude settings mostly auto-save or have small confirms.
-    // I'll keep the Save button for Profile but make Theme instant.
-  };
-
-  const applyTheme = (t: string) => {
-    setTheme(t);
+  const applyTheme = (nextTheme: string) => {
+    setTheme(nextTheme);
+    localStorage.setItem('theme', nextTheme);
     const root = document.documentElement;
-    if (t === 'dark') {
+    if (nextTheme === 'dark') {
       root.setAttribute('data-theme', 'dark');
       root.classList.add('dark');
-    } else if (t === 'auto') {
+    } else if (nextTheme === 'auto') {
       const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
       root.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
       root.classList.toggle('dark', prefersDark);
@@ -161,16 +326,18 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
       root.setAttribute('data-theme', 'light');
       root.classList.remove('dark');
     }
-    localStorage.setItem('theme', t);
-    // Auto-save theme
-    updateUserProfile({ theme: t }).catch(() => { });
+    if (!isSelfHosted) {
+      updateUserProfile({ theme: nextTheme }).catch(() => {});
+    }
   };
 
-  const applyFont = (f: string) => {
-    setChatFont(f);
-    document.documentElement.setAttribute('data-chat-font', f);
-    localStorage.setItem('chat_font', f);
-    updateUserProfile({ chat_font: f }).catch(() => { });
+  const applyFont = (nextFont: string) => {
+    setChatFont(nextFont);
+    localStorage.setItem('chat_font', nextFont);
+    document.documentElement.setAttribute('data-chat-font', nextFont);
+    if (!isSelfHosted) {
+      updateUserProfile({ chat_font: nextFont }).catch(() => {});
+    }
   };
 
   const applyLanguage = (language: UiLanguage) => {
@@ -190,14 +357,18 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
       const config = await updateAgentConfig({ permissionMode: mode });
       setPermissionMode(config.permissionMode || mode);
       window.dispatchEvent(new CustomEvent('agentConfigUpdated', { detail: config }));
-    } catch (err) {
-      console.error('Failed to update permission mode', err);
+    } catch {
+      // ignore
     }
   };
 
-  const applyDefaultChatStyle = (styleId: string) => {
-    setDefaultChatStyle(styleId);
-    setDefaultChatStyleId(styleId);
+  const applyDefaultModel = (base: string, thinking: boolean) => {
+    const next = thinking ? `${base}-thinking` : base;
+    setDefaultModel(next);
+    localStorage.setItem('default_model', next);
+    if (!isSelfHosted) {
+      updateUserProfile({ default_model: next }).catch(() => {});
+    }
   };
 
   const handleCreateStyle = () => {
@@ -207,12 +378,12 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
       setStyleError(uiLanguage === 'zh-CN' ? '名称和风格说明都要填写。' : 'Please fill in both the style name and the instructions.');
       return;
     }
-    const nextStyle = createCustomChatStyle({
+    const created = createCustomChatStyle({
       name,
-      description: newStyleDescription,
+      description: newStyleDescription.trim(),
       instructions,
     });
-    const nextStyles = [...chatStyles, nextStyle];
+    const nextStyles = [...chatStyles, created];
     setChatStyles(nextStyles);
     saveCustomChatStyles(nextStyles);
     setNewStyleName('');
@@ -226,1178 +397,818 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     setChatStyles(nextStyles);
     saveCustomChatStyles(nextStyles);
     if (defaultChatStyle === styleId) {
-      const fallbackId = nextStyles[0]?.id || 'balanced';
-      setDefaultChatStyle(fallbackId);
-      setDefaultChatStyleId(fallbackId);
+      const fallback = nextStyles[0]?.id || 'balanced';
+      setDefaultChatStyle(fallback);
+      setDefaultChatStyleId(fallback);
     }
   };
 
-  const HARDCODED_MODELS = [
-    { base: 'claude-opus-4-6', label: 'Opus 4.6' },
-    { base: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
-    { base: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
-  ];
-  const [providerModels, setProviderModels] = useState<Array<{ base: string; label: string }>>([]);
-
-  useEffect(() => {
-    if (isSelfHosted) {
-      getProviderModels().then(models => {
-        setProviderModels(models.map(m => ({ base: m.id, label: m.name || m.id })));
-      }).catch(() => { });
+  const handleChangePassword = async () => {
+    setPwdError('');
+    setPwdMsg('');
+    if (!pwdCurrent || !pwdNew || !pwdConfirm) {
+      setPwdError('请填写所有字段');
+      return;
     }
-  }, [isSelfHosted]);
+    if (pwdNew.length < 6) {
+      setPwdError('新密码至少 6 位');
+      return;
+    }
+    if (pwdNew !== pwdConfirm) {
+      setPwdError('两次输入的新密码不一致');
+      return;
+    }
 
-  const MODEL_BASES = isSelfHosted && providerModels.length > 0 ? providerModels : HARDCODED_MODELS;
-
-  const defaultModelIsThinking = defaultModel.endsWith('-thinking');
-  const defaultModelBase = defaultModel.replace(/-thinking$/, '');
-
-  const applyDefaultModel = (base: string, thinking: boolean) => {
-    const m = thinking ? `${base}-thinking` : base;
-    setDefaultModel(m);
-    localStorage.setItem('default_model', m);
-    updateUserProfile({ default_model: m }).catch(() => { });
+    setPwdSaving(true);
+    try {
+      await changePassword(pwdCurrent, pwdNew);
+      setPwdMsg('密码已更新，其他设备将重新登录。');
+      setPwdCurrent('');
+      setPwdNew('');
+      setPwdConfirm('');
+    } catch (error: any) {
+      setPwdError(error?.message || '修改失败');
+    } finally {
+      setPwdSaving(false);
+    }
   };
 
-  const initials = (fullName || profile?.nickname || 'U').charAt(0).toUpperCase();
+  const currentSection = (() => {
+    switch (section) {
+      case 'general':
+        return (
+          <div className="space-y-5">
+            <SectionCard title="常规" subtitle="先把常用的基础选项收在这里，尽量对齐原生 Claude / Codex 的设置结构。">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-3">
+                  <div className="text-[13px] text-claude-textSecondary mb-1">默认打开目标</div>
+                  <select
+                    value={defaultOpenTarget}
+                    onChange={(e) => {
+                      setDefaultOpenTarget(e.target.value);
+                      localStorage.setItem('default_open_target', e.target.value);
+                    }}
+                    className="w-full bg-transparent text-[14px] text-claude-text outline-none"
+                  >
+                    <option value="vscode">VS Code</option>
+                    <option value="folder">系统文件夹</option>
+                    <option value="internal">应用内打开</option>
+                  </select>
+                </div>
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-3">
+                  <div className="text-[13px] text-claude-textSecondary mb-1">集成终端 Shell</div>
+                  <select
+                    value={integratedShell}
+                    onChange={(e) => {
+                      setIntegratedShell(e.target.value);
+                      localStorage.setItem('integrated_shell', e.target.value);
+                    }}
+                    className="w-full bg-transparent text-[14px] text-claude-text outline-none"
+                  >
+                    <option value="powershell">PowerShell</option>
+                    <option value="cmd">CMD</option>
+                    <option value="git-bash">Git Bash</option>
+                  </select>
+                </div>
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-3">
+                  <div className="text-[13px] text-claude-textSecondary mb-1">语言</div>
+                  <select
+                    value={uiLanguage}
+                    onChange={(e) => applyLanguage(e.target.value as UiLanguage)}
+                    className="w-full bg-transparent text-[14px] text-claude-text outline-none"
+                  >
+                    <option value="zh-CN">中文（中国）</option>
+                    <option value="en">English</option>
+                  </select>
+                </div>
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-3">
+                  <div className="text-[13px] text-claude-textSecondary mb-1">详细级别</div>
+                  <select
+                    value={uiDensity}
+                    onChange={(e) => applyUiDensity(e.target.value)}
+                    className="w-full bg-transparent text-[14px] text-claude-text outline-none"
+                  >
+                    <option value="compact">紧凑</option>
+                    <option value="comfortable">舒适</option>
+                  </select>
+                </div>
+              </div>
+            </SectionCard>
 
-  // Inject Google Fonts
-  useEffect(() => {
-    const link = document.createElement('link');
-    link.href = 'https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;0,700;1,400&family=DM+Serif+Display&family=EB+Garamond:wght@400;500;600;700;800&family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600;9..144,700&family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Merriweather:ital,wght@0,300;0,400;0,700;0,900;1,300&family=Noto+Serif:ital,wght@0,400;0,700;1,400&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400&family=Spectral:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,300&display=swap';
-    link.rel = 'stylesheet';
-    document.head.appendChild(link);
-    return () => {
-      document.head.removeChild(link);
-    };
-  }, []);
+            {!isSelfHosted && (
+              <SectionCard title="默认模型" subtitle="影响新建聊天默认使用的 Clawparrot 模型。">
+                <div className="grid grid-cols-[1fr_auto] gap-4 items-end">
+                  <div>
+                    <div className="text-[13px] text-claude-textSecondary mb-1.5">默认模型</div>
+                    <select
+                      value={defaultModelBase}
+                      onChange={(e) => applyDefaultModel(e.target.value, defaultModelIsThinking)}
+                      className="w-full rounded-xl border border-claude-border bg-claude-bg px-4 py-3 text-[14px] text-claude-text outline-none"
+                    >
+                      {defaultModelOptions.map((model) => (
+                        <option key={model.base} value={model.base}>
+                          {model.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <button
+                    onClick={() => applyDefaultModel(defaultModelBase, !defaultModelIsThinking)}
+                    className={`h-[46px] rounded-xl border px-4 text-[13px] font-medium transition-colors ${
+                      defaultModelIsThinking
+                        ? 'border-[#2E7CF6]/30 bg-[#2E7CF6]/10 text-[#2E7CF6]'
+                        : 'border-claude-border text-claude-textSecondary hover:bg-claude-hover'
+                    }`}
+                  >
+                    {defaultModelIsThinking ? '已开启深度思考' : '开启深度思考'}
+                  </button>
+                </div>
+              </SectionCard>
+            )}
 
-  // Font selector options
+            <SectionCard title="输入行为" subtitle="这部分是原生产品里最常用的发送和换行习惯。">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-3">
+                  <div className="text-[13px] text-claude-textSecondary mb-1">发送消息</div>
+                  <select
+                    value={sendKey}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setSendKey(next);
+                      localStorage.setItem('sendKey', next);
+                    }}
+                    className="w-full bg-transparent text-[14px] text-claude-text outline-none"
+                  >
+                    <option value="enter">Enter</option>
+                    <option value="ctrl_enter">Ctrl+Enter</option>
+                    <option value="alt_enter">Alt+Enter</option>
+                    <option value="cmd_enter">Cmd+Enter</option>
+                  </select>
+                </div>
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-3">
+                  <div className="text-[13px] text-claude-textSecondary mb-1">换行</div>
+                  <select
+                    value={newlineKey}
+                    onChange={(e) => {
+                      setNewlineKey(e.target.value);
+                      localStorage.setItem('newlineKey', e.target.value);
+                    }}
+                    className="w-full bg-transparent text-[14px] text-claude-text outline-none"
+                  >
+                    <option value="enter">Enter</option>
+                    <option value="shift_enter">Shift+Enter</option>
+                    <option value="ctrl_enter">Ctrl+Enter</option>
+                    <option value="alt_enter">Alt+Enter</option>
+                  </select>
+                </div>
+              </div>
+            </SectionCard>
+
+            <SectionCard title="用户模式" subtitle="保留你现在这套自部署 / Clawparrot 双模式切换。">
+              <div className="grid grid-cols-2 gap-3">
+                {[
+                  { value: 'selfhosted', label: '自部署', desc: '使用你自己的 API Key 和本地配置' },
+                  { value: 'clawparrot', label: 'Clawparrot', desc: '使用托管 API 服务' },
+                ].map((item) => {
+                  const active = (localStorage.getItem('user_mode') || 'selfhosted') === item.value;
+                  return (
+                    <button
+                      key={item.value}
+                      onClick={() => {
+                        localStorage.setItem('user_mode', item.value);
+                        window.location.reload();
+                      }}
+                      className={`rounded-xl border px-4 py-4 text-left transition-all ${
+                        active
+                          ? 'border-[#2E7CF6]/40 bg-[#2E7CF6]/10'
+                          : 'border-claude-border hover:bg-claude-hover'
+                      }`}
+                    >
+                      <div className="text-[14px] font-medium text-claude-text">{item.label}</div>
+                      <div className="mt-1 text-[12px] leading-5 text-claude-textSecondary">{item.desc}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </SectionCard>
+          </div>
+        );
+
+      case 'appearance':
+        return (
+          <div className="space-y-5">
+            <SectionCard title="外观" subtitle="把最影响观感的几项集中到一起，顺手做一轮界面收紧。">
+              <div className="grid grid-cols-3 gap-3">
+                {[
+                  { value: 'light', label: '浅色' },
+                  { value: 'auto', label: '跟随系统' },
+                  { value: 'dark', label: '深色' },
+                ].map((item) => {
+                  const active = theme === item.value;
+                  return (
+                    <button
+                      key={item.value}
+                      onClick={() => applyTheme(item.value)}
+                      className={`rounded-xl border px-4 py-4 text-left transition-all ${
+                        active ? 'border-[#2E7CF6]/40 bg-[#2E7CF6]/10' : 'border-claude-border hover:bg-claude-hover'
+                      }`}
+                    >
+                      <div className="text-[14px] font-medium text-claude-text">{item.label}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </SectionCard>
+
+            <SectionCard title="聊天字体" subtitle="你提到内容偏大、不够紧凑，所以这里保留字体和密度两层调节。">
+              <div className="grid grid-cols-4 gap-3">
+                {[
+                  { value: 'default', label: '默认' },
+                  { value: 'sans', label: 'Sans' },
+                  { value: 'system', label: '系统' },
+                  { value: 'dyslexic', label: '易读' },
+                ].map((item) => {
+                  const active = chatFont === item.value;
+                  return (
+                    <button
+                      key={item.value}
+                      onClick={() => applyFont(item.value)}
+                      className={`rounded-xl border px-4 py-4 text-center transition-all ${
+                        active ? 'border-[#2E7CF6]/40 bg-[#2E7CF6]/10' : 'border-claude-border hover:bg-claude-hover'
+                      }`}
+                    >
+                      <div className="text-[18px] mb-1 text-claude-text">Aa</div>
+                      <div className="text-[13px] font-medium text-claude-text">{item.label}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </SectionCard>
+
+            <SectionCard title="关于" subtitle="应用标识与版本信息。">
+              <div className="flex items-center justify-between rounded-xl border border-claude-border bg-claude-bg px-4 py-3">
+                <div>
+                  <div className="text-[14px] font-medium text-claude-text">claude-desktop-cn</div>
+                  <div className="mt-1 text-[12px] text-claude-textSecondary">Windows 桌面客户端</div>
+                </div>
+                <div className="text-[13px] font-mono text-claude-text">v{__APP_VERSION__}</div>
+              </div>
+            </SectionCard>
+          </div>
+        );
+
+      case 'models':
+        return (
+          <div className="space-y-5">
+            <SectionCard title="模型" subtitle="这里保留自部署模型配置页，作为原生骨架里的模型入口。">
+              <ProviderSettings />
+            </SectionCard>
+          </div>
+        );
+
+      case 'personalization':
+        return (
+          <div className="space-y-5">
+            <SectionCard title="个人资料" subtitle="这部分会影响 Claude 在所有对话里的称呼、偏好和默认表达方式。">
+              <div className="grid grid-cols-[auto_1fr_1fr] gap-4 items-start">
+                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-claude-btn-hover text-[24px] font-medium text-claude-text">
+                  {initials}
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <div className="mb-1 text-[13px] text-claude-textSecondary">全名</div>
+                    <input
+                      value={fullName}
+                      onChange={(e) => setFullName(e.target.value)}
+                      className="w-full rounded-xl border border-claude-border bg-claude-bg px-4 py-3 text-[14px] text-claude-text outline-none"
+                      placeholder="例如你的真实姓名"
+                    />
+                  </div>
+                  <div>
+                    <div className="mb-1 text-[13px] text-claude-textSecondary">你的职业是什么？</div>
+                    <select
+                      value={workFunction}
+                      onChange={(e) => setWorkFunction(e.target.value)}
+                      className="w-full rounded-xl border border-claude-border bg-claude-bg px-4 py-3 text-[14px] text-claude-text outline-none"
+                    >
+                      <option value="">选择你的职业</option>
+                      {WORK_OPTIONS.map((item) => (
+                        <option key={item} value={item}>
+                          {item}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <div className="mb-1 text-[13px] text-claude-textSecondary">Claude 应该怎么称呼你？</div>
+                    <input
+                      value={displayName}
+                      onChange={(e) => setDisplayName(e.target.value)}
+                      className="w-full rounded-xl border border-claude-border bg-claude-bg px-4 py-3 text-[14px] text-claude-text outline-none"
+                      placeholder="例如你的名字或昵称"
+                    />
+                  </div>
+                  <div>
+                    <div className="mb-1 text-[13px] text-claude-textSecondary">Claude 在回答中应考虑哪些个人偏好？</div>
+                    <textarea
+                      value={personalPreferences}
+                      onChange={(e) => setPersonalPreferences(e.target.value)}
+                      rows={5}
+                      className="w-full rounded-xl border border-claude-border bg-claude-bg px-4 py-3 text-[14px] text-claude-text outline-none resize-none"
+                      placeholder="例如：默认使用中文、代码注释保留英文、回答先给结论。"
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="mt-4 flex items-center justify-end gap-3">
+                {saveMsg && <span className="text-[12px] text-claude-textSecondary">{saveMsg}</span>}
+                <button
+                  onClick={persistProfile}
+                  className="rounded-xl bg-claude-text px-4 py-2 text-[13px] font-medium text-claude-bg hover:opacity-90"
+                >
+                  保存资料
+                </button>
+              </div>
+            </SectionCard>
+
+            <SectionCard title="回答风格" subtitle="默认风格会作用于新对话；你也可以保存自己的聊天风格模板。">
+              <div className="space-y-5">
+                <div>
+                  <div className="mb-3 text-[13px] text-claude-textSecondary">默认风格</div>
+                  <div className="grid grid-cols-2 gap-3">
+                    {presetChatStyles.map((style) => {
+                      const active = defaultChatStyle === style.id;
+                      return (
+                        <button
+                          key={style.id}
+                          onClick={() => {
+                            setDefaultChatStyle(style.id);
+                            setDefaultChatStyleId(style.id);
+                          }}
+                          className={`rounded-xl border px-4 py-4 text-left transition-all ${
+                            active
+                              ? 'border-[#2E7CF6]/40 bg-[#2E7CF6]/10'
+                              : 'border-claude-border hover:bg-claude-hover'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-[14px] font-medium text-claude-text">
+                              {getChatStyleLabel(style, uiLanguage)}
+                            </div>
+                            {active && <Check size={14} className="text-[#2E7CF6]" />}
+                          </div>
+                          <div className="mt-1.5 text-[12px] leading-5 text-claude-textSecondary">
+                            {getChatStyleDescription(style, uiLanguage)}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="mb-3 text-[13px] text-claude-textSecondary">自定义风格</div>
+                  {customChatStyles.length > 0 ? (
+                    <div className="space-y-3">
+                      {customChatStyles.map((style) => (
+                        <div key={style.id} className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                          <div className="flex items-start justify-between gap-4">
+                            <div className="min-w-0">
+                              <div className="text-[14px] font-medium text-claude-text">{style.name}</div>
+                              {style.description && (
+                                <div className="mt-1 text-[12px] text-claude-textSecondary">{style.description}</div>
+                              )}
+                              <div className="mt-2 whitespace-pre-wrap text-[12px] leading-6 text-claude-textSecondary">
+                                {style.instructions}
+                              </div>
+                            </div>
+                            <div className="flex gap-2 shrink-0">
+                              <button
+                                onClick={() => {
+                                  setDefaultChatStyle(style.id);
+                                  setDefaultChatStyleId(style.id);
+                                }}
+                                className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-text hover:bg-claude-hover"
+                              >
+                                设为默认
+                              </button>
+                              <button
+                                onClick={() => handleDeleteStyle(style.id)}
+                                className="rounded-lg border border-red-500/20 px-3 py-1.5 text-[12px] text-red-500 hover:bg-red-500/5"
+                              >
+                                删除
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-claude-border px-4 py-4 text-[12px] text-claude-textSecondary">
+                      还没有自定义风格，下面可以直接新建一套。
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="mb-4 text-[14px] font-medium text-claude-text">新建风格</div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <input
+                      value={newStyleName}
+                      onChange={(e) => {
+                        setNewStyleName(e.target.value);
+                        setStyleError('');
+                      }}
+                      className="rounded-xl border border-claude-border bg-claude-input px-4 py-3 text-[14px] text-claude-text outline-none"
+                      placeholder="风格名称"
+                    />
+                    <input
+                      value={newStyleDescription}
+                      onChange={(e) => setNewStyleDescription(e.target.value)}
+                      className="rounded-xl border border-claude-border bg-claude-input px-4 py-3 text-[14px] text-claude-text outline-none"
+                      placeholder="适用场景简介"
+                    />
+                  </div>
+                  <textarea
+                    value={newStyleInstructions}
+                    onChange={(e) => {
+                      setNewStyleInstructions(e.target.value);
+                      setStyleError('');
+                    }}
+                    rows={4}
+                    className="mt-4 w-full rounded-xl border border-claude-border bg-claude-input px-4 py-3 text-[14px] text-claude-text outline-none resize-none"
+                    placeholder="例如：先给结论，再列风险与下一步；默认中文，术语保留英文。"
+                  />
+                  {styleError && <div className="mt-2 text-[12px] text-red-500">{styleError}</div>}
+                  <div className="mt-4 flex justify-end">
+                    <button
+                      onClick={handleCreateStyle}
+                      className="rounded-xl bg-claude-text px-4 py-2 text-[13px] font-medium text-claude-bg hover:opacity-90"
+                    >
+                      保存风格
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </SectionCard>
+          </div>
+        );
+
+      case 'permissions':
+        return (
+          <div className="space-y-5">
+            <SectionCard
+              title="权限"
+              subtitle="这套权限会影响聊天页里的执行模式和代码页里的命令能力。你想要的“像我这样能动文件和命令”，核心就是这里。"
+            >
+              <div className="grid grid-cols-3 gap-3">
+                {[
+                  {
+                    value: 'workspace_write' as PermissionMode,
+                    label: '安全模式',
+                    desc: '只允许当前工作区文件操作，禁用命令执行。',
+                  },
+                  {
+                    value: 'project' as PermissionMode,
+                    label: '项目权限',
+                    desc: '允许当前工作区文件操作与命令执行，但不越界访问全盘。',
+                  },
+                  {
+                    value: 'full_access' as PermissionMode,
+                    label: '完全访问',
+                    desc: '允许全盘文件操作和命令执行，请谨慎使用。',
+                  },
+                ].map((item) => {
+                  const active = permissionMode === item.value;
+                  return (
+                    <button
+                      key={item.value}
+                      onClick={() => applyPermissionMode(item.value)}
+                      className={`rounded-xl border px-4 py-4 text-left transition-all ${
+                        active
+                          ? 'border-[#C6613F]/40 bg-[#C6613F]/10'
+                          : 'border-claude-border hover:bg-claude-hover'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-[14px] font-medium text-claude-text">{item.label}</div>
+                        {active && <Check size={14} className="text-[#C6613F]" />}
+                      </div>
+                      <div className="mt-2 text-[12px] leading-5 text-claude-textSecondary">{item.desc}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </SectionCard>
+          </div>
+        );
+
+      case 'git':
+        return (
+          <PlaceholderSection
+            title="Git"
+            status="已接骨架"
+            description="这一栏先补成原生化骨架。真正的文件差异、暂存、提交、推送目前已经在代码页右侧面板可用。"
+            bullets={[
+              '当前代码页已支持 Git 状态、单文件差异、暂存/取消暂存、提交、推送。',
+              '下一步适合继续补默认仓库、分支切换、拉取策略、凭据和忽略规则。',
+              '后续这里会成为 Git 全局偏好与默认行为入口。',
+            ]}
+          />
+        );
+
+      case 'mcp':
+        return (
+          <PlaceholderSection
+            title="MCP 服务器"
+            status="已接骨架"
+            description="这里将对齐原生产品的工具服务器管理位置。"
+            bullets={[
+              '后续可放服务器启停、连接状态、超时设置和作用域控制。',
+              '适合增加每个工具的中文说明、是否允许在聊天/代码页调用。',
+              '这部分会直接影响技能、外部工具和自动化能力的可见性。',
+            ]}
+          />
+        );
+
+      case 'environment':
+        return (
+          <PlaceholderSection
+            title="环境"
+            status="已接骨架"
+            description="这里以后会放终端、解释器、环境变量和运行时偏好。"
+            bullets={[
+              '适合补默认 Node / Python 路径、代理和 PATH 继承策略。',
+              '你提到希望像 VS Code 那样工作，这里就是未来对应的环境层。',
+              '当前可执行命令主要在代码页右侧控制台完成。',
+            ]}
+          />
+        );
+
+      case 'worktree':
+        return (
+          <PlaceholderSection
+            title="工作树"
+            status="已接骨架"
+            description="代码页已经有工作区概念，这里会成为更正式的工作区管理入口。"
+            bullets={[
+              '适合补最近工作区、默认目录、收藏目录与多工作树切换。',
+              '后续可以加入“打开即加载 Git 状态”和“记住上次目录”。',
+              '如果你希望更接近原生 Claude Code，这一层会非常关键。',
+            ]}
+          />
+        );
+
+      case 'archived':
+        return (
+          <PlaceholderSection
+            title="已归档聊天"
+            status="已接骨架"
+            description="原生产品里这部分会负责归档历史、恢复对话和查看旧线程。"
+            bullets={[
+              '现在先把入口补齐，后续再接归档筛选、恢复与批量整理。',
+              '适合加“按项目 / 日期 / 模型”筛选。',
+              '也可以接入自动压缩后的对话摘要浏览。',
+            ]}
+          />
+        );
+
+      case 'usage':
+        return (
+          <div className="space-y-5">
+            <SectionCard title="使用情况" subtitle="把当前额度、消息量和平台侧统计放在一起。">
+              {isSelfHosted ? (
+                <div className="rounded-xl border border-dashed border-claude-border px-4 py-4 text-[13px] leading-6 text-claude-textSecondary">
+                  你当前处于自部署模式。平台套餐额度不一定适用，建议以后在这里补本地推理统计、请求次数、平均速度和模型命中率。
+                </div>
+              ) : usage ? (
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                    <div className="text-[13px] text-claude-textSecondary mb-1">Token 用量</div>
+                    <div className="text-[20px] font-semibold text-claude-text">
+                      {formatUsageValue(usage.token_used, usage.token_quota)}
+                    </div>
+                    <div className="mt-2 text-[12px] text-claude-textSecondary">
+                      已使用 {formatPercent(usage.usage_percent)}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                    <div className="text-[13px] text-claude-textSecondary mb-1">今日消息</div>
+                    <div className="text-[20px] font-semibold text-claude-text">
+                      {usage.messages?.today ?? 0}
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                    <div className="text-[13px] text-claude-textSecondary mb-1">本月消息</div>
+                    <div className="text-[20px] font-semibold text-claude-text">
+                      {usage.messages?.month ?? 0}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-[13px] text-claude-textSecondary">正在加载用量数据…</div>
+              )}
+            </SectionCard>
+          </div>
+        );
+
+      case 'account':
+        return (
+          <div className="space-y-5">
+            <SectionCard title="账号" subtitle="账号安全和会话管理先保留基础版。">
+              <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                <div className="text-[13px] text-claude-textSecondary mb-1">邮箱地址</div>
+                <div className="text-[14px] text-claude-text">{profile?.email || '—'}</div>
+                <div className="mt-4 flex gap-3">
+                  <button
+                    onClick={() => {
+                      setShowPwdForm(true);
+                      setPwdError('');
+                      setPwdMsg('');
+                    }}
+                    className="rounded-lg border border-claude-border px-3 py-1.5 text-[13px] text-claude-text hover:bg-claude-hover"
+                  >
+                    修改密码
+                  </button>
+                  <button
+                    onClick={() => logout()}
+                    className="rounded-lg border border-[#C6613F]/20 px-3 py-1.5 text-[13px] text-[#C6613F] hover:bg-[#C6613F]/5"
+                  >
+                    退出登录
+                  </button>
+                </div>
+              </div>
+            </SectionCard>
+
+            <SectionCard title="活跃会话" subtitle="保留当前设备会话和其他设备退出能力。">
+              <div className="space-y-3">
+                {sessions.length > 0 ? (
+                  sessions.map((sessionItem) => {
+                    const isCurrent = sessionItem.id === currentSessionId;
+                    return (
+                      <div
+                        key={sessionItem.id}
+                        className="flex items-center justify-between rounded-xl border border-claude-border bg-claude-bg px-4 py-4"
+                      >
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            {sessionItem.device?.includes('Android') || sessionItem.device?.includes('iOS') ? (
+                              <Smartphone size={15} className="text-claude-textSecondary" />
+                            ) : (
+                              <MonitorIcon size={15} className="text-claude-textSecondary" />
+                            )}
+                            <span className="truncate text-[14px] font-medium text-claude-text">
+                              {sessionItem.device || '未知设备'}
+                            </span>
+                            {isCurrent && (
+                              <span className="rounded-full bg-[#2E7CF6]/10 px-2 py-0.5 text-[11px] text-[#2E7CF6]">
+                                当前
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-1 text-[12px] text-claude-textSecondary">
+                            {sessionItem.location || '未知位置'} · 最近活跃 {formatTime(sessionItem.last_active)}
+                          </div>
+                        </div>
+                        {!isCurrent && (
+                          <button
+                            onClick={async () => {
+                              await deleteSession(sessionItem.id);
+                              setSessions((prev) => prev.filter((item) => item.id !== sessionItem.id));
+                            }}
+                            className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-textSecondary hover:bg-claude-hover"
+                          >
+                            退出此设备
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="text-[13px] text-claude-textSecondary">暂无活跃会话。</div>
+                )}
+                {sessions.length > 1 && (
+                  <div className="flex justify-end">
+                    <button
+                      onClick={async () => {
+                        await logoutOtherSessions();
+                        setSessions((prev) => prev.filter((item) => item.id === currentSessionId));
+                      }}
+                      className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-textSecondary hover:bg-claude-hover"
+                    >
+                      退出其他设备
+                    </button>
+                  </div>
+                )}
+              </div>
+            </SectionCard>
+          </div>
+        );
+
+      default:
+        return null;
+    }
+  })();
+
   return (
-    <div className="flex-1 flex h-full overflow-hidden bg-claude-bg text-claude-text">
-      {/* Left Sidebar Navigation */}
-      <div className="w-[200px] flex-shrink-0 pt-16 pl-8 flex flex-col gap-1">
-        <h2
-          className="font-[Spectral] text-[28px] text-claude-text px-3 mb-6"
-          style={{
-            fontWeight: 500,
-            WebkitTextStroke: '0.5px currentColor'
-          }}
-        >
-          设置
-        </h2>
-
+    <div className="flex h-full bg-claude-bg text-claude-text">
+      <aside className="w-[240px] shrink-0 border-r border-claude-border px-5 pt-14 pb-6">
         <button
-          onClick={() => setTab('general')}
-          className={`text-left px-3 py-2 rounded-lg text-[15px] font-medium transition-colors ${tab === 'general' ? 'bg-claude-btn-hover text-claude-text' : 'text-claude-textSecondary hover:bg-claude-hover'
-            }`}
+          onClick={onClose}
+          className="mb-6 inline-flex items-center gap-2 text-[12px] text-claude-textSecondary hover:text-claude-text"
         >
-          通用
+          <ChevronRight size={14} className="rotate-180" />
+          返回应用
         </button>
-        {localStorage.getItem('user_mode') === 'selfhosted' && (
-          <button
-            onClick={() => setTab('models')}
-            className={`text-left px-3 py-2 rounded-lg text-[15px] font-medium transition-colors ${tab === 'models' ? 'bg-claude-btn-hover text-claude-text' : 'text-claude-textSecondary hover:bg-claude-hover'
-              }`}
-          >
-            模型
-          </button>
-        )}
-        {localStorage.getItem('user_mode') !== 'selfhosted' && (
-          <button
-            onClick={() => setTab('account')}
-            className={`text-left px-3 py-2 rounded-lg text-[15px] font-medium transition-colors ${tab === 'account' ? 'bg-claude-btn-hover text-claude-text' : 'text-claude-textSecondary hover:bg-claude-hover'
-              }`}
-          >
-            账户
-          </button>
-        )}
-        {localStorage.getItem('user_mode') !== 'selfhosted' && (
-          <button
-            onClick={() => setTab('usage')}
-            className={`text-left px-3 py-2 rounded-lg text-[15px] font-medium transition-colors ${tab === 'usage' ? 'bg-claude-btn-hover text-claude-text' : 'text-claude-textSecondary hover:bg-claude-hover'
-              }`}
-          >
-            用量
-          </button>
-        )}
-      </div>
+        <h1 className="mb-6 text-[30px] font-[Spectral] font-semibold tracking-tight">设置</h1>
+        <nav className="space-y-1">
+          {navItems.map((item) => {
+            const active = section === item.key;
+            return (
+              <button
+                key={item.key}
+                onClick={() => setSection(item.key)}
+                className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left transition-colors ${
+                  active ? 'bg-claude-btn-hover text-claude-text' : 'text-claude-textSecondary hover:bg-claude-hover'
+                }`}
+              >
+                <span className="text-[14px] font-medium">{item.label}</span>
+                {item.badge && (
+                  <span className="rounded-full bg-claude-hover px-2 py-0.5 text-[10px] text-claude-textSecondary">
+                    {item.badge}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+      </aside>
 
-      {/* Right Content Area */}
-      <div className="flex-1 overflow-y-auto min-w-0">
-        <div className="max-w-6xl pt-16 pl-12 pb-32 pr-12">
-          {tab === 'general' && renderGeneral()}
-          {tab === 'models' && <ProviderSettings />}
-          {tab === 'account' && renderAccount()}
-          {tab === 'usage' && renderUsage()}
+      <main className="flex-1 overflow-y-auto px-10 pt-14 pb-24">
+        <div className="mx-auto max-w-[980px]">
+          {currentSection}
         </div>
-      </div>
+      </main>
+
+      {showPwdForm && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/40 px-4" onClick={() => setShowPwdForm(false)}>
+          <div
+            className="w-full max-w-[420px] rounded-2xl border border-claude-border bg-claude-bg px-6 py-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <div className="text-[18px] font-semibold text-claude-text">修改密码</div>
+              <button onClick={() => setShowPwdForm(false)} className="text-claude-textSecondary hover:text-claude-text">
+                <LogOut size={16} className="rotate-180" />
+              </button>
+            </div>
+            <div className="space-y-3">
+              <input
+                type="password"
+                value={pwdCurrent}
+                onChange={(e) => setPwdCurrent(e.target.value)}
+                placeholder="当前密码"
+                className="w-full rounded-xl border border-claude-border bg-claude-input px-4 py-3 text-[14px] text-claude-text outline-none"
+              />
+              <input
+                type="password"
+                value={pwdNew}
+                onChange={(e) => setPwdNew(e.target.value)}
+                placeholder="新密码（至少 6 位）"
+                className="w-full rounded-xl border border-claude-border bg-claude-input px-4 py-3 text-[14px] text-claude-text outline-none"
+              />
+              <input
+                type="password"
+                value={pwdConfirm}
+                onChange={(e) => setPwdConfirm(e.target.value)}
+                placeholder="确认新密码"
+                className="w-full rounded-xl border border-claude-border bg-claude-input px-4 py-3 text-[14px] text-claude-text outline-none"
+              />
+            </div>
+            {pwdError && <div className="mt-3 text-[12px] text-red-500">{pwdError}</div>}
+            {pwdMsg && <div className="mt-3 text-[12px] text-emerald-500">{pwdMsg}</div>}
+            <div className="mt-5 flex justify-end gap-3">
+              <button
+                onClick={() => setShowPwdForm(false)}
+                className="rounded-lg px-3 py-1.5 text-[13px] text-claude-textSecondary hover:bg-claude-hover"
+              >
+                取消
+              </button>
+              <button
+                onClick={handleChangePassword}
+                disabled={pwdSaving}
+                className="rounded-lg bg-claude-text px-4 py-1.5 text-[13px] font-medium text-claude-bg disabled:opacity-50"
+              >
+                {pwdSaving ? '保存中…' : '保存'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
-
-  function renderAccount() {
-    const handleChangePassword = async () => {
-      setPwdError(''); setPwdMsg('');
-      if (!pwdCurrent || !pwdNew || !pwdConfirm) { setPwdError('请填写所有字段'); return; }
-      if (pwdNew.length < 6) { setPwdError('新密码至少 6 位'); return; }
-      if (pwdNew !== pwdConfirm) { setPwdError('两次输入的新密码不一致'); return; }
-      setPwdSaving(true);
-      try {
-        await changePassword(pwdCurrent, pwdNew);
-        setPwdMsg('密码修改成功，其他设备已自动登出');
-        setPwdCurrent(''); setPwdNew(''); setPwdConfirm('');
-        setShowPwdForm(false);
-        getSessions().then(data => { setSessions(data.sessions || []); setCurrentSessionId(data.currentSessionId || ''); }).catch(() => { });
-      } catch (e: any) { setPwdError(e.message || '修改失败'); }
-      finally { setPwdSaving(false); }
-    };
-
-    const handleDeleteSession = async (id: string) => {
-      try {
-        await deleteSession(id);
-        setSessions(prev => prev.filter(s => s.id !== id));
-      } catch (e: any) { alert(e.message || '操作失败'); }
-    };
-
-    const handleLogoutOthers = async () => {
-      if (!confirm('确定登出所有其他设备？')) return;
-      try {
-        await logoutOtherSessions();
-        setSessions(prev => prev.filter(s => s.id === currentSessionId));
-      } catch (e: any) { alert(e.message || '操作失败'); }
-    };
-
-    const formatTime = (t: string) => {
-      if (!t) return '';
-      let timeStr = t;
-      // Handle SQLite format (space instead of T)
-      if (timeStr.includes(' ') && !timeStr.includes('T')) {
-        timeStr = timeStr.replace(' ', 'T');
-      }
-      // Handle missing timezone (assume UTC if no Z or offset at end)
-      // Regex checks for Z or +HH:MM or -HH:MM or +HHMM or -HHMM at the end
-      if (!/Z$|[+-]\d{2}:?\d{2}$/.test(timeStr)) {
-        timeStr += 'Z';
-      }
-
-      const d = new Date(timeStr);
-      if (isNaN(d.getTime())) return 'Invalid Date';
-
-      return d.toLocaleString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true
-      });
-    };
-
-    return (
-      <div className="space-y-10 animate-fade-in">
-        {/* 邮箱 */}
-        <section>
-          <h3 className="text-[16px] font-semibold text-claude-text mb-5">账号</h3>
-          <div className="space-y-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">邮箱地址</label>
-                <div className="text-[14px] text-claude-text">{profile?.email || '-'}</div>
-              </div>
-              <div className="flex items-center gap-4 mt-4">
-                <button
-                  type="button"
-                  onClick={(e) => { e.preventDefault(); setShowPwdForm(true); setPwdError(''); setPwdMsg(''); }}
-                  className="text-[13px] text-claude-textSecondary hover:text-claude-text hover:underline transition-colors"
-                >
-                  修改密码
-                </button>
-                <div className="w-[1px] h-3 bg-claude-border"></div>
-                <button
-                  type="button"
-                  onClick={(e) => { e.preventDefault(); setShowDeleteAccount(true); setDeleteError(''); setDeletePassword(''); }}
-                  className="text-[13px] text-[#B9382C] hover:text-[#a02e23] hover:underline transition-colors"
-                >
-                  注销账号
-                </button>
-              </div>
-            </div>
-          </div>
-          {/* Change Password Modal */}
-          {showPwdForm && (
-            <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in"
-              onClick={() => { setShowPwdForm(false); setPwdError(''); setPwdCurrent(''); setPwdNew(''); setPwdConfirm(''); }}>
-              <div className="bg-white dark:bg-[#2B2A29] p-6 rounded-2xl w-full max-w-sm shadow-xl border border-claude-border animate-in zoom-in-95 duration-200"
-                onClick={e => e.stopPropagation()}>
-                <h4 className="text-[18px] font-semibold text-claude-text mb-4">修改密码</h4>
-                {pwdMsg && <div className="p-2 mb-3 bg-green-50 text-green-700 text-[13px] rounded-lg">{pwdMsg}</div>}
-                {pwdError && <div className="p-2 mb-3 bg-red-50 text-red-600 text-[13px] rounded-lg">{pwdError}</div>}
-                <div className="space-y-3">
-                  <input type="password" value={pwdCurrent} onChange={e => setPwdCurrent(e.target.value)}
-                    placeholder="当前密码" className="w-full px-3 py-2 bg-claude-input border border-claude-border rounded-lg text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0] focus:ring-0" />
-                  <input type="password" value={pwdNew} onChange={e => setPwdNew(e.target.value)}
-                    placeholder="新密码（至少 6 位）" className="w-full px-3 py-2 bg-claude-input border border-claude-border rounded-lg text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0] focus:ring-0" />
-                  <input type="password" value={pwdConfirm} onChange={e => setPwdConfirm(e.target.value)}
-                    placeholder="确认新密码" className="w-full px-3 py-2 bg-claude-input border border-claude-border rounded-lg text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0] focus:ring-0" />
-                </div>
-                <div className="flex gap-3 pt-5 justify-end">
-                  <button onClick={(e) => { e.preventDefault(); setShowPwdForm(false); setPwdError(''); setPwdCurrent(''); setPwdNew(''); setPwdConfirm(''); }}
-                    className="px-4 py-2 text-claude-textSecondary hover:bg-claude-hover rounded-lg text-[14px] font-medium transition-colors">
-                    取消
-                  </button>
-                  <button onClick={(e) => { e.preventDefault(); handleChangePassword(); }} disabled={pwdSaving}
-                    className="px-4 py-2 bg-claude-btn-hover text-white text-[14px] font-medium rounded-lg transition-colors disabled:opacity-60">
-                    {pwdSaving ? '保存中...' : '更新密码'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Delete Account Modal */}
-          {showDeleteAccount && (
-            <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fade-in"
-              onClick={() => { setShowDeleteAccount(false); setDeleteError(''); setDeletePassword(''); }}>
-              <div className="bg-white dark:bg-[#2B2A29] p-6 rounded-2xl w-full max-w-sm shadow-xl border border-red-200 dark:border-red-900/30 animate-in zoom-in-95 duration-200"
-                onClick={e => e.stopPropagation()}>
-                <h4 className="text-[18px] font-semibold text-[#B9382C] mb-2">注销账号</h4>
-                <p className="text-[14px] text-claude-textSecondary mb-4">
-                  此操作不可撤销。您的所有数据将被永久删除。
-                </p>
-                {deleteError && <div className="p-2 mb-3 bg-red-50 text-red-600 text-[13px] rounded-lg">{deleteError}</div>}
-                <input type="password" value={deletePassword} onChange={e => setDeletePassword(e.target.value)}
-                  placeholder="输入密码以确认"
-                  className="w-full px-3 py-2 bg-claude-input border border-claude-border rounded-lg text-[14px] text-claude-text focus:outline-none focus:border-[#B9382C] focus:ring-1 focus:ring-[#B9382C]" />
-                <div className="flex gap-3 pt-5 justify-end">
-                  <button onClick={(e) => { e.preventDefault(); setShowDeleteAccount(false); setDeleteError(''); setDeletePassword(''); }}
-                    className="px-4 py-2 text-claude-textSecondary hover:bg-claude-hover rounded-lg text-[14px] font-medium transition-colors">
-                    取消
-                  </button>
-                  <button onClick={async (e) => {
-                    e.preventDefault();
-                    if (!deletePassword) { setDeleteError('请输入密码'); return; }
-                    setDeleting(true); setDeleteError('');
-                    try {
-                      await deleteAccount(deletePassword);
-                      logout();
-                    } catch (e: any) { setDeleteError(e.message || '注销失败'); }
-                    finally { setDeleting(false); }
-                  }} disabled={deleting}
-                    className="px-4 py-2 bg-[#B9382C] hover:bg-[#a02e23] text-white text-[14px] font-medium rounded-lg transition-colors disabled:opacity-60">
-                    {deleting ? '注销中...' : '确认注销'}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-        </section>
-
-        <hr className="border-claude-border" />
-
-        {/* 活跃会话 */}
-        <section>
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-[16px] font-semibold text-claude-text">活跃会话</h3>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-claude-border text-[13px] font-medium text-claude-textSecondary">
-                  <th className="py-2 pb-3 font-medium">设备</th>
-                  <th className="py-2 pb-3 font-medium">地址</th>
-                  <th className="py-2 pb-3 font-medium">创建时间</th>
-                  <th className="py-2 pb-3 font-medium">最近活跃</th>
-                  <th className="py-2 pb-3 font-medium"></th>
-                </tr>
-              </thead>
-              <tbody className="text-[14px] text-claude-text">
-                {sessions.map(s => (
-                  <tr key={s.id} className="border-b border-claude-border last:border-0 group">
-                    <td className="py-3 pr-4 align-middle">
-                      <div className="flex items-center gap-2">
-                        <span className="text-claude-textSecondary flex-shrink-0">
-                          {s.device?.includes('Android') || s.device?.includes('iOS') ? <Smartphone size={16} /> : <MonitorIcon size={16} />}
-                        </span>
-                        <span className="font-medium">{s.device || 'Unknown Device'}</span>
-                        {s.id === currentSessionId && (
-                          <span className="ml-1 text-[11px] px-1.5 py-0.5 rounded-sm bg-neutral-200 dark:bg-neutral-700 text-claude-textSecondary">Current</span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="py-3 pr-4 align-middle text-claude-textSecondary">
-                      {s.location || 'Unknown Location'}
-                    </td>
-                    <td className="py-3 pr-4 align-middle text-claude-textSecondary whitespace-nowrap">
-                      {formatTime(s.created_at || '')}
-                    </td>
-                    <td className="py-3 pr-4 align-middle text-claude-textSecondary whitespace-nowrap">
-                      {formatTime(s.last_active || '')}
-                    </td>
-                    <td className="py-3 align-middle text-right">
-                      {s.id !== currentSessionId && (
-                        <div className="relative">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const rect = e.currentTarget.getBoundingClientRect();
-                              setCtxMenu({ x: rect.right, y: rect.bottom, sessionId: s.id });
-                            }}
-                            className="p-1 rounded text-claude-textSecondary hover:text-claude-text hover:bg-claude-hover transition-colors"
-                          >
-                            <MoreHorizontal size={16} />
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {sessions.length === 0 && (
-              <div className="text-[13px] text-claude-textSecondary py-4 text-center">No active sessions</div>
-            )}
-          </div>
-
-          {/* Right-click context menu */}
-          {ctxMenu && (
-            <>
-              <div className="fixed inset-0 z-50" onClick={() => setCtxMenu(null)} onContextMenu={e => { e.preventDefault(); setCtxMenu(null); }} />
-              <div
-                className="fixed z-50 bg-white dark:bg-[#2B2A29] border border-[#E0DFDC] dark:border-[#3C3C3C] rounded-lg shadow-lg py-1 min-w-[120px] animate-in fade-in zoom-in-95 duration-100"
-                style={{
-                  left: ctxMenu.x - 120, // Align right edge with button
-                  top: ctxMenu.y + 4     // Slightly below button
-                }}>
-                <button onClick={() => { handleDeleteSession(ctxMenu.sessionId); setCtxMenu(null); }}
-                  className="w-full text-left px-4 py-2 text-[13px] text-claude-text hover:bg-[#F5F4F1] dark:hover:bg-[#383838] transition-colors">
-                  退出登录
-                </button>
-              </div>
-            </>
-          )}
-        </section>
-      </div>
-    );
-  }
-
-  function renderGeneral() {
-    const stylesCopy = uiLanguage === 'zh-CN'
-      ? {
-          title: '回答风格',
-          subtitle: '给新对话设一个默认的回答风格，也可以保存你自己的风格模板。',
-          defaultLabel: '默认风格',
-          customTitle: '自定义风格',
-          customEmpty: '还没有自定义风格，下面新建一个就行。',
-          createTitle: '新建风格',
-          name: '风格名称',
-          namePlaceholder: '例如：技术负责人 / 审稿模式',
-          description: '简短说明',
-          descriptionPlaceholder: '这套风格适合什么场景',
-          instructions: '风格说明',
-          instructionsPlaceholder: '例如：先给结论，再列风险和建议；默认用中文，术语保留英文。',
-          save: '保存风格',
-          delete: '删除',
-        }
-      : {
-          title: 'Response style',
-          subtitle: 'Choose the default response style for new chats, and save your own style presets.',
-          defaultLabel: 'Default style',
-          customTitle: 'Custom styles',
-          customEmpty: 'No custom styles yet. Create your first one below.',
-          createTitle: 'Create a style',
-          name: 'Style name',
-          namePlaceholder: 'For example: Tech Lead / Reviewer mode',
-          description: 'Short description',
-          descriptionPlaceholder: 'What this style is best for',
-          instructions: 'Instructions',
-          instructionsPlaceholder: 'For example: lead with the conclusion, then risks and suggestions; default to Chinese, keep technical terms in English.',
-          save: 'Save style',
-          delete: 'Delete',
-        };
-
-    return (
-      <div className="space-y-10 animate-fade-in">
-        {/* Profile Section */}
-        <section>
-          <h3 className="text-[16px] font-semibold text-claude-text mb-5">个人资料</h3>
-
-          <div className="space-y-6">
-            <div className="grid grid-cols-2 gap-6">
-              <div>
-                <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">全名</label>
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-claude-avatar text-claude-avatarText flex items-center justify-center text-[16px] font-medium flex-shrink-0">
-                    {initials}
-                  </div>
-                  <input
-                    type="text"
-                    value={fullName}
-                    onChange={e => setFullName(e.target.value)}
-                    onBlur={() => handleSave(true)}
-                    className="flex-1 px-3 py-2 bg-claude-input border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0] focus:ring-0 transition-all placeholder-claude-textSecondary"
-                    placeholder="输入你的全名"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">Claude 应该怎么称呼你？</label>
-                <input
-                  type="text"
-                  value={displayName}
-                  onChange={e => setDisplayName(e.target.value)}
-                  onBlur={() => handleSave(true)}
-                  className="w-full px-3 py-2 bg-claude-input border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0] focus:ring-0 transition-all placeholder-claude-textSecondary"
-                  placeholder="例如你的名字或昵称"
-                />
-              </div>
-            </div>
-
-            {/* Work Function */}
-            <div>
-              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">你的职业是什么？</label>
-              <div className="relative">
-                <select
-                  value={workFunction}
-                  onChange={e => { setWorkFunction(e.target.value); setTimeout(() => handleSave(true), 100); }}
-                  className="w-full px-3 py-2.5 bg-claude-input border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0] focus:ring-0 transition-all appearance-none cursor-pointer"
-                >
-                  <option value="">选择你的职业</option>
-                  {WORK_OPTIONS.filter(Boolean).map(o => <option key={o} value={o}>{o}</option>)}
-                </select>
-                <ChevronRight size={16} className="absolute right-3 top-1/2 -translate-y-1/2 rotate-90 text-claude-textSecondary pointer-events-none" />
-              </div>
-            </div>
-
-            {/* Personal Preferences */}
-            <div>
-              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1">Claude 在回复中应考虑哪些个人偏好？</label>
-              <p className="text-[12px] text-claude-textSecondary/60 mb-2">你的偏好将应用于所有对话。</p>
-              <textarea
-                value={personalPreferences}
-                onChange={e => setPersonalPreferences(e.target.value)}
-                onBlur={() => handleSave(true)}
-                rows={3}
-                className="w-full px-3 py-2.5 bg-claude-input border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0] focus:ring-0 transition-all resize-none placeholder-claude-textSecondary"
-                placeholder="例如：回答尽量简洁，使用中文，代码注释用英文"
-              />
-            </div>
-
-          </div>
-        </section>
-
-        <hr className="border-claude-border" />
-
-        <section>
-          <div className="flex items-start justify-between gap-6 mb-5">
-            <div>
-              <h3 className="text-[16px] font-semibold text-claude-text">{stylesCopy.title}</h3>
-              <p className="text-[12px] text-claude-textSecondary/70 mt-1">{stylesCopy.subtitle}</p>
-            </div>
-            <div className="min-w-[220px]">
-              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">{stylesCopy.defaultLabel}</label>
-              <div className="relative">
-                <select
-                  value={defaultChatStyle}
-                  onChange={(e) => applyDefaultChatStyle(e.target.value)}
-                  className="w-full px-3 py-2 bg-claude-input border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0] focus:ring-0 appearance-none transition-all"
-                >
-                  {chatStyles.map((style) => (
-                    <option key={style.id} value={style.id}>
-                      {getChatStyleLabel(style, uiLanguage)}
-                    </option>
-                  ))}
-                </select>
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-claude-textSecondary">
-                  <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            {presetChatStyles.map((style) => {
-              const active = defaultChatStyle === style.id;
-              return (
-                <button
-                  key={style.id}
-                  onClick={() => applyDefaultChatStyle(style.id)}
-                  className={`text-left rounded-xl border px-4 py-3 transition-all ${
-                    active
-                      ? 'border-[#3b82f6]/80 bg-blue-500/5 shadow-sm'
-                      : 'border-claude-border bg-claude-input hover:border-claude-textSecondary/30'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-[14px] font-medium text-claude-text">{getChatStyleLabel(style, uiLanguage)}</div>
-                    {active && <Check size={14} className="text-[#3b82f6]" />}
-                  </div>
-                  <p className="text-[12px] text-claude-textSecondary mt-1.5 leading-relaxed">
-                    {getChatStyleDescription(style, uiLanguage)}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="mt-6">
-            <h4 className="text-[14px] font-semibold text-claude-text mb-3">{stylesCopy.customTitle}</h4>
-            {customChatStyles.length > 0 ? (
-              <div className="space-y-3">
-                {customChatStyles.map((style) => (
-                  <div key={style.id} className="rounded-xl border border-claude-border bg-claude-input px-4 py-3">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <div className="text-[14px] font-medium text-claude-text">{style.name}</div>
-                          {defaultChatStyle === style.id && (
-                            <span className="text-[11px] text-[#3b82f6] bg-blue-500/10 px-2 py-0.5 rounded-full">
-                              {stylesCopy.defaultLabel}
-                            </span>
-                          )}
-                        </div>
-                        {style.description && (
-                          <p className="text-[12px] text-claude-textSecondary mt-1">{style.description}</p>
-                        )}
-                        <p className="text-[12px] text-claude-textSecondary/80 mt-2 leading-relaxed whitespace-pre-wrap">
-                          {style.instructions}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          onClick={() => applyDefaultChatStyle(style.id)}
-                          className="px-3 py-1.5 text-[12px] rounded-lg border border-claude-border text-claude-text hover:bg-claude-hover transition-colors"
-                        >
-                          {stylesCopy.defaultLabel}
-                        </button>
-                        <button
-                          onClick={() => handleDeleteStyle(style.id)}
-                          className="px-3 py-1.5 text-[12px] rounded-lg border border-red-500/20 text-red-500 hover:bg-red-500/5 transition-colors"
-                        >
-                          {stylesCopy.delete}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-[12px] text-claude-textSecondary/70 rounded-xl border border-dashed border-claude-border px-4 py-3">
-                {stylesCopy.customEmpty}
-              </div>
-            )}
-          </div>
-
-          <div className="mt-6 rounded-2xl border border-claude-border bg-claude-input px-5 py-5 space-y-4">
-            <h4 className="text-[14px] font-semibold text-claude-text">{stylesCopy.createTitle}</h4>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">{stylesCopy.name}</label>
-                <input
-                  type="text"
-                  value={newStyleName}
-                  onChange={(e) => { setNewStyleName(e.target.value); setStyleError(''); }}
-                  className="w-full px-3 py-2 bg-claude-bg border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0]"
-                  placeholder={stylesCopy.namePlaceholder}
-                />
-              </div>
-              <div>
-                <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">{stylesCopy.description}</label>
-                <input
-                  type="text"
-                  value={newStyleDescription}
-                  onChange={(e) => setNewStyleDescription(e.target.value)}
-                  className="w-full px-3 py-2 bg-claude-bg border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0]"
-                  placeholder={stylesCopy.descriptionPlaceholder}
-                />
-              </div>
-            </div>
-            <div>
-              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">{stylesCopy.instructions}</label>
-              <textarea
-                value={newStyleInstructions}
-                onChange={(e) => { setNewStyleInstructions(e.target.value); setStyleError(''); }}
-                rows={4}
-                className="w-full px-3 py-2.5 bg-claude-bg border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0] resize-none"
-                placeholder={stylesCopy.instructionsPlaceholder}
-              />
-            </div>
-            {styleError && <div className="text-[12px] text-red-500">{styleError}</div>}
-            <div className="flex justify-end">
-              <button
-                onClick={handleCreateStyle}
-                className="px-4 py-2 text-[13px] font-medium rounded-lg bg-claude-text text-claude-bg hover:opacity-90 transition-opacity"
-              >
-                {stylesCopy.save}
-              </button>
-            </div>
-          </div>
-        </section>
-
-        {/* Default Model Section — only for Clawparrot (self-hosted configures in Models tab) */}
-        {localStorage.getItem('user_mode') !== 'selfhosted' && <><hr className="border-claude-border" /><section>
-          <h3 className="text-[16px] font-semibold text-claude-text mb-5">默认模型</h3>
-          <div className="space-y-5">
-            <div>
-              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">新对话默认使用的模型</label>
-              <div className="relative">
-                <select
-                  value={defaultModelBase}
-                  onChange={e => applyDefaultModel(e.target.value, defaultModelIsThinking)}
-                  className="w-full px-3 py-2 bg-claude-input border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0] focus:ring-0 appearance-none transition-all"
-                >
-                  {MODEL_BASES.map(m => (
-                    <option key={m.base} value={m.base}>{m.label}</option>
-                  ))}
-                </select>
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-claude-textSecondary">
-                  <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="text-[13px] font-medium text-claude-textSecondary">扩展思考</div>
-                <div className="text-[12px] text-claude-textSecondary mt-0.5">让模型在回答前进行深度思考</div>
-              </div>
-              <button
-                onClick={() => applyDefaultModel(defaultModelBase, !defaultModelIsThinking)}
-                className={`w-10 h-6 rounded-full relative transition-colors duration-200 ${defaultModelIsThinking ? 'bg-blue-600' : 'bg-[#E5E5E5]'}`}
-              >
-                <div className={`absolute top-1 w-4 h-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${defaultModelIsThinking ? 'left-5' : 'left-1'}`} />
-              </button>
-            </div>
-          </div>
-        </section></>}
-
-        <hr className="border-claude-border" />
-
-        <section>
-          <h3 className="text-[16px] font-semibold text-claude-text mb-5">Interface language</h3>
-          <div className="flex gap-3">
-            {([
-              { value: 'zh-CN', label: 'Chinese' },
-              { value: 'en', label: 'English' },
-            ] as const).map(opt => {
-              const active = uiLanguage === opt.value;
-              return (
-                <button
-                  key={opt.value}
-                  onClick={() => applyLanguage(opt.value)}
-                  className={`flex-1 px-4 py-3 rounded-xl border text-left transition-all ${
-                    active
-                      ? 'border-[#3b82f6]/80 bg-blue-500/5 text-claude-text'
-                      : 'border-claude-border/60 hover:border-claude-textSecondary/20 text-claude-textSecondary'
-                  }`}
-                >
-                  <div className="text-[14px] font-medium">{opt.label}</div>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
-        <section>
-          <h3 className="text-[16px] font-semibold text-claude-text mb-5">Interface density</h3>
-          <div className="flex gap-3">
-            {([
-              { value: 'compact', label: 'Compact', desc: uiLanguage === 'zh-CN' ? '更小字体与更紧凑间距' : 'Smaller type and tighter spacing' },
-              { value: 'comfortable', label: 'Comfortable', desc: uiLanguage === 'zh-CN' ? '默认阅读密度' : 'Default reading density' },
-            ] as const).map(opt => {
-              const active = uiDensity === opt.value;
-              return (
-                <button
-                  key={opt.value}
-                  onClick={() => applyUiDensity(opt.value)}
-                  className={`flex-1 px-4 py-3 rounded-xl border text-left transition-all ${
-                    active
-                      ? 'border-[#3b82f6]/80 bg-blue-500/5 text-claude-text'
-                      : 'border-claude-border/60 hover:border-claude-textSecondary/20 text-claude-textSecondary'
-                  }`}
-                >
-                  <div className="text-[14px] font-medium">{opt.label}</div>
-                  <div className="text-[12px] mt-1 text-claude-textSecondary/70">{opt.desc}</div>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
-        <section>
-          <h3 className="text-[16px] font-semibold text-claude-text mb-5">Agent permissions</h3>
-          <div className="flex gap-3">
-            {([
-              {
-                value: 'workspace_write',
-                label: uiLanguage === 'zh-CN' ? '安全模式' : 'Safe mode',
-                desc: uiLanguage === 'zh-CN' ? '只允许当前工作区文件操作，禁用命令执行' : 'Workspace file access only, shell disabled',
-              },
-              {
-                value: 'project',
-                label: uiLanguage === 'zh-CN' ? '项目权限' : 'Project',
-                desc: uiLanguage === 'zh-CN' ? '允许当前工作区内文件操作和命令执行，不能越界访问全盘' : 'Workspace files and commands only, no system-wide access',
-              },
-              {
-                value: 'full_access',
-                label: uiLanguage === 'zh-CN' ? '完全访问' : 'Full access',
-                desc: uiLanguage === 'zh-CN' ? '允许全盘文件操作与命令执行' : 'System-wide file access and shell commands',
-              },
-            ] as Array<{ value: PermissionMode; label: string; desc: string }>).map(opt => {
-              const active = permissionMode === opt.value;
-              return (
-                <button
-                  key={opt.value}
-                  onClick={() => applyPermissionMode(opt.value)}
-                  className={`flex-1 px-4 py-3 rounded-xl border text-left transition-all ${
-                    active
-                      ? 'border-[#3b82f6]/80 bg-blue-500/5 text-claude-text'
-                      : 'border-claude-border/60 hover:border-claude-textSecondary/20 text-claude-textSecondary'
-                  }`}
-                >
-                  <div className="text-[14px] font-medium">{opt.label}</div>
-                  <div className="text-[12px] mt-1 text-claude-textSecondary/70">{opt.desc}</div>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
-        {/* Send Key Section */}
-        <section>
-          <h3 className="text-[16px] font-semibold text-claude-text mb-5">发送消息</h3>
-          <div className="grid grid-cols-2 gap-6">
-            <div>
-              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">发送消息</label>
-              <div className="relative">
-                <select
-                  value={sendKey}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setSendKey(val);
-                    localStorage.setItem('sendKey', val);
-                    // Smart auto-switch for newline to avoid conflict
-                    if (val === 'enter' && newlineKey === 'enter') {
-                      setNewlineKey('shift_enter');
-                      localStorage.setItem('newlineKey', 'shift_enter');
-                    } else if (val === 'ctrl_enter' && newlineKey === 'ctrl_enter') {
-                      setNewlineKey('enter');
-                      localStorage.setItem('newlineKey', 'enter');
-                    }
-                  }}
-                  className="w-full px-3 py-2 bg-claude-input border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0] focus:ring-0 appearance-none transition-all"
-                >
-                  <option value="enter">Enter</option>
-                  <option value="ctrl_enter">Ctrl+Enter</option>
-                  <option value="cmd_enter">Cmd+Enter</option>
-                  <option value="alt_enter">Alt+Enter</option>
-                </select>
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-claude-textSecondary">
-                  <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-[13px] font-medium text-claude-textSecondary mb-1.5">换行</label>
-              <div className="relative">
-                <select
-                  value={newlineKey}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    setNewlineKey(val);
-                    localStorage.setItem('newlineKey', val);
-                  }}
-                  className="w-full px-3 py-2 bg-claude-input border border-claude-border rounded-md text-[14px] text-claude-text focus:outline-none focus:border-[#387ee0] focus:ring-0 appearance-none transition-all"
-                >
-                  <option value="enter">Enter</option>
-                  <option value="shift_enter">Shift+Enter</option>
-                  <option value="ctrl_enter">Ctrl+Enter</option>
-                  <option value="alt_enter">Alt+Enter</option>
-                </select>
-                <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-claude-textSecondary">
-                  <svg width="10" height="6" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <hr className="border-claude-border" />
-
-        {/* Appearance Section */}
-        <section>
-          <h3 className="text-[16px] font-semibold text-claude-text mb-5">外观</h3>
-
-          <div className="space-y-6">
-            <div>
-              <label className="block text-[13px] font-medium text-claude-textSecondary mb-2">颜色模式</label>
-              <div className="flex gap-3">
-                {([
-                  { value: 'light', label: 'Light' },
-                  { value: 'auto', label: 'Auto' },
-                  { value: 'dark', label: 'Dark' },
-                ] as const).map(opt => (
-                  <button
-                    key={opt.value}
-                    onClick={() => applyTheme(opt.value)}
-                    className="group flex flex-col items-center gap-3"
-                  >
-                    <div className={`
-                      w-32 h-20 rounded-lg border transition-all relative overflow-hidden flex flex-col shadow-sm
-                      ${theme === opt.value
-                        ? 'border-[#3b82f6]/80 scale-[1.02]'
-                        : 'border-claude-border group-hover:border-[#CCC]'
-                      }
-                    `}>
-                      {/* Theme Preview Content */}
-                      {opt.value === 'light' && (
-                        <div className="flex-1 bg-[#F5F4F1] p-2 flex flex-col gap-1.5">
-                          <div className="flex justify-end mb-0.5">
-                            <div className="w-10 h-2.5 bg-[#E3E3E0] rounded-full"></div>
-                          </div>
-                          <div className="w-12 h-1 bg-[#E3E3E0] rounded-full mb-0.5"></div>
-                          <div className="w-16 h-1 bg-[#E3E3E0] rounded-full"></div>
-                          <div className="mt-auto bg-white rounded border border-[#E3E3E0] h-6 w-full flex items-center justify-end px-1">
-                            <div className="w-2 h-2 bg-[#D97757] rounded-full"></div>
-                          </div>
-                        </div>
-                      )}
-
-                      {opt.value === 'dark' && (
-                        <div className="flex-1 bg-[#1F1F1E] p-2 flex flex-col gap-1.5">
-                          <div className="flex justify-end mb-0.5">
-                            <div className="w-10 h-2.5 bg-[#404040] rounded-full"></div>
-                          </div>
-                          <div className="w-12 h-1 bg-[#404040] rounded-full mb-0.5"></div>
-                          <div className="w-16 h-1 bg-[#404040] rounded-full"></div>
-                          <div className="mt-auto bg-[#30302E] rounded border border-[#323130] h-6 w-full flex items-center justify-end px-1">
-                            <div className="w-2 h-2 bg-[#D97757] rounded-full"></div>
-                          </div>
-                        </div>
-                      )}
-
-                      {opt.value === 'auto' && (
-                        <div className="flex-1 flex w-full h-full">
-                          <div className="w-1/2 bg-[#555] p-2 flex flex-col gap-1.5 border-r border-white/10">
-                            <div className="w-8 h-1 bg-white/20 rounded-full mb-0.5"></div>
-                            <div className="w-10 h-1 bg-white/20 rounded-full"></div>
-                            <div className="mt-auto bg-white/90 rounded h-6 w-[140%] -ml-1 flex items-center px-1 z-10 shadow-sm">
-                            </div>
-                          </div>
-                          <div className="w-1/2 bg-[#2C2C2C] p-2 flex flex-col gap-1.5">
-                            <div className="flex justify-end">
-                              <div className="w-8 h-2.5 bg-[#404040] rounded-full"></div>
-                            </div>
-                            <div className="mt-auto h-6 w-[120%] -ml-4 flex items-center justify-end px-1 z-0">
-                              <div className="w-2 h-2 bg-[#D97757] rounded-full translate-x-3"></div>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                    <span className={`text-[15px] ${theme === opt.value ? 'text-claude-text font-medium' : 'text-claude-textSecondary'}`}>
-                      {opt.label}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Chat Font - kept for feature parity even if not in screenshot */}
-            <div>
-              <label className="block text-[13px] font-medium text-claude-textSecondary mb-2">聊天字体</label>
-              <div className="flex gap-3">
-                {([
-                  { value: 'default', label: '默认', sample: 'Aa', font: 'font-serif-claude' },
-                  { value: 'sans', label: 'Sans', sample: 'Aa', font: 'font-sans' },
-                  { value: 'system', label: '系统', sample: 'Aa', font: 'font-system' }, // approximations for preview
-                  { value: 'dyslexic', label: '阅读障碍', sample: 'Aa', font: 'font-serif' },
-                ] as const).map(opt => (
-                  <button
-                    key={opt.value}
-                    onClick={() => applyFont(opt.value)}
-                    className={`
-                      w-32 flex flex-col items-center gap-2 py-3 px-2 rounded-lg border transition-all
-                      ${chatFont === opt.value
-                        ? 'border-[#3b82f6]/80 scale-[1.02] bg-claude-input text-claude-text shadow-sm'
-                        : 'border-claude-border bg-claude-input hover:border-[#CCC] text-claude-textSecondary hover:text-claude-text'
-                      }
-                    `}
-                  >
-                    <span className={`text-[20px] leading-none mb-1 ${opt.font}`}>
-                      {opt.sample}
-                    </span>
-                    <span className={`text-[13px] ${chatFont === opt.value ? 'font-medium' : ''}`}>
-                      {opt.label}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <hr className="border-claude-border" />
-
-        {/* User Mode Switch */}
-        <section>
-          <h3 className="text-[16px] font-semibold text-claude-text mb-5">用户模式</h3>
-          <div className="flex gap-3">
-            {([
-              { value: 'selfhosted', label: '自行部署', desc: '使用自己的 API Key' },
-              { value: 'clawparrot', label: 'Clawparrot', desc: '使用托管 API 服务' },
-            ] as const).map(opt => {
-              const current = localStorage.getItem('user_mode') || 'selfhosted';
-              const active = current === opt.value;
-              return (
-                <button
-                  key={opt.value}
-                  onClick={() => {
-                    localStorage.setItem('user_mode', opt.value);
-                    if (opt.value === 'clawparrot') {
-                      // Check if logged in, if not redirect
-                      const hasKey = localStorage.getItem('ANTHROPIC_API_KEY') && localStorage.getItem('gateway_user');
-                      if (!hasKey) {
-                        window.location.hash = '#/login';
-                      }
-                    }
-                    window.location.reload();
-                  }}
-                  className={`flex-1 px-4 py-3 rounded-xl border text-left transition-all ${active ? 'border-[#3b82f6]/80 bg-blue-500/5' : 'border-claude-border/60 hover:border-claude-textSecondary/20'
-                    }`}
-                >
-                  <div className={`text-[14px] font-medium ${active ? 'text-claude-text' : 'text-claude-textSecondary'}`}>{opt.label}</div>
-                  <div className="text-[12px] text-claude-textSecondary/60 mt-0.5">{opt.desc}</div>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
-        <hr className="border-claude-border" />
-
-        {/* About Section */}
-        <section>
-          <h3 className="text-[16px] font-semibold text-claude-text mb-3">关于</h3>
-          <div className="flex items-center justify-between py-2">
-            <span className="text-[14px] text-claude-textSecondary">当前版本</span>
-            <span className="text-[14px] font-mono text-claude-text">v{__APP_VERSION__}</span>
-          </div>
-        </section>
-      </div>
-    );
-  }
-
-  function renderUsage() {
-    if (!usage) {
-      return <div className="text-[14px] text-[#999] py-8">正在加载用量数据...</div>;
-    }
-
-    const tokenQuota = Number(usage.token_quota) || 0;
-    const tokenUsed = Number(usage.token_used) || 0;
-    const tokenRemaining = Number(usage.token_remaining) || 0;
-    const usagePercent = Number(usage.usage_percent) || 0;
-    const storageQuota = Number(usage.storage_quota) || 0;
-    const storageUsed = Number(usage.storage_used) || 0;
-    const storagePercent = Number(usage.storage_percent) || 0;
-    const plan = usage.plan;
-    const messages = usage.messages;
-    const quota = usage.quota;
-
-    const formatDollar = (n: number) => {
-      return `$${n.toFixed(2)}`;
-    };
-
-    const formatBytes = (n: number) => {
-      if (n >= 1073741824) return `${(n / 1073741824).toFixed(1)} GB`;
-      if (n >= 1048576) return `${(n / 1048576).toFixed(1)} MB`;
-      if (n >= 1024) return `${(n / 1024).toFixed(0)} KB`;
-      return `${n} B`;
-    };
-
-    const daysRemaining = plan?.expires_at
-      ? Math.max(0, Math.ceil((new Date(plan.expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
-      : 0;
-
-    const formatTimeLeft = (isoStr: string | null) => {
-      if (!isoStr) return '';
-      const diff = new Date(isoStr).getTime() - Date.now();
-      if (diff <= 0) return '即将重置';
-      const hours = Math.floor(diff / 3600000);
-      const mins = Math.floor((diff % 3600000) / 60000);
-      if (hours > 0) return `${hours}小时${mins}分钟后重置`;
-      return `${mins}分钟后重置`;
-    };
-
-    const formatResetDate = (isoStr: string | null) => {
-      if (!isoStr) return '';
-      const d = new Date(isoStr);
-      const diff = d.getTime() - Date.now();
-      if (diff <= 0) return '即将重置';
-      return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')} 重置`;
-    };
-
-    const renderLimitItem = (title: string, used: number, limit: number, subtitle: string) => {
-      const pct = limit > 0 ? Math.min((used / limit) * 100, 100) : 0;
-      const isLow = pct < 50;
-      const isMedium = pct >= 50 && pct < 80;
-      const isHigh = pct >= 80;
-
-      return (
-        <div className="py-4 border-b border-claude-border last:border-0">
-          <div className="flex items-start justify-between mb-2">
-            <div>
-              <div className="text-[14px] font-medium text-claude-text mb-1">{title}</div>
-              <div className="text-[13px] text-claude-textSecondary">{subtitle}</div>
-            </div>
-            <div className="text-[14px] text-claude-textSecondary font-medium">
-              {Math.round(pct)}% 已使用
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="flex-1 h-2 bg-claude-border rounded-full overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all duration-500 ease-out ${isHigh ? 'bg-[#D93025]' : 'bg-[#3b82f6]'
-                  }`}
-                style={{ width: `${pct}%` }}
-              />
-            </div>
-          </div>
-        </div>
-      );
-    };
-
-    return (
-      <div className="space-y-8 animate-fade-in">
-        <section>
-          <h3 className="text-[16px] font-semibold text-claude-text mb-5">使用量</h3>
-
-          <div className="space-y-6">
-            {/* Plan info */}
-            <div className="p-4 bg-claude-bg border border-claude-border rounded-xl shadow-sm">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-[15px] font-semibold text-claude-text">
-                  {plan ? plan.name : '免费套餐'}
-                </span>
-                <span className={`px-2 py-0.5 text-[11px] font-medium rounded-full ${plan ? 'bg-[#4B9C68]/10 text-[#4B9C68]' : 'bg-claude-hover text-claude-textSecondary'
-                  }`}>
-                  {plan ? '生效中' : '免费'}
-                </span>
-              </div>
-              {plan ? (
-                <p className="text-[13px] text-claude-textSecondary">到期时间：{plan.expires_at?.slice(0, 10)}（剩余 {daysRemaining} 天）</p>
-              ) : (
-                <p className="text-[13px] text-claude-textSecondary">您当前没有活跃套餐</p>
-              )}
-            </div>
-
-            {/* Quota Progress Bars */}
-            {quota && (
-              <div className="space-y-6">
-                <div>
-                  <h4 className="text-[16px] font-semibold text-claude-text mb-1">套餐用量限制</h4>
-
-                  {/* Window (5h) */}
-                  {quota.window.limit > 0 && renderLimitItem(
-                    '当前5h窗口',
-                    quota.window.used,
-                    quota.window.limit,
-                    formatTimeLeft(quota.window.resetAt)
-                  )}
-                </div>
-
-                <div>
-                  {/* Weekly */}
-                  {quota.week.limit > 0 && renderLimitItem(
-                    '每周限额',
-                    quota.week.used,
-                    quota.week.limit,
-                    formatResetDate(quota.week.resetAt)
-                  )}
-
-                  {renderLimitItem(
-                    '每月 / 总计',
-                    quota.total.used,
-                    quota.total.limit,
-                    '基于套餐额度'
-                  )}
-                </div>
-              </div>
-            )}
-            {/* Fallback & Other Stats */}
-            {!quota && (
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[13px] font-medium text-claude-text">额度</span>
-                  <span className="text-[13px] text-claude-textSecondary">
-                    已使用 {usagePercent.toFixed(2)}%
-                  </span>
-                </div>
-                <div className="h-2 bg-claude-border rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all duration-500 ease-out"
-                    style={{
-                      width: `${Math.min(usagePercent, 100)}%`,
-                      backgroundColor: usagePercent > 90 ? '#D93025' : usagePercent > 70 ? '#F9AB00' : '#D97757',
-                    }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Storage Usage — only show on web, not in Electron (app files are local) */}
-            {!(window as any).electronAPI?.isElectron && (
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-[13px] font-medium text-claude-text">存储空间</span>
-                  <span className="text-[13px] text-claude-textSecondary">
-                    已使用 {formatBytes(storageUsed)} / {formatBytes(storageQuota)}
-                  </span>
-                </div>
-                <div className="h-2 bg-claude-border rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all duration-500 ease-out"
-                    style={{
-                      width: `${Math.min(storagePercent, 100)}%`,
-                      backgroundColor: storagePercent > 90 ? '#D93025' : storagePercent > 70 ? '#F9AB00' : '#1A73E8',
-                    }}
-                  />
-                </div>
-                <div className="flex justify-between mt-1.5">
-                  <span className="text-[12px] text-claude-textSecondary">已使用 {storagePercent}%</span>
-                  <span className="text-[12px] text-claude-textSecondary">剩余 {formatBytes(storageQuota - storageUsed)}</span>
-                </div>
-              </div>
-            )}
-
-            {/* Message Stats */}
-            {messages && (
-              <div className="flex gap-4">
-                <div className="flex-1 p-3 bg-claude-bg border border-claude-border rounded-xl text-center">
-                  <div className="text-[20px] font-semibold text-claude-text">{messages.today}</div>
-                  <div className="text-[12px] text-claude-textSecondary">今日消息</div>
-                </div>
-                <div className="flex-1 p-3 bg-claude-bg border border-claude-border rounded-xl text-center">
-                  <div className="text-[20px] font-semibold text-claude-text">{messages.month}</div>
-                  <div className="text-[12px] text-claude-textSecondary">本月消息</div>
-                </div>
-              </div>
-            )}
-          </div>
-        </section>
-      </div>
-    );
-  };
-}
+};
 
 export default SettingsPage;
-

@@ -1291,6 +1291,11 @@ const CodePage = () => {
                 <div className={`mb-2 rounded-md border px-3 py-2 text-[12px] leading-5 ${permissionMode === 'full_access' ? 'border-[#C6613F]/30 bg-[#C6613F]/10 text-[#C6613F]' : permissionMode === 'project' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-500' : 'border-claude-border bg-claude-input text-claude-textSecondary'}` }>
                   {getPermissionCopy(permissionMode, isZh).desc}
                 </div>
+                <div className="mb-2 rounded-md border border-claude-border bg-claude-input px-3 py-2 text-[11px] leading-5 text-claude-textSecondary">
+                  {isZh
+                    ? '这里是命令控制台，不是聊天输入框。适合输入 dir、git status、npm test 这类终端命令；如果想让模型分析代码，请回到“聊天”页并把工作区内容附加进去。'
+                    : 'This is the command console, not a chat box. Use it for commands like dir, git status, or npm test. If you want model analysis, go back to Chat and attach workspace context there.'}
+                </div>
                 <textarea
                   value={command}
                   onChange={(e) => setCommand(e.target.value)}

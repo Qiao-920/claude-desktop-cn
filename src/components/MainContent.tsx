@@ -18,7 +18,7 @@ import DocumentCreationProcess, { DocumentDraftInfo } from './DocumentCreationPr
 import CodeExecution from './CodeExecution';
 import ToolDiffView, { shouldUseDiffView, hasExpandableContent, getToolStats } from './ToolDiffView';
 import { executeCode, sendCodeResult, setStatusCallback } from '../pyodideRunner';
-import { UiLanguage, useClientLanguageText } from '../utils/chineseClientText';
+import { UiLanguage, getStoredUiLanguage, useClientLanguageText } from '../utils/chineseClientText';
 import { CHAT_STYLES_EVENT, ChatStyle, clearConversationChatStyleId, getAllChatStyles, getChatStyleDescription, getChatStyleLabel, getDefaultChatStyleId, getEffectiveChatStyle, setConversationChatStyleId } from '../utils/chatStyles';
 
 function formatChatError(err: string): string {
@@ -38,18 +38,63 @@ function formatChatError(err: string): string {
   return 'Error: ' + err;
 }
 
+const SKILL_SUMMARIES_ZH: Record<string, string> = {
+  'code-review': '用于代码审查，重点查找 bug、风险点、回归问题和缺失测试。',
+  'create-project': '用于快速搭建项目骨架、初始化目录和常见开发模板。',
+  'doc-writer': '用于撰写文档、说明书、需求稿、操作指引和交付材料。',
+  'frontend-design': '用于页面设计、前端视觉优化和交互界面实现。',
+  'skill-creator': '用于创建或改造 skill，让客户端具备新的专项能力。',
+  'find-skills': '用于查找现有可用 skill，帮你判断该用哪一个更合适。',
+  'generate-import-html': '用于生成结构化 HTML，适合导入或内容整理场景。',
+  'ui-ux-pro-max': '用于系统化优化 UI / UX，包括布局、配色、交互和细节体验。',
+  'github': '用于处理 GitHub 仓库、PR、Issue 和代码协作流程。',
+  'gh-fix-ci': '用于排查 GitHub Actions / CI 失败并定位修复方向。',
+  'gh-address-comments': '用于处理 PR 审查意见并逐条落实修改。',
+  'yeet': '用于把本地改动整理、提交并推送到 GitHub。',
+  'openai-docs': '用于查询 OpenAI 官方文档和最新接口说明。',
+  'plugin-creator': '用于创建插件骨架，给客户端加新的扩展能力。',
+  'excel': '用于处理 Excel / CSV 表格，做计算、整理、格式化和导出。',
+  'powerpoint': '用于制作或修改 PPT，并导出展示材料。',
+  imagegen: '用于生成图片、做视觉草图或编辑已有位图素材。',
+};
+
+function normalizeSkillKey(value?: string) {
+  return String(value || '')
+    .trim()
+    .replace(/^\/+/, '')
+    .toLowerCase()
+    .replace(/\s+/g, '-');
+}
+
+function getSkillSummaryZh(value?: string, description?: string) {
+  const key = normalizeSkillKey(value);
+  if (SKILL_SUMMARIES_ZH[key]) return SKILL_SUMMARIES_ZH[key];
+  if (description && /[\u4e00-\u9fff]/.test(description)) return description;
+  if (value) return `用于 ${String(value).replace(/[-_]/g, ' ')} 相关任务。`;
+  return '用于处理专项任务的扩展技能。';
+}
+
 // Blue skill tag shown in chat messages (hover shows tooltip)
 const SkillTag: React.FC<{ slug: string; description?: string }> = ({ slug, description }) => {
   const [hover, setHover] = useState(false);
+  const isZh = getStoredUiLanguage() === 'zh-CN';
+  const summary = isZh ? getSkillSummaryZh(slug, description) : (description || 'A specialized skill for focused tasks.');
   return (
     <span className="relative inline" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
       <span className={`text-[#4B9EFA] font-medium cursor-default transition-colors ${hover ? 'bg-[#4B9EFA]/10 rounded px-0.5 -mx-0.5' : ''}`}>
         /{slug}
       </span>
-      {hover && description && (
-        <div className="absolute left-0 top-full mt-2 w-[240px] p-3 bg-claude-input border border-claude-border rounded-xl shadow-lg z-[100] pointer-events-none">
-          <div className="text-[12px] text-claude-textSecondary leading-snug mb-1.5">{description.length > 150 ? description.slice(0, 150) + '...' : description}</div>
-          <div className="text-[11px] text-claude-textSecondary/60">Skill</div>
+      {hover && (
+        <div className="absolute left-0 top-full mt-2 w-[260px] p-3 bg-claude-input border border-claude-border rounded-xl shadow-lg z-[100] pointer-events-none">
+          <div className="text-[12px] text-claude-textSecondary leading-snug mb-1.5">
+            {summary.length > 150 ? `${summary.slice(0, 150)}...` : summary}
+          </div>
+          {isZh && description && !/[\u4e00-\u9fff]/.test(description) && (
+            <div className="text-[11px] text-claude-textSecondary/70 leading-snug mb-1.5">
+              {description.length > 120 ? `${description.slice(0, 120)}...` : description}
+            </div>
+          )}
+          <div className="text-[11px] text-claude-textSecondary/60">{isZh ? '技能' : 'Skill'}</div>
         </div>
       )}
     </span>
@@ -165,6 +210,7 @@ const ChatStyleSelector: React.FC<{
 
 const CompactingStatus = () => {
   const [progress, setProgress] = useState(0);
+  const isZh = getStoredUiLanguage() === 'zh-CN';
 
   useEffect(() => {
     // Fake progress animation
@@ -182,8 +228,8 @@ const CompactingStatus = () => {
 
   return (
     <div className="flex flex-col justify-center ml-2">
-      <div className="text-[#404040] dark:text-[#d1d5db] font-serif italic text-[17px] leading-relaxed mb-1">
-        Compacting our conversation so we can keep chatting...
+      <div className="text-[#404040] dark:text-[#d1d5db] font-serif italic text-[15px] leading-relaxed mb-1">
+        {isZh ? '正在压缩对话上下文，给后续回复腾出空间……' : 'Compacting our conversation so we can keep chatting...'}
       </div>
       <div className="flex items-center gap-3">
         <div className="w-48 h-1.5 bg-[#EAE8E1] dark:bg-white/10 rounded-full overflow-hidden">
@@ -796,7 +842,9 @@ const MessageList = React.memo<MessageListProps>(({
                       return (
                         <div className="bg-[#F0EEE7] dark:bg-claude-btnHover rounded-b-2xl px-3.5 pb-3 pt-1 -mt-[1px] relative" style={{ borderTopLeftRadius: 0, borderTopRightRadius: 0 }}>
                           <button onClick={() => onToggleExpand(idx)} className="text-[13px] text-claude-textSecondary hover:text-claude-text transition-colors">
-                            {expandedMessages.has(idx) ? 'Show less' : 'Show more'}
+                            {expandedMessages.has(idx)
+                              ? (uiLanguage === 'zh-CN' ? '收起' : 'Show less')
+                              : (uiLanguage === 'zh-CN' ? '展开更多' : 'Show more')}
                           </button>
                         </div>
                       );
@@ -841,7 +889,7 @@ const MessageList = React.memo<MessageListProps>(({
                         const lines = text.split('\n').filter((l: string) => l.trim());
                         const last = lines[lines.length - 1] || '';
                         const summary = last.length > 40 ? last.slice(0, 40) + '...' : last;
-                        return summary || 'Thinking...';
+                        return summary || (uiLanguage === 'zh-CN' ? '思考中…' : 'Thinking...');
                       })()}
                     </span>
                     <ChevronDown size={14} className={`transform transition-transform duration-200 ${msg.isThinkingExpanded ? 'rotate-180' : ''}`} />
@@ -872,7 +920,9 @@ const MessageList = React.memo<MessageListProps>(({
                           return (
                             <div className="pt-1">
                               <button onClick={() => onToggleExpand(idx)} className="text-[13px] text-claude-text hover:text-claude-textSecondary transition-colors font-medium">
-                                {expandedMessages.has(idx) ? 'Show less' : 'Show more'}
+                                {expandedMessages.has(idx)
+                                  ? (uiLanguage === 'zh-CN' ? '收起' : 'Show less')
+                                  : (uiLanguage === 'zh-CN' ? '展开更多' : 'Show more')}
                               </button>
                             </div>
                           );
@@ -881,7 +931,7 @@ const MessageList = React.memo<MessageListProps>(({
                       {!msg.isThinking && (
                         <div className="flex items-center gap-2 mt-2 text-claude-textSecondary">
                           <Check size={16} />
-                          <span className="text-[14px]">Done</span>
+                          <span className="text-[14px]">{uiLanguage === 'zh-CN' ? '完成' : 'Done'}</span>
                         </div>
                       )}
                     </div>
@@ -902,8 +952,10 @@ const MessageList = React.memo<MessageListProps>(({
                   <div className="text-left">
                     <div className="text-[12.5px] font-medium text-[#2E7CF6] leading-tight">
                       {msg.research.completed
-                        ? `Research complete · ${(msg.research.sources || []).length} sources`
-                        : msg.research.phase_label || 'Researching...'}
+                        ? (uiLanguage === 'zh-CN'
+                          ? `研究完成 · ${(msg.research.sources || []).length} 个来源`
+                          : `Research complete · ${(msg.research.sources || []).length} sources`)
+                        : msg.research.phase_label || (uiLanguage === 'zh-CN' ? '研究中…' : 'Researching...')}
                     </div>
                     {msg.research.plan?.title && (
                       <div className="text-[11px] text-[#2E7CF6]/70 leading-tight mt-0.5 truncate max-w-[400px]">
@@ -1079,7 +1131,7 @@ const MessageList = React.memo<MessageListProps>(({
                         {allDone && !isCurrentlyStreaming && (
                           <div className="flex items-center gap-2 text-claude-textSecondary pt-1 pb-1">
                             <Check size={14} />
-                            <span className="text-[13px]">Done</span>
+                            <span className="text-[13px]">{uiLanguage === 'zh-CN' ? '完成' : 'Done'}</span>
                           </div>
                         )}
                       </div>
@@ -1088,10 +1140,10 @@ const MessageList = React.memo<MessageListProps>(({
                 );
               })()}
               {msg.searchStatus && (!msg.searchLogs || msg.searchLogs.length === 0) && (!msg.content || msg.content.length === (msg._contentLenBeforeSearch || 0)) && loading && idx === messages.length - 1 && (
-                <div className="flex items-center justify-center gap-2 text-[15px] font-medium mb-4 w-full">
+                <div className="flex items-center justify-center gap-2 text-[14px] font-medium mb-4 w-full">
                   <Globe size={18} className="text-claude-textSecondary" />
                   <span className="animate-shimmer-text">
-                    Searching the web
+                    {uiLanguage === 'zh-CN' ? '正在搜索网页' : 'Searching the web'}
                   </span>
                 </div>
               )}
@@ -2718,7 +2770,12 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
         }
         if (event === 'compaction_done') {
           if (data && data.messagesCompacted > 0) {
-            setCompactStatus({ state: 'done', message: `Compacted ${data.messagesCompacted} messages, saved ~${data.tokensSaved} tokens` });
+            setCompactStatus({
+              state: 'done',
+              message: uiLanguage === 'zh-CN'
+                ? `已压缩 ${data.messagesCompacted} 条消息，约节省 ${data.tokensSaved} tokens`
+                : `Compacted ${data.messagesCompacted} messages, saved ~${data.tokensSaved} tokens`,
+            });
             setTimeout(() => setCompactStatus({ state: 'idle' }), 4000);
           } else {
             setCompactStatus({ state: 'idle' });
@@ -2729,7 +2786,12 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
           const meta = data?.compact_metadata || {};
           const preTokens = meta.pre_tokens || 0;
           const saved = preTokens ? Math.round(preTokens * 0.7) : 0;
-          setCompactStatus({ state: 'done', message: saved > 0 ? `Auto-compacted, saved ~${saved} tokens` : 'Context auto-compacted' });
+          setCompactStatus({
+            state: 'done',
+            message: uiLanguage === 'zh-CN'
+              ? (saved > 0 ? `系统已自动压缩上下文，约节省 ${saved} tokens` : '系统已自动压缩上下文')
+              : (saved > 0 ? `Auto-compacted, saved ~${saved} tokens` : 'Context auto-compacted'),
+          });
           setTimeout(() => setCompactStatus({ state: 'idle' }), 4000);
           // Reload messages to reflect compacted state
           if (activeId) {
@@ -3795,7 +3857,11 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                     ref={inputRef}
                     className={`w-full pl-5 pr-4 pt-5 pb-1 placeholder:text-claude-textSecondary text-[16px] outline-none resize-none overflow-hidden bg-transparent font-sans font-[350] ${inputText.match(/^\/[a-zA-Z0-9_-]+/) ? 'text-transparent caret-claude-text' : 'text-claude-text'}`}
                     style={{ minHeight: '48px', borderRadius: `${tunerConfig?.inputRadius || 16}px ${tunerConfig?.inputRadius || 16}px 0 0` }}
-                    placeholder={selectedSkill ? `Describe what you want ${selectedSkill.name} to do...` : "How can I help you today?"}
+                    placeholder={selectedSkill
+                      ? (uiLanguage === 'zh-CN'
+                        ? `告诉我想让 ${selectedSkill.name} 帮你做什么……`
+                        : `Describe what you want ${selectedSkill.name} to do...`)
+                      : (uiLanguage === 'zh-CN' ? '今天想让我帮你做什么？' : 'How can I help you today?')}
                     value={inputText}
                     onChange={(e) => {
                       setInputText(e.target.value);
@@ -3841,7 +3907,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                         className="w-full flex items-center gap-3 px-4 py-2.5 text-[13px] text-claude-text hover:bg-claude-hover transition-colors"
                       >
                         <Paperclip size={16} className="text-claude-textSecondary" />
-                        Add files or photos
+                        {uiLanguage === 'zh-CN' ? '添加文件或图片' : 'Add files or photos'}
                       </button>
                       <button
                         onMouseEnter={() => { setShowSkillsSubmenu(false); setShowProjectsSubmenu(false); }}
@@ -3849,7 +3915,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                         className="w-full flex items-center gap-3 px-4 py-2.5 text-[13px] text-claude-text hover:bg-claude-hover transition-colors"
                       >
                         <Github size={16} className="text-claude-textSecondary" />
-                        Add from GitHub
+                        {uiLanguage === 'zh-CN' ? '从 GitHub 添加' : 'Add from GitHub'}
                       </button>
                       {/* Add to project submenu */}
                       <div className="relative" onMouseLeave={() => setShowProjectsSubmenu(false)}>
@@ -3860,7 +3926,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                         >
                           <div className="flex items-center gap-3">
                             <IconProjects size={16} className="text-claude-textSecondary scale-[1.6] dark:[filter:brightness(0)_invert(1)_brightness(0.68)_sepia(0.18)]" />
-                            Add to project
+                            {uiLanguage === 'zh-CN' ? '添加到项目' : 'Add to project'}
                           </div>
                           <ChevronDown size={14} className="text-claude-textSecondary -rotate-90" />
                         </button>
@@ -3882,7 +3948,9 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                                 </button>
                               );
                             }) : (
-                              <div className="px-4 py-2 text-[12px] text-claude-textSecondary italic">No projects yet</div>
+                              <div className="px-4 py-2 text-[12px] text-claude-textSecondary italic">
+                                {uiLanguage === 'zh-CN' ? '还没有项目' : 'No projects yet'}
+                              </div>
                             )}
                             <div className="border-t border-claude-border mt-1 pt-1">
                               <button
@@ -3896,7 +3964,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                                 className="w-full flex items-center gap-3 px-4 py-2 text-[13px] text-claude-textSecondary hover:bg-claude-hover transition-colors"
                               >
                                 <Plus size={14} />
-                                Start a new project
+                                {uiLanguage === 'zh-CN' ? '新建项目' : 'Start a new project'}
                               </button>
                             </div>
                           </div>
@@ -3910,7 +3978,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                         >
                           <div className="flex items-center gap-3">
                             <FileText size={16} className="text-claude-textSecondary" />
-                            Skills
+                            {uiLanguage === 'zh-CN' ? '技能' : 'Skills'}
                           </div>
                           <ChevronDown size={14} className="text-claude-textSecondary -rotate-90" />
                         </button>
@@ -3926,12 +3994,18 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                                   setInputText(prev => prev ? `/${slug} ${prev}` : `/${slug} `);
                                   inputRef.current?.focus();
                                 }}
-                                className="w-full text-left px-4 py-2 text-[13px] text-claude-text hover:bg-claude-hover transition-colors truncate"
+                                title={uiLanguage === 'zh-CN' ? getSkillSummaryZh(skill.name, skill.description) : (skill.description || skill.name)}
+                                className="w-full text-left px-4 py-2.5 text-[13px] text-claude-text hover:bg-claude-hover transition-colors"
                               >
-                                {skill.name}
+                                <div className="font-medium truncate">{skill.name}</div>
+                                <div className="mt-1 text-[11px] leading-4 text-claude-textSecondary whitespace-normal">
+                                  {uiLanguage === 'zh-CN' ? getSkillSummaryZh(skill.name, skill.description) : (skill.description || 'Specialized skill')}
+                                </div>
                               </button>
                             )) : (
-                              <div className="px-4 py-2 text-[12px] text-claude-textSecondary italic">No skills enabled</div>
+                              <div className="px-4 py-2 text-[12px] text-claude-textSecondary italic">
+                                {uiLanguage === 'zh-CN' ? '暂无启用技能' : 'No skills enabled'}
+                              </div>
                             )}
                             <div className="border-t border-claude-border mt-1 pt-1">
                               <button
@@ -3939,7 +4013,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                                 className="w-full flex items-center gap-3 px-4 py-2 text-[13px] text-claude-textSecondary hover:bg-claude-hover transition-colors"
                               >
                                 <FileText size={14} />
-                                Manage skills
+                                {uiLanguage === 'zh-CN' ? '管理技能' : 'Manage skills'}
                               </button>
                             </div>
                           </div>
@@ -3954,7 +4028,9 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                         >
                           <div className="flex items-center gap-3">
                             <IconResearch size={16} className={researchMode ? 'text-[#2E7CF6]' : 'text-claude-textSecondary'} />
-                            <span className={researchMode ? 'text-[#2E7CF6] font-medium' : 'text-claude-text'}>Research</span>
+                            <span className={researchMode ? 'text-[#2E7CF6] font-medium' : 'text-claude-text'}>
+                              {uiLanguage === 'zh-CN' ? '深度研究' : 'Research'}
+                            </span>
                           </div>
                           {researchMode && <Check size={14} className="text-[#2E7CF6]" />}
                         </button>
@@ -3975,7 +4051,9 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                         >
                           <div className="flex items-center gap-3">
                             <IconWebSearch size={16} className={currentProviderSupportsWebSearch ? 'text-[#2E7CF6]' : 'text-claude-textSecondary'} />
-                            <span className={currentProviderSupportsWebSearch ? 'text-[#2E7CF6] font-medium' : 'text-claude-text'}>Web search</span>
+                            <span className={currentProviderSupportsWebSearch ? 'text-[#2E7CF6] font-medium' : 'text-claude-text'}>
+                              {uiLanguage === 'zh-CN' ? '网页搜索' : 'Web search'}
+                            </span>
                           </div>
                           {currentProviderSupportsWebSearch && <Check size={14} className="text-[#2E7CF6]" />}
                         </button>
@@ -3990,13 +4068,13 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                         <button
                           onClick={toggleResearchMode}
                           className="ml-1 flex-shrink-0 flex items-center justify-center hover:opacity-70 transition-opacity"
-                          aria-label="Disable research mode"
+                          aria-label={uiLanguage === 'zh-CN' ? '关闭研究模式' : 'Disable research mode'}
                         >
                           <X size={14} className="text-[#2E7CF6]" />
                         </button>
                       </span>
                       <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 px-2 py-1 bg-[#2a2a2a] text-white dark:bg-[#e8e8e8] dark:text-[#1a1a1a] rounded-md text-[11px] whitespace-nowrap opacity-0 group-hover/research:opacity-100 pointer-events-none transition-opacity">
-                        Research mode
+                        {uiLanguage === 'zh-CN' ? '研究模式' : 'Research mode'}
                       </div>
                     </div>
                   )}
@@ -4131,7 +4209,11 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                     ref={inputRef}
                     className={`w-full px-4 pt-4 pb-0 placeholder:text-claude-textSecondary outline-none resize-none bg-transparent font-sans font-[350] ${inputText.match(/^\/[a-zA-Z0-9_-]+/) ? 'text-transparent caret-claude-text' : 'text-claude-text'}`}
                     style={{ height: `${inputBarBaseHeight}px`, minHeight: '16px', boxSizing: 'border-box', overflowY: 'hidden', fontSize: 'var(--chat-input-font-size)', lineHeight: 'var(--chat-message-line-height)' }}
-                    placeholder={selectedSkill ? `Describe what you want ${selectedSkill.name} to do...` : "How can I help you today?"}
+                    placeholder={selectedSkill
+                      ? (uiLanguage === 'zh-CN'
+                        ? `告诉我想让 ${selectedSkill.name} 帮你做什么……`
+                        : `Describe what you want ${selectedSkill.name} to do...`)
+                      : (uiLanguage === 'zh-CN' ? '今天想让我帮你做什么？' : 'How can I help you today?')}
                     value={inputText}
                     onChange={(e) => {
                       setInputText(e.target.value);
@@ -4176,7 +4258,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                           className="w-full flex items-center gap-3 px-4 py-2.5 text-[13px] text-claude-text hover:bg-claude-hover transition-colors"
                         >
                           <Paperclip size={16} className="text-claude-textSecondary" />
-                          Add files or photos
+                          {uiLanguage === 'zh-CN' ? '添加文件或图片' : 'Add files or photos'}
                         </button>
                         <button
                           onMouseEnter={() => { setShowSkillsSubmenu(false); setShowProjectsSubmenu(false); }}
@@ -4187,7 +4269,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                           className="w-full flex items-center gap-3 px-4 py-2.5 text-[13px] text-claude-text hover:bg-claude-hover transition-colors"
                         >
                           <Github size={16} className="text-claude-textSecondary" />
-                          Add from GitHub
+                          {uiLanguage === 'zh-CN' ? '从 GitHub 添加' : 'Add from GitHub'}
                         </button>
                         {/* Add to project submenu */}
                         <div className="relative" onMouseLeave={() => setShowProjectsSubmenu(false)}>
@@ -4198,7 +4280,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                           >
                             <div className="flex items-center gap-3">
                               <IconProjects size={16} className="text-claude-textSecondary scale-[1.6] dark:[filter:brightness(0)_invert(1)_brightness(0.68)_sepia(0.18)]" />
-                              Add to project
+                              {uiLanguage === 'zh-CN' ? '添加到项目' : 'Add to project'}
                             </div>
                             <ChevronDown size={14} className="text-claude-textSecondary -rotate-90" />
                           </button>
@@ -4220,7 +4302,9 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                                   </button>
                                 );
                               }) : (
-                                <div className="px-4 py-2 text-[12px] text-claude-textSecondary italic">No projects yet</div>
+                                <div className="px-4 py-2 text-[12px] text-claude-textSecondary italic">
+                                  {uiLanguage === 'zh-CN' ? '还没有项目' : 'No projects yet'}
+                                </div>
                               )}
                               <div className="border-t border-claude-border mt-1 pt-1">
                                 <button
@@ -4234,7 +4318,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                                   className="w-full flex items-center gap-3 px-4 py-2 text-[13px] text-claude-textSecondary hover:bg-claude-hover transition-colors"
                                 >
                                   <Plus size={14} />
-                                  Start a new project
+                                  {uiLanguage === 'zh-CN' ? '新建项目' : 'Start a new project'}
                                 </button>
                               </div>
                             </div>
@@ -4249,7 +4333,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                           >
                             <div className="flex items-center gap-3">
                               <FileText size={16} className="text-claude-textSecondary" />
-                              Skills
+                              {uiLanguage === 'zh-CN' ? '技能' : 'Skills'}
                             </div>
                             <ChevronDown size={14} className="text-claude-textSecondary -rotate-90" />
                           </button>
@@ -4266,9 +4350,13 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                                     setInputText(prev => prev ? `/${slug} ${prev}` : `/${slug} `);
                                     inputRef.current?.focus();
                                   }}
-                                  className="w-full text-left px-4 py-2 text-[13px] text-claude-text hover:bg-claude-hover transition-colors truncate"
+                                  title={uiLanguage === 'zh-CN' ? getSkillSummaryZh(skill.name, skill.description) : (skill.description || skill.name)}
+                                  className="w-full text-left px-4 py-2.5 text-[13px] text-claude-text hover:bg-claude-hover transition-colors"
                                 >
-                                  {skill.name}
+                                  <div className="font-medium truncate">{skill.name}</div>
+                                  <div className="mt-1 text-[11px] leading-4 text-claude-textSecondary whitespace-normal">
+                                    {uiLanguage === 'zh-CN' ? getSkillSummaryZh(skill.name, skill.description) : (skill.description || 'Specialized skill')}
+                                  </div>
                                 </button>
                               ))}
                               <div className="border-t border-claude-border mt-1 pt-1">
@@ -4281,14 +4369,16 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                                   className="w-full flex items-center gap-3 px-4 py-2 text-[13px] text-claude-textSecondary hover:bg-claude-hover transition-colors"
                                 >
                                   <FileText size={14} />
-                                  Manage skills
+                                  {uiLanguage === 'zh-CN' ? '管理技能' : 'Manage skills'}
                                 </button>
                               </div>
                             </div>
                           )}
                           {showSkillsSubmenu && enabledSkills.length === 0 && (
                             <div className="absolute left-full bottom-0 w-[220px] bg-claude-input border border-claude-border rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.12)] py-1.5 z-50">
-                              <div className="px-4 py-2 text-[12px] text-claude-textSecondary italic">No skills enabled</div>
+                              <div className="px-4 py-2 text-[12px] text-claude-textSecondary italic">
+                                {uiLanguage === 'zh-CN' ? '暂无启用技能' : 'No skills enabled'}
+                              </div>
                               <div className="border-t border-claude-border mt-1 pt-1">
                                 <button
                                   onClick={() => {
@@ -4298,7 +4388,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                                   className="w-full flex items-center gap-3 px-4 py-2 text-[13px] text-claude-textSecondary hover:bg-claude-hover transition-colors"
                                 >
                                   <FileText size={14} />
-                                  Manage skills
+                                  {uiLanguage === 'zh-CN' ? '管理技能' : 'Manage skills'}
                                 </button>
                               </div>
                             </div>
@@ -4315,7 +4405,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                           className="w-full flex items-center gap-3 px-4 py-2.5 text-[13px] text-claude-text hover:bg-claude-hover transition-colors"
                         >
                           <ListCollapse size={16} className="text-claude-textSecondary" />
-                          Compact conversation
+                          {uiLanguage === 'zh-CN' ? '压缩对话' : 'Compact conversation'}
                         </button>
                         {/* Research toggle */}
                         <div className="border-t border-claude-border mt-1 pt-1">
@@ -4326,7 +4416,9 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                           >
                             <div className="flex items-center gap-3">
                               <IconResearch size={16} className={researchMode ? 'text-[#2E7CF6]' : 'text-claude-textSecondary'} />
-                              <span className={researchMode ? 'text-[#2E7CF6] font-medium' : 'text-claude-text'}>Research</span>
+                              <span className={researchMode ? 'text-[#2E7CF6] font-medium' : 'text-claude-text'}>
+                                {uiLanguage === 'zh-CN' ? '深度研究' : 'Research'}
+                              </span>
                             </div>
                             {researchMode && <Check size={14} className="text-[#2E7CF6]" />}
                           </button>
@@ -4347,7 +4439,9 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                           >
                             <div className="flex items-center gap-3">
                               <IconWebSearch size={16} className={currentProviderSupportsWebSearch ? 'text-[#2E7CF6]' : 'text-claude-textSecondary'} />
-                              <span className={currentProviderSupportsWebSearch ? 'text-[#2E7CF6] font-medium' : 'text-claude-text'}>Web search</span>
+                              <span className={currentProviderSupportsWebSearch ? 'text-[#2E7CF6] font-medium' : 'text-claude-text'}>
+                                {uiLanguage === 'zh-CN' ? '网页搜索' : 'Web search'}
+                              </span>
                             </div>
                             {currentProviderSupportsWebSearch && <Check size={14} className="text-[#2E7CF6]" />}
                           </button>
@@ -4417,13 +4511,13 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                           <button
                             onClick={toggleResearchMode}
                             className="ml-1 flex-shrink-0 flex items-center justify-center hover:opacity-70 transition-opacity"
-                            aria-label="Disable research mode"
+                          aria-label={uiLanguage === 'zh-CN' ? '关闭研究模式' : 'Disable research mode'}
                           >
                             <X size={14} className="text-[#2E7CF6]" />
                           </button>
                         </span>
                         <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 px-2 py-1 bg-[#2a2a2a] text-white dark:bg-[#e8e8e8] dark:text-[#1a1a1a] rounded-md text-[11px] whitespace-nowrap opacity-0 group-hover/research:opacity-100 pointer-events-none transition-opacity">
-                          Research mode
+                          {uiLanguage === 'zh-CN' ? '研究模式' : 'Research mode'}
                         </div>
                       </div>
                     )}
@@ -4730,16 +4824,22 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40" onClick={() => setShowCompactDialog(false)}>
           <div className="bg-claude-bg border border-claude-border rounded-2xl shadow-xl w-[440px] overflow-hidden" onClick={e => e.stopPropagation()}>
             <div className="px-5 pt-5 pb-3">
-              <h3 className="text-[15px] font-semibold text-claude-text mb-1">Compact conversation</h3>
+              <h3 className="text-[15px] font-semibold text-claude-text mb-1">
+                {uiLanguage === 'zh-CN' ? '压缩对话' : 'Compact conversation'}
+              </h3>
               <p className="text-[13px] text-claude-textSecondary leading-snug">
-                Summarize the conversation history to free up context space. The engine will preserve key decisions and context.
+                {uiLanguage === 'zh-CN'
+                  ? '把当前对话历史压缩成摘要，释放上下文空间。系统会尽量保留关键决策、已知约束和必要背景。'
+                  : 'Summarize the conversation history to free up context space. The engine will preserve key decisions and context.'}
               </p>
             </div>
             <div className="px-5 pb-3">
               <textarea
                 className="w-full bg-claude-input border border-claude-border rounded-lg px-3 py-2 text-[13px] text-claude-text placeholder:text-claude-textSecondary/50 outline-none focus:border-claude-textSecondary/40 transition-colors resize-none"
                 rows={3}
-                placeholder="Optional: add instructions for the summary (e.g. 'preserve all API endpoint details')"
+                placeholder={uiLanguage === 'zh-CN'
+                  ? '可选：给摘要加一条要求，例如“保留所有 API 接口细节”'
+                  : "Optional: add instructions for the summary (e.g. 'preserve all API endpoint details')"}
                 value={compactInstruction}
                 onChange={e => setCompactInstruction(e.target.value)}
                 onKeyDown={e => {
@@ -4756,7 +4856,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                 onClick={() => setShowCompactDialog(false)}
                 className="px-3.5 py-1.5 text-[13px] text-claude-textSecondary hover:text-claude-text rounded-lg hover:bg-claude-hover transition-colors"
               >
-                Cancel
+                {uiLanguage === 'zh-CN' ? '取消' : 'Cancel'}
               </button>
               <button
                 id="compact-confirm-btn"
@@ -4770,17 +4870,22 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                     await loadConversation(activeId);
                     const newContextInfo = await getContextSize(activeId);
                     setContextInfo(newContextInfo);
-                    setCompactStatus({ state: 'done', message: `Compacted ${result.messagesCompacted} messages, saved ~${result.tokensSaved} tokens` });
+                    setCompactStatus({
+                      state: 'done',
+                      message: uiLanguage === 'zh-CN'
+                        ? `已压缩 ${result.messagesCompacted} 条消息，约节省 ${result.tokensSaved} tokens`
+                        : `Compacted ${result.messagesCompacted} messages, saved ~${result.tokensSaved} tokens`,
+                    });
                     setTimeout(() => setCompactStatus({ state: 'idle' }), 4000);
                   } catch (err) {
                     console.error('Compact failed:', err);
-                    setCompactStatus({ state: 'error', message: 'Compaction failed' });
+                    setCompactStatus({ state: 'error', message: uiLanguage === 'zh-CN' ? '压缩失败' : 'Compaction failed' });
                     setTimeout(() => setCompactStatus({ state: 'idle' }), 3000);
                   }
                 }}
                 className="px-3.5 py-1.5 text-[13px] text-white bg-[#C6613F] hover:bg-[#D97757] rounded-lg transition-colors font-medium"
               >
-                Compact
+                {uiLanguage === 'zh-CN' ? '开始压缩' : 'Compact'}
               </button>
             </div>
           </div>

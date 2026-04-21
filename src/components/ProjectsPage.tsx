@@ -10,6 +10,7 @@ import AddFromGithubModal, { GithubAddPayload } from './AddFromGithubModal';
 
 const ProjectsPage = () => {
   const navigate = useNavigate();
+  const isZh = localStorage.getItem('ui_language') === 'zh-CN';
   const [searchQuery, setSearchQuery] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [projectName, setProjectName] = useState('');
@@ -411,11 +412,11 @@ const ProjectsPage = () => {
                     <div ref={plusMenuRef} className="absolute bottom-full left-0 mb-2 w-[220px] bg-claude-input border border-claude-border rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.12)] py-1.5 z-50">
                       <button onClick={() => { setShowPlusMenu(false); fileInputRef.current?.click(); }} className="w-full flex items-center gap-3 px-4 py-2.5 text-[13px] text-claude-text hover:bg-claude-hover transition-colors">
                         <Paperclip size={16} className="text-claude-textSecondary" />
-                        Add files or photos
+                        {isZh ? '添加文件或图片' : 'Add files or photos'}
                       </button>
                       <div className="relative">
                         <button onMouseEnter={() => setShowSkillsSubmenu(true)} onClick={() => setShowSkillsSubmenu(p => !p)} className="w-full flex items-center justify-between px-4 py-2.5 text-[13px] text-claude-text hover:bg-claude-hover transition-colors">
-                          <div className="flex items-center gap-3"><FileText size={16} className="text-claude-textSecondary" />Skills</div>
+                          <div className="flex items-center gap-3"><FileText size={16} className="text-claude-textSecondary" />{isZh ? '技能' : 'Skills'}</div>
                           <ChevronDown size={14} className="text-claude-textSecondary -rotate-90" />
                         </button>
                         {showSkillsSubmenu && (
@@ -428,9 +429,9 @@ const ProjectsPage = () => {
                                 setMessage(prev => prev ? `/${slug} ${prev}` : `/${slug} `);
                                 textareaRef.current?.focus();
                               }} className="w-full text-left px-4 py-2 text-[13px] text-claude-text hover:bg-claude-hover transition-colors truncate">{skill.name}</button>
-                            )) : <div className="px-4 py-2 text-[12px] text-claude-textSecondary italic">No skills enabled</div>}
+                            )) : <div className="px-4 py-2 text-[12px] text-claude-textSecondary italic">{isZh ? '暂无启用技能' : 'No skills enabled'}</div>}
                             <div className="border-t border-claude-border mt-1 pt-1">
-                              <button onClick={() => { setShowPlusMenu(false); window.location.hash = '#/customize'; }} className="w-full flex items-center gap-3 px-4 py-2 text-[13px] text-claude-textSecondary hover:bg-claude-hover transition-colors"><FileText size={14} />Manage skills</button>
+                              <button onClick={() => { setShowPlusMenu(false); window.location.hash = '#/customize'; }} className="w-full flex items-center gap-3 px-4 py-2 text-[13px] text-claude-textSecondary hover:bg-claude-hover transition-colors"><FileText size={14} />{isZh ? '管理技能' : 'Manage skills'}</button>
                             </div>
                           </div>
                         )}
@@ -476,7 +477,7 @@ const ProjectsPage = () => {
                     <button
                       onClick={(e) => handleDeleteConversation(conv.id, e)}
                       className="p-1 text-claude-textSecondary hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                      title="Delete conversation"
+                      title={isZh ? '删除对话' : 'Delete conversation'}
                     >
                       <Trash size={14} />
                     </button>
@@ -486,7 +487,7 @@ const ProjectsPage = () => {
             ) : (
               <div className="w-full border border-claude-border rounded-[16px] px-6 py-10 flex items-center justify-center bg-transparent mt-2">
                 <span className="text-[14.5px] text-[#A1A1AA]">
-                  Start a chat to keep conversations organized and re-use project knowledge.
+                  {isZh ? '先开始一段对话，后续就能在这个项目里复用上下文和资料。' : 'Start a chat to keep conversations organized and re-use project knowledge.'}
                 </span>
               </div>
             )}
@@ -500,12 +501,12 @@ const ProjectsPage = () => {
               >
                 <div className="flex items-center justify-between">
                   <div className="flex-1">
-                    <h3 className="font-semibold text-claude-text mb-0.5" style={{ fontSize: '15.5px' }}>Instructions</h3>
+                    <h3 className="font-semibold text-claude-text mb-0.5" style={{ fontSize: '15.5px' }}>{isZh ? '项目说明' : 'Instructions'}</h3>
                     {!editingInstructions && (
                       <p className="text-[13px] text-[#A1A1AA]">
                         {currentProject.instructions
                           ? currentProject.instructions.slice(0, 200) + (currentProject.instructions.length > 200 ? '...' : '')
-                          : "Add instructions to tailor Claude's responses"}
+                          : (isZh ? '添加项目说明，让回复更贴合这个项目。' : "Add instructions to tailor Claude's responses")}
                       </p>
                     )}
                   </div>
@@ -524,16 +525,18 @@ const ProjectsPage = () => {
                       className="w-full max-w-[800px] bg-white dark:bg-[#2A2928] border border-claude-border rounded-[20px] shadow-2xl p-7"
                       onClick={e => e.stopPropagation()}
                     >
-                      <h2 className="text-[20px] font-bold text-claude-text mb-2">Set project instructions</h2>
+                      <h2 className="text-[20px] font-bold text-claude-text mb-2">{isZh ? '设置项目说明' : 'Set project instructions'}</h2>
                       <p className="text-[14px] text-[#A1A1AA] mb-5">
-                        Provide Claude with relevant instructions and information for chats within {currentProject.name}. This will work alongside <span className="underline decoration-[#555] underline-offset-2 cursor-pointer hover:text-claude-text">user preferences</span> and the selected style in a chat.
+                        {isZh
+                          ? <>给 {currentProject.name} 这个项目补充背景、要求和约束。它会和<span className="underline decoration-[#555] underline-offset-2 cursor-pointer hover:text-claude-text">用户偏好</span>、对话风格一起生效。</>
+                          : <>Provide Claude with relevant instructions and information for chats within {currentProject.name}. This will work alongside <span className="underline decoration-[#555] underline-offset-2 cursor-pointer hover:text-claude-text">user preferences</span> and the selected style in a chat.</>}
                       </p>
 
                       <textarea
                         autoFocus
                         value={instructionsText}
                         onChange={e => setInstructionsText(e.target.value)}
-                        placeholder="Break down large tasks and ask clarifying questions when needed."
+                        placeholder={isZh ? '例如：先拆解复杂任务；遇到不清楚的需求先追问；回复尽量简洁。' : 'Break down large tasks and ask clarifying questions when needed.'}
                         className="w-full h-[400px] px-4 py-3 bg-claude-bg dark:bg-[#202020] border border-claude-border rounded-[12px] text-[15px] text-claude-text resize-none outline-none focus:border-[#3A7ADA] focus:ring-1 focus:ring-[#3A7ADA] transition-colors"
                       />
 
@@ -542,13 +545,13 @@ const ProjectsPage = () => {
                           onClick={() => { setEditingInstructions(false); setInstructionsText(currentProject.instructions || ''); }}
                           className="px-4 py-2 text-[14px] font-medium text-claude-text hover:bg-white/5 border border-transparent hover:border-claude-border rounded-xl transition-all"
                         >
-                          Cancel
+                          {isZh ? '取消' : 'Cancel'}
                         </button>
                         <button
                           onClick={handleSaveInstructions}
                           className="px-4 py-2 text-[14px] font-medium bg-[#E6E6E6] text-[#222] rounded-xl hover:opacity-90 transition-opacity"
                         >
-                          Save instructions
+                          {isZh ? '保存说明' : 'Save instructions'}
                         </button>
                       </div>
                     </div>

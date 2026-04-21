@@ -29,21 +29,21 @@
   --text-claude-avatar: #FFFFFF;
   --bg-mode-tabs: #EFEEEB;
   --bg-mode-tab-active: #F8F8F6;
-  --chat-body-font-size: 16.5px;
-  --chat-user-font-size: 16px;
-  --chat-input-font-size: 16px;
+  --chat-body-font-size: 15.5px;
+  --chat-user-font-size: 15px;
+  --chat-input-font-size: 15px;
   --chat-metadata-font-size: 12px;
-  --chat-message-line-height: 1.55;
-  --markdown-gap-scale: 1;
+  --chat-message-line-height: 1.48;
+  --markdown-gap-scale: 0.92;
 }
 
 :root[data-ui-density="compact"] {
-  --chat-body-font-size: 15px;
-  --chat-user-font-size: 14px;
-  --chat-input-font-size: 14px;
+  --chat-body-font-size: 14px;
+  --chat-user-font-size: 13.5px;
+  --chat-input-font-size: 13.5px;
   --chat-metadata-font-size: 11px;
-  --chat-message-line-height: 1.42;
-  --markdown-gap-scale: 0.82;
+  --chat-message-line-height: 1.36;
+  --markdown-gap-scale: 0.74;
 }
 
 .dark {
