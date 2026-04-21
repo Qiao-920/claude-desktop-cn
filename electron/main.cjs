@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, globalShortcut, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const archiver = require('archiver');
@@ -29,6 +29,9 @@ if (process.platform === 'win32') {
 // Squirrel startup handler removed — using NSIS installer, not Squirrel
 
 let mainWindow;
+let tray = null;
+let isQuitting = false;
+let hasShownTrayHint = false;
 
 const isDev = process.env.NODE_ENV === 'development';
 
@@ -94,6 +97,83 @@ function sanitizePreviewName(name) {
     return withExt || fallback;
 }
 
+function getWindowIconPath() {
+    return path.join(__dirname, '..', 'public', process.platform === 'win32' ? 'favicon.ico' : 'favicon.png');
+}
+
+function getTrayIcon() {
+    const baseIcon = nativeImage.createFromPath(getWindowIconPath());
+    if (process.platform === 'win32' && !baseIcon.isEmpty()) {
+        return baseIcon.resize({ width: 16, height: 16 });
+    }
+    return baseIcon;
+}
+
+function showMainWindow() {
+    if (!mainWindow) {
+        createWindow();
+        return;
+    }
+    if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+    }
+    if (!mainWindow.isVisible()) {
+        mainWindow.show();
+    }
+    mainWindow.focus();
+}
+
+function createTray() {
+    if (tray) return;
+    tray = new Tray(getTrayIcon());
+    tray.setToolTip('Claude Desktop CN');
+
+    const refreshTrayMenu = () => {
+        const visible = !!mainWindow && mainWindow.isVisible();
+        const template = [
+            {
+                label: visible ? '隐藏窗口' : '显示窗口',
+                click: () => {
+                    if (!mainWindow) {
+                        createWindow();
+                        return;
+                    }
+                    if (mainWindow.isVisible()) {
+                        mainWindow.hide();
+                    } else {
+                        showMainWindow();
+                    }
+                },
+            },
+            { type: 'separator' },
+            {
+                label: '退出',
+                click: () => {
+                    isQuitting = true;
+                    app.quit();
+                },
+            },
+        ];
+        tray.setContextMenu(Menu.buildFromTemplate(template));
+    };
+
+    tray.on('click', () => {
+        if (!mainWindow || !mainWindow.isVisible()) {
+            showMainWindow();
+        } else {
+            mainWindow.focus();
+        }
+        refreshTrayMenu();
+    });
+
+    tray.on('double-click', () => {
+        showMainWindow();
+        refreshTrayMenu();
+    });
+
+    refreshTrayMenu();
+}
+
 function createWindow() {
     mainWindow = new BrowserWindow({
         width: 1150,
@@ -116,7 +196,7 @@ function createWindow() {
                     height: 44
                 }
             }),
-        icon: path.join(__dirname, '..', 'public', process.platform === 'win32' ? 'favicon.ico' : 'favicon.png'),
+        icon: getWindowIconPath(),
         backgroundColor: '#F8F8F6',
         show: false, // Show after ready-to-show to prevent flash
     });
@@ -191,12 +271,53 @@ function createWindow() {
         }
     });
 
+    if (process.platform === 'win32' || process.platform === 'linux') {
+        mainWindow.on('close', (event) => {
+            if (isQuitting) return;
+            event.preventDefault();
+            mainWindow.hide();
+            if (tray) {
+                const visible = mainWindow.isVisible();
+                const template = [
+                    {
+                        label: visible ? '隐藏窗口' : '显示窗口',
+                        click: () => {
+                            if (!mainWindow || !mainWindow.isVisible()) {
+                                showMainWindow();
+                            } else {
+                                mainWindow.hide();
+                            }
+                        },
+                    },
+                    { type: 'separator' },
+                    {
+                        label: '退出',
+                        click: () => {
+                            isQuitting = true;
+                            app.quit();
+                        },
+                    },
+                ];
+                tray.setContextMenu(Menu.buildFromTemplate(template));
+                if (!hasShownTrayHint && process.platform === 'win32' && typeof tray.displayBalloon === 'function') {
+                    tray.displayBalloon({
+                        title: 'Claude Desktop CN',
+                        content: '已最小化到系统托盘，右键托盘图标可以退出应用。',
+                        iconType: 'info',
+                    });
+                    hasShownTrayHint = true;
+                }
+            }
+        });
+    }
+
     mainWindow.on('closed', () => {
         mainWindow = null;
     });
 }
 
 app.whenReady().then(() => {
+    app.setAppUserModelId('com.claude.desktop.cn');
     // macOS: clear quarantine flags on bundled bun binary. Downloaded .dmg/.zip
     // files get Apple's com.apple.quarantine xattr, and since our bun binary is
     // unsigned, Gatekeeper silently blocks execution — the engine subprocess just
@@ -215,6 +336,7 @@ app.whenReady().then(() => {
         console.log('Bridge Server running on http://127.0.0.1:30080');
     });
 
+    createTray();
     createWindow();
 
     // No SDK subprocess needed — using direct API calls
@@ -281,13 +403,19 @@ app.whenReady().then(() => {
         // macOS: re-create window when dock icon clicked
         if (BrowserWindow.getAllWindows().length === 0) {
             createWindow();
+            return;
         }
+        showMainWindow();
     });
+});
+
+app.on('before-quit', () => {
+    isQuitting = true;
 });
 
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
-        app.quit();
+        if (!tray) app.quit();
     }
 });
 

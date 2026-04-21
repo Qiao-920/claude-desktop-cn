@@ -1342,7 +1342,12 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
   // Initial model: for self-hosted, prefer first configured model over hardcoded claude-sonnet-4-6
   const [currentModelString, setCurrentModelString] = useState(() => {
     const saved = localStorage.getItem('default_model');
-    if (saved) return saved;
+    if (saved) {
+      if (!isSelfHostedMode && !/^claude-/i.test(stripThinking(saved))) {
+        return 'claude-sonnet-4-6';
+      }
+      return saved;
+    }
     if (isSelfHostedMode && selfHostedModels.length > 0) return selfHostedModels[0].id;
     return 'claude-sonnet-4-6';
   });
@@ -1453,7 +1458,10 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
   }, [modelCatalog, displayCommonModels]);
 
   const resolveModelForNewChat = useCallback((preferredModel?: string | null) => {
-    const saved = preferredModel || localStorage.getItem('default_model') || 'claude-sonnet-4-6';
+    const rawSaved = preferredModel || localStorage.getItem('default_model') || 'claude-sonnet-4-6';
+    const savedBase = stripThinking(rawSaved);
+    const savedIsInvalidForMode = !isSelfHostedMode && !/^claude-/i.test(savedBase);
+    const saved = savedIsInvalidForMode ? 'claude-sonnet-4-6' : rawSaved;
     const thinking = isThinkingModel(saved);
     const base = stripThinking(saved);
     const all = modelCatalog?.all || displayCommonModels;
@@ -1857,7 +1865,9 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
         setModelCatalog(data);
         if (!viewingIdRef.current) {
           setCurrentModelString(prev => {
-            const current = prev || localStorage.getItem('default_model') || 'claude-sonnet-4-6';
+            const rawCurrent = prev || localStorage.getItem('default_model') || 'claude-sonnet-4-6';
+            const rawBase = stripThinking(rawCurrent);
+            const current = (!isSelfHosted && !/^claude-/i.test(rawBase)) ? 'claude-sonnet-4-6' : rawCurrent;
             const thinking = isThinkingModel(current);
             const base = stripThinking(current);
             const all: SelectableModel[] = data?.all?.length ? data.all : fallbackCommonModels;

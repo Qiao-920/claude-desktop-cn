@@ -1309,6 +1309,20 @@ export async function getSkillFile(id: string, filePath: string) {
   return res.json();
 }
 
+export async function importSkill(file: File) {
+  const form = new FormData();
+  form.append('file', file);
+  const res = await fetch(`${API_BASE}/skills/import`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Import failed');
+  }
+  return res.json();
+}
+
 export async function createSkill(data: { name: string; description?: string; content?: string }) {
   const res = await request('/skills', {
     method: 'POST',

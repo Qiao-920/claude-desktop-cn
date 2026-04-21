@@ -7,7 +7,7 @@ import {
   Settings, Check, MessageSquare, ClipboardList, Upload, Github, X, FolderPlus
 } from 'lucide-react';
 import MarkdownRenderer, { CodeBlock } from './MarkdownRenderer';
-import { getSkills, getSkillDetail, getSkillFile, createSkill, updateSkill, deleteSkill, toggleSkill, getGithubStatus, getGithubAuthUrl, disconnectGithub } from '../api';
+import { getSkills, getSkillDetail, getSkillFile, createSkill, updateSkill, deleteSkill, toggleSkill, importSkill, getGithubStatus, getGithubAuthUrl, disconnectGithub } from '../api';
 import searchIconImg from '../assets/icons/search-icon.png';
 import skillsImg from '../assets/icons/skills.png';
 import connectorsImg from '../assets/icons/connectors.png';
@@ -255,6 +255,10 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
 
   const [showPlusMenu, setShowPlusMenu] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [uploadErr, setUploadErr] = useState('');
+  const [dragOver, setDragOver] = useState(false);
+  const uploadFileRef = React.useRef<HTMLInputElement>(null);
 
   // Edit/Create state
   const [creating, setCreating] = useState(false);
@@ -306,6 +310,23 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
   }, [creating, selectedSkillId]);
 
   useEffect(() => { fetchList(); }, [fetchList]);
+
+  const handleImportSkill = async (file?: File | null) => {
+    if (!file) return;
+    setUploadErr('');
+    setUploading(true);
+    try {
+      await importSkill(file);
+      setShowUploadModal(false);
+      await fetchList();
+    } catch (err: any) {
+      setUploadErr(err?.message || '导入失败');
+    } finally {
+      setUploading(false);
+      setDragOver(false);
+      if (uploadFileRef.current) uploadFileRef.current.value = '';
+    }
+  };
 
   const loadFileContent = async (skillId: string, filePath: string) => {
     if (filePath === 'SKILL.md') { setFileContent(''); return; }
@@ -493,7 +514,7 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
                       </button>
                       <button className="w-full flex items-center gap-3.5 px-4 py-3 text-[14.5px] font-medium text-claude-text hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left" onClick={() => { setShowPlusMenu(false); setShowUploadModal(true); }}>
                         <Upload size={18} className="text-claude-textSecondary" />
-                        Upload a skill
+                        导入 Skill
                       </button>
                     </div>
                   </>
@@ -509,7 +530,7 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
                 autoFocus
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                placeholder="Filter skills..."
+                placeholder="筛选技能..."
                 className="w-full px-2 py-1.5 bg-claude-input rounded-md text-sm outline-none border border-transparent focus:border-blue-500"
               />
             </div>
@@ -881,7 +902,7 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
           <div className="flex items-center justify-center h-full text-claude-textSecondary">
             <div className="text-center">
               <Sparkles size={32} className="mx-auto mb-3 opacity-20" />
-              <p>Select a skill to view details</p>
+              <p>选择一个 Skill 查看详情</p>
             </div>
           </div>
         )}
@@ -889,38 +910,70 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
 
       {showUploadModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-[#242424] w-[460px] rounded-[16px] flex flex-col shadow-[0_10px_40px_rgba(0,0,0,0.5)] relative border border-white/10 overflow-hidden">
-            {/* Header */}
+          <div className="bg-claude-bg w-[460px] rounded-[16px] flex flex-col shadow-[0_10px_40px_rgba(0,0,0,0.25)] dark:shadow-[0_10px_40px_rgba(0,0,0,0.5)] relative border border-claude-border overflow-hidden">
             <div className="flex items-center justify-between px-6 pt-6 pb-4">
-              <h3 className="text-[16px] font-semibold text-white tracking-wide">Upload skill</h3>
+              <h3 className="text-[16px] font-semibold text-claude-text tracking-wide">导入 Skill</h3>
               <button
-                onClick={() => setShowUploadModal(false)}
-                className="text-white/50 hover:text-white/80 transition-colors"
+                onClick={() => {
+                  setShowUploadModal(false);
+                  setUploadErr('');
+                  setDragOver(false);
+                }}
+                className="text-claude-textSecondary hover:text-claude-text transition-colors"
               >
                 <X size={18} strokeWidth={2} />
               </button>
             </div>
 
-            {/* Dropzone */}
-            <div className="mx-6 mb-6 p-8 border border-dashed border-white/20 rounded-xl flex flex-col items-center justify-center bg-white/[0.02] cursor-pointer hover:bg-white/[0.05] transition-colors group">
-              <FolderPlus size={22} className="text-white/50 group-hover:text-white/70 transition-colors mb-3 stroke-[1.5]" />
-              <div className="text-[13px] text-white/50 group-hover:text-white/70 transition-colors">
-                Drag and drop or click to upload
-              </div>
+            <input
+              ref={uploadFileRef}
+              type="file"
+              accept=".zip,.md"
+              className="hidden"
+              onChange={async e => {
+                const file = e.target.files?.[0];
+                await handleImportSkill(file);
+              }}
+            />
+
+            <div
+              onClick={() => uploadFileRef.current?.click()}
+              onDragOver={e => {
+                e.preventDefault();
+                setDragOver(true);
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={async e => {
+                e.preventDefault();
+                setDragOver(false);
+                const file = e.dataTransfer.files?.[0];
+                await handleImportSkill(file);
+              }}
+              className={`mx-6 mb-4 p-8 border border-dashed rounded-xl flex flex-col items-center justify-center cursor-pointer transition-colors group ${
+                dragOver ? 'border-claude-text/50 bg-claude-hover' : 'border-claude-border hover:bg-claude-hover'
+              }`}
+            >
+              {uploading ? (
+                <div className="text-[13px] text-claude-textSecondary">导入中...</div>
+              ) : (
+                <>
+                  <FolderPlus size={22} className="text-claude-textSecondary group-hover:text-claude-text transition-colors mb-3 stroke-[1.5]" />
+                  <div className="text-[13px] text-claude-textSecondary group-hover:text-claude-text transition-colors">
+                    拖拽或点击上传 .zip / .md 文件
+                  </div>
+                </>
+              )}
             </div>
 
-            {/* Requirements Details */}
-            <div className="px-6 pb-8">
-              <div className="text-[12px] font-medium text-white/60 mb-2.5">File requirements</div>
-              <ul className="list-disc pl-4 text-[12px] text-white/50 space-y-1.5 mb-5 marker:text-white/30">
-                <li>.md file must contain skill name and description formatted in YAML</li>
-                <li>.zip or .skill file must include a SKILL.md file</li>
+            {uploadErr && <div className="mx-6 mb-4 text-[12.5px] text-red-400">{uploadErr}</div>}
+
+            <div className="px-6 pb-6">
+              <div className="text-[12px] font-medium text-claude-textSecondary mb-2">文件要求</div>
+              <ul className="list-disc pl-4 text-[12px] text-claude-textSecondary/70 space-y-1.5 marker:text-claude-textSecondary/30">
+                <li>.zip 内需包含 SKILL.md 文件，可在根目录或单层子目录内</li>
+                <li>.md 文件会直接作为 SKILL.md 导入</li>
+                <li>同名 Skill 已存在时会阻止覆盖，避免误伤现有配置</li>
               </ul>
-              <div className="text-[12px] text-white/50">
-                <a href="#" className="underline hover:text-white/70 underline-offset-2 transition-colors">Read more about creating skills</a>
-                <span> or </span>
-                <a href="#" className="underline hover:text-white/70 underline-offset-2 transition-colors">see an example</a>
-              </div>
             </div>
           </div>
         </div>

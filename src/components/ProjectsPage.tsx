@@ -73,7 +73,14 @@ const ProjectsPage = () => {
       { id: 'claude-haiku-4-5-20251001', name: 'Haiku 4.5', enabled: 1, description: 'Fastest for quick answers' },
     ];
   }, [isSelfHostedMode]);
-  const [currentModelString, setCurrentModelString] = useState(localStorage.getItem('default_model') || 'claude-sonnet-4-6');
+  const [currentModelString, setCurrentModelString] = useState(() => {
+    const saved = localStorage.getItem('default_model');
+    if (!saved) return 'claude-sonnet-4-6';
+    if (!isSelfHostedMode && !/^claude-/i.test(saved.replace(/-thinking$/, ''))) {
+      return 'claude-sonnet-4-6';
+    }
+    return saved;
+  });
   const handleModelChange = (newModelString: string) => {
     setCurrentModelString(newModelString);
   };

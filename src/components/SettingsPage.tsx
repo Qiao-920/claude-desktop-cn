@@ -875,7 +875,18 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                     <button
                       key={item.value}
                       onClick={() => {
-                        localStorage.setItem('user_mode', item.value);
+                        const prevMode = localStorage.getItem('user_mode') || 'selfhosted';
+                        const nextMode = item.value;
+                        localStorage.setItem('user_mode', nextMode);
+                        if (prevMode !== nextMode) {
+                          localStorage.removeItem('chat_models');
+                          localStorage.removeItem('default_model');
+                          if (nextMode === 'clawparrot') {
+                            localStorage.removeItem('CUSTOM_API_KEY');
+                            localStorage.removeItem('CUSTOM_BASE_URL');
+                          }
+                          localStorage.removeItem('cross_mode_overrides');
+                        }
                         window.location.reload();
                       }}
                       className={`rounded-xl border px-4 py-4 text-left transition-all ${

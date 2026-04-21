@@ -1,7 +1,7 @@
 {
   "name": "claude-desktop",
   "private": true,
-  "version": "1.6.12",
+  "version": "1.6.13",
   "description": "Claude Desktop - AI assistant with native capabilities",
   "author": {
     "name": "Qiao-920",
@@ -39,7 +39,14 @@
       {
         "from": "engine/src",
         "to": "engine/src",
-        "filter": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.json", "**/*.md", "**/*.txt"]
+        "filter": [
+          "**/*.ts",
+          "**/*.tsx",
+          "**/*.js",
+          "**/*.json",
+          "**/*.md",
+          "**/*.txt"
+        ]
       },
       {
         "from": "engine/bin",

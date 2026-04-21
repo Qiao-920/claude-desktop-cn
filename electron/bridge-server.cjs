@@ -2565,6 +2565,91 @@ function initServer(mainWindow) {
         res.json({ id, name, description: description || '', content: content || '', is_example: false, source_dir: slug, source: 'user', enabled: true });
     });
 
+    // POST /api/skills/import — upload a .zip or .md file to create a user skill
+    const skillImportUpload = multer({ dest: os.tmpdir(), limits: { fileSize: 10 * 1024 * 1024 } });
+    server.post('/api/skills/import', skillImportUpload.single('file'), async (req, res) => {
+        if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+        const ext = path.extname(req.file.originalname).toLowerCase();
+        try {
+            if (ext === '.zip') {
+                const extractZip = require('extract-zip');
+                const tmpDir = path.join(os.tmpdir(), 'skill-import-' + Date.now());
+                fs.mkdirSync(tmpDir, { recursive: true });
+                await extractZip(req.file.path, { dir: tmpDir });
+
+                let skillRoot = tmpDir;
+                if (!fs.existsSync(path.join(skillRoot, 'SKILL.md'))) {
+                    const entries = fs.readdirSync(tmpDir).filter(e => fs.statSync(path.join(tmpDir, e)).isDirectory());
+                    if (entries.length === 1 && fs.existsSync(path.join(tmpDir, entries[0], 'SKILL.md'))) {
+                        skillRoot = path.join(tmpDir, entries[0]);
+                    } else {
+                        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+                        try { fs.unlinkSync(req.file.path); } catch (_) {}
+                        return res.status(400).json({ error: 'zip 中没有找到 SKILL.md 文件' });
+                    }
+                }
+
+                const mdContent = fs.readFileSync(path.join(skillRoot, 'SKILL.md'), 'utf8');
+                const nameMatch = mdContent.match(/^name:\s*(.+)$/m);
+                const name = nameMatch ? nameMatch[1].trim() : path.basename(req.file.originalname, '.zip');
+                const slug = name.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-').replace(/^-|-$/g, '') || 'skill-' + Date.now();
+                const destDir = path.join(userSkillsDir, slug);
+                if (fs.existsSync(destDir)) {
+                    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+                    try { fs.unlinkSync(req.file.path); } catch (_) {}
+                    return res.status(409).json({ error: '同名 Skill 已存在: ' + slug });
+                }
+
+                const copyDir = (src, dst) => {
+                    fs.mkdirSync(dst, { recursive: true });
+                    for (const entry of fs.readdirSync(src)) {
+                        const s = path.join(src, entry);
+                        const d = path.join(dst, entry);
+                        if (fs.statSync(s).isDirectory()) copyDir(s, d);
+                        else fs.copyFileSync(s, d);
+                    }
+                };
+
+                copyDir(skillRoot, destDir);
+                try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+                try { fs.unlinkSync(req.file.path); } catch (_) {}
+
+                const id = `user:${slug}`;
+                const prefs = loadSkillPrefs();
+                prefs[id] = true;
+                saveSkillPrefs(prefs);
+                return res.json({ id, name, source_dir: slug, source: 'user', enabled: true });
+            }
+
+            if (ext === '.md') {
+                const content = fs.readFileSync(req.file.path, 'utf8');
+                const nameMatch = content.match(/^name:\s*(.+)$/m);
+                const name = nameMatch ? nameMatch[1].trim() : path.basename(req.file.originalname, '.md');
+                const slug = name.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/g, '-').replace(/^-|-$/g, '') || 'skill-' + Date.now();
+                const destDir = path.join(userSkillsDir, slug);
+                if (fs.existsSync(destDir)) {
+                    try { fs.unlinkSync(req.file.path); } catch (_) {}
+                    return res.status(409).json({ error: '同名 Skill 已存在: ' + slug });
+                }
+                fs.mkdirSync(destDir, { recursive: true });
+                fs.copyFileSync(req.file.path, path.join(destDir, 'SKILL.md'));
+                try { fs.unlinkSync(req.file.path); } catch (_) {}
+
+                const id = `user:${slug}`;
+                const prefs = loadSkillPrefs();
+                prefs[id] = true;
+                saveSkillPrefs(prefs);
+                return res.json({ id, name, source_dir: slug, source: 'user', enabled: true });
+            }
+
+            try { fs.unlinkSync(req.file.path); } catch (_) {}
+            return res.status(400).json({ error: '不支持的文件类型，请上传 .zip 或 .md 文件' });
+        } catch (e) {
+            try { if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); } catch (_) {}
+            return res.status(500).json({ error: e.message });
+        }
+    });
+
     // PATCH /api/skills/:id 鈥?update user skill (writes SKILL.md)
     server.patch('/api/skills/:id', (req, res) => {
         const { id } = req.params;
@@ -4249,7 +4334,11 @@ You have the following skills available. When a user's request matches a skill's
     }
     function resolveChatConfig(conv, user_mode, env_token, env_base_url) {
         const rawModel = conv.model || 'claude-sonnet-4-6';
-        const modelId = rawModel.replace(/-thinking$/, '');
+        let modelId = rawModel.replace(/-thinking$/, '');
+        if (user_mode === 'clawparrot' && !/^claude-/i.test(modelId)) {
+            console.warn('[Chat] Non-Claude model', modelId, 'detected under clawparrot mode - falling back to claude-sonnet-4-6');
+            modelId = 'claude-sonnet-4-6';
+        }
         const provider = user_mode === 'selfhosted' ? resolveProvider(modelId) : null;
         let apiKey, baseUrl, apiFormat = 'anthropic';
         let supportsWebSearch = false;
