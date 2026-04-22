@@ -81,7 +81,7 @@ jobs:
         with:
           name: Claude Desktop CN ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
-          generate_release_notes: true
+          body_path: docs/releases/${{ github.ref_name }}-cn.md
           files: |
             release/Claude-Desktop-CN-Setup-*.exe
             release/Claude-Desktop-CN-Setup-*.exe.blockmap
