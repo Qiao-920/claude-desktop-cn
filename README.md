@@ -1,45 +1,45 @@
 # Claude Desktop CN
 
-面向中文用户持续维护的 Claude 风格桌面客户端分支，基于 `pretend1111/claude-desktop-app` 二次整理、汉化和增强。
+面向中文用户持续维护的 Claude 风格桌面客户端分支，基于 [`pretend1111/claude-desktop-app`](https://github.com/pretend1111/claude-desktop-app) 二次整理、汉化和增强。
 
-这个分支的目标不是简单换皮，而是把原本零散、半占位的能力慢慢补成一套真正可维护、可发布、可日用的桌面工作流。
+这个分支的目标不是简单换皮，而是把原本零散、半占位的能力慢慢补成一套可维护、可发布、可日用的桌面工作流。
 
 仓库地址：[Qiao-920/claude-desktop-cn](https://github.com/Qiao-920/claude-desktop-cn)
 
 ## 当前版本
 
-- 当前版本：`1.6.14`
-- Windows 安装包：`Claude-Desktop-CN-Setup-1.6.14.exe`
+- 当前版本：`1.6.17`
+- Windows 安装包：`Claude-Desktop-CN-Setup-1.6.17.exe`
 - Releases 页面：[GitHub Releases](https://github.com/Qiao-920/claude-desktop-cn/releases)
 
-## 这个分支已经补了什么
+## 已完成的主线能力
 
-### 1. 中文界面持续完善
+### 中文界面
 
-- 主界面、设置页、协作页、代码页中文化
-- 支持中英文 UI 切换
-- 清理大量零散英文和不自然文案
-- 调整整体排版，让界面更紧凑、更接近原生工具的使用节奏
+- 主界面、设置页、协作页、代码页持续中文化
+- 支持中文 / 英文 UI 切换
+- 清理零散英文文案，让界面更像一个正式客户端
+- 收紧聊天正文、输入区和设置页布局，降低大屏空旷感
 
-### 2. GitHub OAuth 改成你自己的配置
+### GitHub 连接
 
-- 支持接入你自己的 GitHub OAuth App
-- 不再继续复用原作者的 Client ID / Client Secret
-- GitHub 仓库导入链路可以正常使用
+- 支持配置自己的 GitHub OAuth App
+- 不再复用原作者的 Client ID / Client Secret
+- 支持 GitHub 仓库导入和项目资料来源绑定
 
-回调地址：
+OAuth 回调地址：
 
 ```text
 http://127.0.0.1:30080/api/github/callback
 ```
 
-### 3. Code 页面从展示壳升级成可用工作区
+### Code 工作区
 
 当前已经支持：
 
 - 选择本地工作区
 - 文件树浏览
-- 文件预览与编辑
+- 文件预览、编辑、保存
 - HTML 预览
 - 新建文件 / 新建文件夹
 - 重命名 / 删除
@@ -47,13 +47,25 @@ http://127.0.0.1:30080/api/github/callback
 - 单文件 diff
 - 单文件暂存 / 取消暂存 / 丢弃修改
 - 从 Git 恢复单文件
-- 提交 / 推送
-- 提交后自动推送
+- 提交 / 推送 / 提交后自动推送
 - Shell 偏好与命令历史
+- 工作区状态条，直接显示权限、Git 状态、最近命令和推送策略
 
-### 4. Settings 页面不再只是骨架
+### Cowork 协作页
 
-现在已经有了第一轮完整骨架和部分真实能力：
+协作页已经从空白说明页升级为工作总览：
+
+- 项目、GitHub、权限、归档状态总览
+- 快捷入口：项目、代码工作区、权限环境设置
+- 当前队列：提示下一步应该连接什么、整理什么
+- 最近项目列表
+- 协作 / 代码页职责边界说明
+
+它现在仍不是完整多人协作系统，但已经具备真实产品页的骨架和入口。
+
+### Settings 设置页
+
+设置页已经补齐原生 Claude / Codex 风格的第一版骨架：
 
 - 常规
 - 外观
@@ -67,39 +79,17 @@ http://127.0.0.1:30080/api/github/callback
 - 已归档聊天
 - 使用情况
 
-其中 Git、MCP、环境、工作树、已归档聊天这些区域已经接入了真实入口或状态展示，不再只是占位按钮。
+其中 Git、MCP、环境、工作树、已归档聊天、使用情况已经不再是单纯占位，而是有状态、有入口、有说明的可继续扩展页面。
 
-### 5. Cowork 页面从空白页变成协作总览页
+## 1.6.17 更新内容
 
-当前协作页已经补成第一版总览，用来说明：
+这一版是一次“成品化收口”：
 
-- 当前状态
-- 这页应该承担什么角色
-- 和 Code 页、Chat 页的边界
-- 后续适合往这里继续接什么功能
-
-它现在还不是最终形态，但已经从纯占位升级成真正的产品骨架。
-
-## 1.6.14 这次更新了什么
-
-### 核心改动
-
-1. 修复 Windows 托盘图标空白  
-   现在 Windows 下托盘优先直接使用 `.ico` 图标，不再先做一轮容易翻车的缩放处理；同时补了高 DPI 兜底，避免后台驻留时出现“占了位置但图标是空白块”的情况。
-
-2. 保留 1.6.13 的后台驻留能力  
-   关闭窗口后仍然会转入系统托盘后台驻留，可以通过托盘菜单重新显示窗口或退出应用。
-
-3. 延续上个版本的技能导入与模式隔离  
-   `.zip / .md` Skill 导入、自部署和 Clawparrot 模式切换隔离仍然保留，并继续沿用。
-
-### 这一版重点不是铺新页面，而是把基础体验补稳
-
-这一刀偏稳定性收口：
-
-- 版本号继续推进到 `1.6.14`
-- 托盘图标从“有入口但看不见”修到稳定可见
-- 安装包、构建产物和客户端安装一起同步更新
+1. Cowork 页升级成正式工作总览，不再只是说明占位。
+2. Settings 页修复骨架区，并补齐 Git / MCP / 环境 / 工作树 / 已归档 / 使用情况等页面的正式说明和入口。
+3. Code 页补充工作流状态条，能直接看到当前工作区、Git 状态、最近命令数量、权限模式和推送策略。
+4. README 和发布说明同步更新到 `1.6.17`。
+5. 保持 Windows 托盘后台运行、托盘图标和黑屏修复路线继续生效。
 
 ## 安装
 
@@ -107,9 +97,9 @@ http://127.0.0.1:30080/api/github/callback
 
 从 Releases 下载：
 
-- [Claude-Desktop-CN-Setup-1.6.14.exe](https://github.com/Qiao-920/claude-desktop-cn/releases)
+- [Claude-Desktop-CN-Setup-1.6.17.exe](https://github.com/Qiao-920/claude-desktop-cn/releases)
 
-默认安装后可执行文件位置通常是：
+默认安装路径通常是：
 
 ```text
 C:\Users\Administrator\AppData\Local\Programs\claude-desktop\
@@ -119,7 +109,7 @@ C:\Users\Administrator\AppData\Local\Programs\claude-desktop\
 
 ### 1. 先确认用户模式
 
-- 自部署：使用你自己的 API Key / Base URL
+- 自部署：使用自己的 API Key / Base URL
 - Clawparrot：使用托管 API 服务
 
 ### 2. 如果要接 GitHub
@@ -132,25 +122,25 @@ http://127.0.0.1:30080/api/github/callback
 ```
 
 3. 把 Client ID / Client Secret 配到客户端
-4. 在客户端重新走一遍 GitHub 连接流程
+4. 在客户端重新走一次 GitHub 连接流程
 
 ### 3. 如果要用 Code 工作区
 
 建议流程：
 
 1. 打开 `代码`
-2. 先选择一个本地工作区
+2. 选择一个本地工作区
 3. 确认当前权限模式
-4. 再开始浏览文件、编辑文件、看 Git 状态、执行命令
+4. 浏览、编辑文件，查看 Git 状态，再执行命令
 
 ## 接下来会继续补什么
 
-优先级最高的主线仍然是：
+优先主线：
 
-1. 协作页继续从总览页升级成可执行的协作中枢
-2. Settings 里标注为骨架的区域继续落地
-3. Code 页继续向更像原生 Claude Code 的工作流靠拢
-4. 文档、版本、发布链彻底标准化
+1. Code 页继续补更完整的终端、文件预览和 Git 工作流。
+2. Cowork 页继续向任务看板、共享上下文和项目协作中心推进。
+3. Settings 页继续把“骨架”入口改成真实配置项。
+4. 持续跟进上游可复用更新，只合并适合中文分支路线的内容。
 
 ## 支持
 
@@ -162,4 +152,4 @@ http://127.0.0.1:30080/api/github/callback
 
 - [pretend1111/claude-desktop-app](https://github.com/pretend1111/claude-desktop-app)
 
-本分支会持续跟踪上游可复用更新，但只并入适合当前路线的内容。
+本分支会持续跟进上游可复用更新，但只并入适合当前路线的内容。

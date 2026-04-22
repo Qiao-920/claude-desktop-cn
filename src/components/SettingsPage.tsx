@@ -305,6 +305,44 @@ const PlaceholderSection = ({
   </div>
 );
 
+const InfoStat = ({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: React.ReactNode;
+  hint?: React.ReactNode;
+}) => (
+  <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+    <div className="text-[13px] text-claude-textSecondary">{label}</div>
+    <div className="mt-1 text-[15px] font-medium text-claude-text">{value}</div>
+    {hint ? <div className="mt-2 text-[12px] leading-6 text-claude-textSecondary">{hint}</div> : null}
+  </div>
+);
+
+const InlineActionButton = ({
+  children,
+  onClick,
+  tone = 'default',
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  tone?: 'default' | 'danger';
+}) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={`rounded-lg border px-3 py-1.5 text-[12px] transition-colors ${
+      tone === 'danger'
+        ? 'border-[#C6613F]/20 text-[#C6613F] hover:bg-[#C6613F]/6'
+        : 'border-claude-border text-claude-text hover:bg-claude-hover'
+    }`}
+  >
+    {children}
+  </button>
+);
+
 const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const navigate = useNavigate();
   const isSelfHosted = localStorage.getItem('user_mode') === 'selfhosted';
@@ -327,6 +365,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     return saved && validSections.includes(saved) ? saved : 'general';
   });
   const [uiLanguage, setUiLanguage] = useState<UiLanguage>(getStoredUiLanguage());
+  const isZh = uiLanguage === 'zh-CN';
   const [uiDensity, setUiDensity] = useState(localStorage.getItem('ui_density') || 'compact');
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
   const [chatFont, setChatFont] = useState(localStorage.getItem('chat_font') || 'default');
@@ -1219,73 +1258,91 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
       case 'git':
         return (
           <div className="space-y-5">
-            <SectionCard title="Git" subtitle="把当前工作区的仓库状态和默认行为收口到这里，和代码页右侧的 Git 面板互补。">
+            <SectionCard
+              title="Git"
+              subtitle={
+                isZh
+                  ? '把仓库状态、Git 偏好和 Code 工作流入口收在一起，方便检查差异、整理来源和准备发布。'
+                  : 'Bring repository status, Git preferences, and Code workflow entry points together for reviewing diffs, organizing sources, and preparing releases.'
+              }
+            >
               <div className="grid grid-cols-3 gap-4">
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="text-[13px] text-claude-textSecondary">当前工作区</div>
-                  <div className="mt-1 text-[14px] font-medium text-claude-text break-all">
-                    {activeWorkspacePath || '尚未选择工作区'}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="text-[13px] text-claude-textSecondary">仓库状态</div>
-                  <div className="mt-1 text-[14px] font-medium text-claude-text">
-                    {!activeWorkspacePath ? '未初始化' : gitStatus?.isRepo ? '已检测到 Git 仓库' : '不是 Git 仓库'}
-                  </div>
-                  {gitStatus?.isRepo && (
-                    <div className="mt-2 text-[12px] leading-5 text-claude-textSecondary">
-                      分支 {gitStatus.branch || 'unknown'} · {gitStatus.clean ? '工作区干净' : `改动 ${gitStatus.files.length} 个文件`}
+                <InfoStat
+                  label={isZh ? '当前工作区' : 'Current workspace'}
+                  value={activeWorkspacePath || (isZh ? '未选择' : 'Not selected')}
+                  hint={activeWorkspacePath || (isZh ? '先去 Code 选择一个本地目录。' : 'Choose a local folder in Code first.')}
+                />
+                <InfoStat
+                  label={isZh ? '仓库状态' : 'Repository status'}
+                  value={
+                    !activeWorkspacePath
+                      ? isZh ? '未初始化' : 'Not initialized'
+                      : gitStatus?.isRepo
+                        ? isZh ? '已检测到 Git 仓库' : 'Git repository detected'
+                        : isZh ? '不是 Git 仓库' : 'Not a Git repository'
+                  }
+                  hint={gitStatus?.isRepo ? `${gitStatus.branch || 'main'} · ${gitStatus.summary || ''}` : (isZh ? 'Code 页会根据这里决定是否显示 diff 和提交面板。' : 'Code uses this to decide whether to show diff and commit controls.')}
+                />
+                <InfoStat
+                  label={isZh ? '已挂接仓库来源' : 'Linked sources'}
+                  value={linkedSourceCount}
+                  hint={isZh ? '来自 Projects 的 GitHub 仓库来源。' : 'GitHub repository sources attached from Projects.'}
+                />
+              </div>
+
+              <div className="mt-4 rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-[14px] font-medium text-claude-text">{isZh ? '最近 Git 改动' : 'Recent Git changes'}</div>
+                    <div className="mt-1 text-[12px] leading-6 text-claude-textSecondary">
+                      {isZh ? '这里是轻量总览。单文件 diff、暂存、取消暂存和撤销都在 Code 页继续处理。' : 'This is a lightweight overview. Single-file diff, stage, unstage, and restore continue in Code.'}
                     </div>
-                  )}
-                </div>
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="text-[13px] text-claude-textSecondary">已连接 GitHub 源</div>
-                  <div className="mt-1 text-[14px] font-medium text-claude-text">{linkedSourceCount}</div>
-                  <div className="mt-2 text-[12px] leading-5 text-claude-textSecondary">
-                    来自项目页绑定的仓库来源总数
                   </div>
+                  <InlineActionButton onClick={openCodePage}>{isZh ? '打开 Code' : 'Open Code'}</InlineActionButton>
                 </div>
+
+                {gitStatus?.isRepo && gitStatus.files.length > 0 ? (
+                  <div className="space-y-2">
+                    {gitStatus.files.slice(0, 6).map((file) => (
+                      <div key={file.path} className="flex items-center justify-between gap-3 rounded-lg border border-claude-border px-3 py-2">
+                        <div className="min-w-0">
+                          <div className="truncate text-[13px] text-claude-text">{file.path}</div>
+                          <div className="mt-1 text-[11px] text-claude-textSecondary">
+                            {file.code || 'M'}{file.staged ? (isZh ? ' · 已暂存' : ' · staged') : ''}{file.unstaged ? (isZh ? ' · 工作区' : ' · working tree') : ''}
+                          </div>
+                        </div>
+                        <ChevronRight size={14} className="shrink-0 text-claude-textSecondary" />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-dashed border-claude-border px-3 py-4 text-[13px] leading-6 text-claude-textSecondary">
+                    {isZh ? '当前没有可展示的 Git 变更。' : 'There are no Git changes to show right now.'}
+                  </div>
+                )}
               </div>
 
               <div className="mt-4 grid grid-cols-2 gap-4">
                 <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="mb-2 text-[13px] text-claude-textSecondary">提交后动作</div>
-                  <button
-                    type="button"
-                    onClick={() => saveBooleanPref('git_push_after_commit', !gitPushAfterCommit, setGitPushAfterCommit)}
-                    className={`inline-flex items-center rounded-full border px-3 py-1.5 text-[12px] transition-colors ${
-                      gitPushAfterCommit
-                        ? 'border-[#2E7CF6]/35 bg-[#2E7CF6]/10 text-[#2E7CF6]'
-                        : 'border-claude-border text-claude-textSecondary hover:bg-claude-hover'
-                    }`}
-                  >
-                    {gitPushAfterCommit ? '已开启：提交后提醒继续推送' : '关闭：提交后不额外提示'}
-                  </button>
-                  <div className="mt-3 text-[12px] leading-6 text-claude-textSecondary">
-                    这是当前桌面端的 Git 偏好开关。代码页下一步会继续把它接到提交成功后的工作流里。
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[14px] font-medium text-claude-text">{isZh ? '提交后自动推送' : 'Push after commit'}</div>
+                      <div className="mt-1 text-[12px] leading-6 text-claude-textSecondary">{isZh ? '完成 commit 后自动执行 push，适合发布流。' : 'Run push automatically after a successful commit.'}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => saveBooleanPref('git_push_after_commit', !gitPushAfterCommit, setGitPushAfterCommit)}
+                      className={`relative h-7 w-12 rounded-full transition-colors ${gitPushAfterCommit ? 'bg-[#2E7CF6]' : 'bg-claude-border'}`}
+                    >
+                      <span className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-transform ${gitPushAfterCommit ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
                   </div>
                 </div>
-
                 <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="mb-2 text-[13px] text-claude-textSecondary">快速入口</div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={openCodePage}
-                      className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-text hover:bg-claude-hover"
-                    >
-                      打开代码页
-                    </button>
-                    <button
-                      type="button"
-                      onClick={openProjectsPage}
-                      className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-text hover:bg-claude-hover"
-                    >
-                      打开项目页
-                    </button>
-                  </div>
-                  <div className="mt-3 text-[12px] leading-6 text-claude-textSecondary">
-                    现在真正的单文件差异、暂存、提交、推送都已经落在代码页里，这里负责总览和默认行为。
+                  <div className="text-[14px] font-medium text-claude-text">{isZh ? '下一步建议' : 'Suggested next step'}</div>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <InlineActionButton onClick={openCodePage}>{isZh ? '查看差异' : 'Review diff'}</InlineActionButton>
+                    <InlineActionButton onClick={openProjectsPage}>{isZh ? '整理项目来源' : 'Open Projects'}</InlineActionButton>
                   </div>
                 </div>
               </div>
@@ -1296,75 +1353,44 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
       case 'mcp':
         return (
           <div className="space-y-5">
-            <SectionCard title="MCP 服务器" subtitle="这一页先做成“工具接入总览”。当前客户端还没有逐台服务器编辑器，但已经能看到与外部能力相关的关键状态。">
+            <SectionCard
+              title={isZh ? 'MCP 与外部能力' : 'MCP and external capabilities'}
+              subtitle={isZh ? '把 GitHub、Skills 和权限范围做成一个实用总览，后续再补逐个服务诊断。' : 'A practical overview for GitHub, Skills, and permission scope. Per-service diagnostics can land next.'}
+            >
               <div className="grid grid-cols-3 gap-4">
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="text-[13px] text-claude-textSecondary">GitHub 连接</div>
-                  <div className="mt-1 text-[14px] font-medium text-claude-text">
-                    {githubConnected === null ? '检查中…' : githubConnected ? '已连接' : '未连接'}
-                  </div>
-                  <div className="mt-2 text-[12px] leading-5 text-claude-textSecondary">
-                    Add from GitHub 与项目 GitHub 源同步都依赖这里
-                  </div>
-                </div>
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="text-[13px] text-claude-textSecondary">已启用技能</div>
-                  <div className="mt-1 text-[14px] font-medium text-claude-text">{skillStats.enabled}</div>
-                  <div className="mt-2 text-[12px] leading-5 text-claude-textSecondary">
-                    内置 {skillStats.builtIn} · 自定义 {skillStats.custom}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="text-[13px] text-claude-textSecondary">当前权限范围</div>
-                  <div className="mt-1 text-[14px] font-medium text-claude-text">
-                    {permissionMode === 'workspace_write'
-                      ? '安全模式'
-                      : permissionMode === 'project'
-                        ? '项目权限'
-                        : '完全访问'}
-                  </div>
-                  <div className="mt-2 text-[12px] leading-5 text-claude-textSecondary">
-                    外部工具和代码能力最终都会受这里约束
-                  </div>
-                </div>
+                <InfoStat
+                  label="GitHub"
+                  value={githubConnected === null ? (isZh ? '检查中' : 'Checking') : githubConnected ? (isZh ? '已连接' : 'Connected') : (isZh ? '未连接' : 'Disconnected')}
+                  hint={isZh ? 'Add from GitHub、项目仓库来源和仓库选择器都依赖这条连接。' : 'Add from GitHub, project sources, and repository pickers all depend on this connection.'}
+                />
+                <InfoStat label={isZh ? '已启用 Skills' : 'Enabled skills'} value={skillStats.enabled} hint={isZh ? `内置 ${skillStats.builtIn} · 自定义 ${skillStats.custom}` : `Built-in ${skillStats.builtIn} · Custom ${skillStats.custom}`} />
+                <InfoStat label={isZh ? '权限范围' : 'Permission scope'} value={permissionMode} hint={isZh ? '命令、文件和外部能力都会受当前权限模式影响。' : 'Commands, files, and external capabilities are constrained by the current permission mode.'} />
               </div>
 
               <div className="mt-4 grid grid-cols-2 gap-4">
                 <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="mb-3 text-[13px] text-claude-textSecondary">GitHub 连接管理</div>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="text-[14px] font-medium text-claude-text">{isZh ? 'GitHub 连接' : 'GitHub connection'}</div>
+                  <div className="mt-2 text-[12px] leading-6 text-claude-textSecondary">
+                    {githubConnected ? (isZh ? '当前已经可用，可以继续挂接仓库来源。' : 'The connection is ready. You can keep attaching repository sources.') : (isZh ? '连接后，仓库选择和项目来源会更顺手。' : 'Once connected, repository picking and project sources become smoother.')}
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
                     {githubConnected ? (
-                      <button
-                        type="button"
-                        onClick={handleGithubDisconnect}
-                        className="rounded-lg border border-[#C6613F]/20 px-3 py-1.5 text-[12px] text-[#C6613F] hover:bg-[#C6613F]/6"
-                      >
-                        断开 GitHub
-                      </button>
+                      <InlineActionButton tone="danger" onClick={handleGithubDisconnect}>{isZh ? '断开 GitHub' : 'Disconnect GitHub'}</InlineActionButton>
                     ) : (
-                      <button
-                        type="button"
-                        onClick={handleGithubConnect}
-                        className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-text hover:bg-claude-hover"
-                      >
-                        连接 GitHub
-                      </button>
+                      <InlineActionButton onClick={handleGithubConnect}>{isZh ? '连接 GitHub' : 'Connect GitHub'}</InlineActionButton>
                     )}
-                    <button
-                      type="button"
-                      onClick={openProjectsPage}
-                      className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-text hover:bg-claude-hover"
-                    >
-                      管理项目来源
-                    </button>
+                    <InlineActionButton onClick={openProjectsPage}>{isZh ? '打开 Projects' : 'Open Projects'}</InlineActionButton>
+                    <InlineActionButton onClick={() => setSection('permissions')}>{isZh ? '查看权限设置' : 'Open permissions'}</InlineActionButton>
                   </div>
                 </div>
 
                 <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="mb-2 text-[13px] text-claude-textSecondary">现阶段说明</div>
-                  <div className="text-[12px] leading-6 text-claude-textSecondary">
-                    现在已经能看到技能、GitHub 连接和权限模式这些“会影响工具可见性”的真实状态。下一步再继续补逐台 MCP 服务的启停、作用域、超时和中文说明。
-                  </div>
+                  <div className="text-[14px] font-medium text-claude-text">{isZh ? '下一层准备补什么' : 'What lands next'}</div>
+                  <ul className="mt-3 space-y-2 text-[12px] leading-6 text-claude-textSecondary">
+                    <li>• {isZh ? '逐个 MCP 服务开关和状态检测' : 'Per-service MCP toggles and status checks'}</li>
+                    <li>• {isZh ? '能力来源说明、权限提示和失败诊断' : 'Capability source hints, permission prompts, and failure diagnostics'}</li>
+                    <li>• {isZh ? '更完整的 Skills 分类和调用说明' : 'A richer Skills catalog and invocation guide'}</li>
+                  </ul>
                 </div>
               </div>
             </SectionCard>
@@ -1374,78 +1400,62 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
       case 'environment':
         return (
           <div className="space-y-5">
-            <SectionCard title="环境" subtitle="把命令执行时真正会影响体验的几个参数先变成可配：终端、超时、历史保留和工作区记忆。">
+            <SectionCard title={isZh ? '环境' : 'Environment'} subtitle={isZh ? '集中管理会影响 Code 页体验的 Shell、超时、命令历史和工作区记忆。' : 'Manage the shell, timeout, command history, and workspace memory used by Code.'}>
               <div className="grid grid-cols-2 gap-4">
                 <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="mb-1 text-[13px] text-claude-textSecondary">命令超时</div>
+                  <div className="mb-1 text-[13px] text-claude-textSecondary">{isZh ? '命令超时' : 'Command timeout'}</div>
                   <select
                     value={codeCommandTimeout}
                     onChange={(e) => saveStringPref('code_command_timeout_ms', e.target.value, setCodeCommandTimeout)}
                     className="w-full rounded-xl border border-claude-border bg-claude-input px-4 py-3 text-[14px] text-claude-text outline-none"
                   >
-                    <option value="60000">60 秒</option>
-                    <option value="120000">120 秒</option>
-                    <option value="300000">300 秒</option>
-                    <option value="600000">600 秒</option>
+                    <option value="60000">60s</option>
+                    <option value="120000">120s</option>
+                    <option value="300000">300s</option>
+                    <option value="600000">600s</option>
                   </select>
-                  <div className="mt-2 text-[12px] leading-6 text-claude-textSecondary">
-                    代码页控制台会按这里的超时上限执行命令。
-                  </div>
+                  <div className="mt-2 text-[12px] leading-6 text-claude-textSecondary">{isZh ? '长任务可以设长一点，排查小问题时可以设短一点。' : 'Use a higher limit for long jobs and a lower one while debugging small commands.'}</div>
                 </div>
-
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="mb-1 text-[13px] text-claude-textSecondary">命令历史保留</div>
-                  <button
-                    type="button"
-                    onClick={() => saveBooleanPref('code_persist_command_history', !persistCommandHistory, setPersistCommandHistory)}
-                    className={`inline-flex items-center rounded-full border px-3 py-1.5 text-[12px] transition-colors ${
-                      persistCommandHistory
-                        ? 'border-[#2E7CF6]/35 bg-[#2E7CF6]/10 text-[#2E7CF6]'
-                        : 'border-claude-border text-claude-textSecondary hover:bg-claude-hover'
-                    }`}
-                  >
-                    {persistCommandHistory ? '已开启：重开应用后保留命令记录' : '关闭：命令记录只保留本次会话'}
-                  </button>
-                  <div className="mt-2 text-[12px] leading-6 text-claude-textSecondary">
-                    这一项会和代码页控制台联动，方便你继续追命令输出。
-                  </div>
-                </div>
+                <InfoStat
+                  label={isZh ? '当前默认 Shell' : 'Current default shell'}
+                  value={integratedShell === 'powershell' ? 'PowerShell' : integratedShell === 'cmd' ? 'Command Prompt' : integratedShell === 'git-bash' ? 'Git Bash' : 'WSL'}
+                  hint={isZh ? '也可以在“常规”里切换。' : 'You can also change this in General.'}
+                />
               </div>
 
               <div className="mt-4 grid grid-cols-2 gap-4">
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="mb-1 text-[13px] text-claude-textSecondary">工作区记忆</div>
-                  <button
-                    type="button"
-                    onClick={() => saveBooleanPref('code_remember_workspace', !rememberWorkspace, setRememberWorkspace)}
-                    className={`inline-flex items-center rounded-full border px-3 py-1.5 text-[12px] transition-colors ${
-                      rememberWorkspace
-                        ? 'border-[#2E7CF6]/35 bg-[#2E7CF6]/10 text-[#2E7CF6]'
-                        : 'border-claude-border text-claude-textSecondary hover:bg-claude-hover'
-                    }`}
-                  >
-                    {rememberWorkspace ? '已开启：记住最近工作区' : '关闭：不保留上次工作区'}
-                  </button>
-                  <div className="mt-2 text-[12px] leading-6 text-claude-textSecondary">
-                    你更偏向原生 Claude Code 的工作流，这个开关就是对应的环境层。
+                {[
+                  {
+                    key: 'code_persist_command_history',
+                    value: persistCommandHistory,
+                    setter: setPersistCommandHistory,
+                    title: isZh ? '保留命令历史' : 'Persist command history',
+                    desc: isZh ? '重新打开应用后，命令面板还能记住最近输入。' : 'Keep recent command input available after reopening the app.',
+                  },
+                  {
+                    key: 'code_remember_workspace',
+                    value: rememberWorkspace,
+                    setter: setRememberWorkspace,
+                    title: isZh ? '记住最近工作区' : 'Remember recent workspaces',
+                    desc: isZh ? '下次进入 Code 时优先回到最近目录。' : 'Prefer the most recently used folder when entering Code.',
+                  },
+                ].map((item) => (
+                  <div key={item.key} className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[14px] font-medium text-claude-text">{item.title}</div>
+                        <div className="mt-1 text-[12px] leading-6 text-claude-textSecondary">{item.desc}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => saveBooleanPref(item.key, !item.value, item.setter)}
+                        className={`relative h-7 w-12 rounded-full transition-colors ${item.value ? 'bg-[#2E7CF6]' : 'bg-claude-border'}`}
+                      >
+                        <span className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-transform ${item.value ? 'translate-x-6' : 'translate-x-1'}`} />
+                      </button>
+                    </div>
                   </div>
-                </div>
-
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="mb-1 text-[13px] text-claude-textSecondary">当前默认 Shell</div>
-                  <div className="text-[14px] font-medium text-claude-text">
-                    {integratedShell === 'powershell'
-                      ? 'PowerShell'
-                      : integratedShell === 'cmd'
-                        ? 'Command Prompt'
-                        : integratedShell === 'git-bash'
-                          ? 'Git Bash'
-                          : 'WSL'}
-                  </div>
-                  <div className="mt-2 text-[12px] leading-6 text-claude-textSecondary">
-                    如需切换解释器，可回到上方“常规”里的集成终端设置。
-                  </div>
-                </div>
+                ))}
               </div>
             </SectionCard>
           </div>
@@ -1454,59 +1464,28 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
       case 'worktree':
         return (
           <div className="space-y-5">
-            <SectionCard title="工作树" subtitle="这里开始承接代码页的工作区记忆，把当前目录、最近目录和清理动作集中起来。">
+            <SectionCard title={isZh ? '工作区与工作树' : 'Workspace and worktree'} subtitle={isZh ? '把当前目录、最近目录和清理动作集中到这里。' : 'Centralize the current folder, recent folders, and cleanup actions here.'}>
               <div className="grid grid-cols-[1.1fr_0.9fr] gap-4">
                 <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="text-[13px] text-claude-textSecondary">当前工作区</div>
-                  <div className="mt-1 break-all text-[14px] font-medium text-claude-text">
-                    {activeWorkspacePath || '尚未选择工作区'}
-                  </div>
+                  <div className="text-[13px] text-claude-textSecondary">{isZh ? '当前工作区' : 'Current workspace'}</div>
+                  <div className="mt-1 break-all text-[14px] font-medium text-claude-text">{activeWorkspacePath || (isZh ? '未选择' : 'Not selected')}</div>
                   <div className="mt-3 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={openCodePage}
-                      className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-text hover:bg-claude-hover"
-                    >
-                      打开代码页
-                    </button>
-                    {activeWorkspacePath && (
-                      <button
-                        type="button"
-                        onClick={clearCurrentWorkspace}
-                        className="rounded-lg border border-[#C6613F]/20 px-3 py-1.5 text-[12px] text-[#C6613F] hover:bg-[#C6613F]/6"
-                      >
-                        清空当前工作区
-                      </button>
-                    )}
+                    <InlineActionButton onClick={openCodePage}>{isZh ? '打开 Code' : 'Open Code'}</InlineActionButton>
+                    {activeWorkspacePath && <InlineActionButton tone="danger" onClick={clearCurrentWorkspace}>{isZh ? '清空当前工作区' : 'Clear current workspace'}</InlineActionButton>}
                   </div>
+                  <div className="mt-3 text-[12px] leading-6 text-claude-textSecondary">{isZh ? '文件树、Git 面板和命令控制台都会围绕这个目录工作。' : 'The file tree, Git panel, and command console all operate around this folder.'}</div>
                 </div>
 
                 <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="text-[13px] text-claude-textSecondary">最近工作区</div>
+                  <div className="text-[13px] text-claude-textSecondary">{isZh ? '最近工作区' : 'Recent workspaces'}</div>
                   <div className="mt-3 space-y-2">
-                    {recentWorkspaces.length > 0 ? (
-                      recentWorkspaces.slice(0, 5).map((item) => (
-                        <div key={item} className="rounded-lg border border-claude-border px-3 py-2 text-[12px] break-all text-claude-textSecondary">
-                          {item}
-                        </div>
-                      ))
-                    ) : (
-                      <div className="text-[12px] leading-6 text-claude-textSecondary">
-                        还没有保存的最近工作区记录。
-                      </div>
+                    {recentWorkspaces.length > 0 ? recentWorkspaces.slice(0, 6).map((path) => (
+                      <div key={path} className="rounded-lg border border-claude-border px-3 py-2 text-[12px] leading-6 text-claude-textSecondary">{path}</div>
+                    )) : (
+                      <div className="rounded-lg border border-dashed border-claude-border px-3 py-4 text-[12px] leading-6 text-claude-textSecondary">{isZh ? '最近还没有保存过工作区历史。' : 'No workspace history has been saved yet.'}</div>
                     )}
                   </div>
-                  {recentWorkspaces.length > 0 && (
-                    <div className="mt-3">
-                      <button
-                        type="button"
-                        onClick={clearWorkspaceHistory}
-                        className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-text hover:bg-claude-hover"
-                      >
-                        清空最近记录
-                      </button>
-                    </div>
-                  )}
+                  {recentWorkspaces.length > 0 && <div className="mt-3"><InlineActionButton tone="danger" onClick={clearWorkspaceHistory}>{isZh ? '清空最近历史' : 'Clear recent history'}</InlineActionButton></div>}
                 </div>
               </div>
             </SectionCard>
@@ -1516,66 +1495,41 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
       case 'archived':
         return (
           <div className="space-y-5">
-            <SectionCard title="已归档聊天" subtitle="当前服务端还没有独立的 archive 字段，所以这页先承接“历史会话总览”与后续归档入口。">
+            <SectionCard title={isZh ? '历史与归档' : 'History and archive'} subtitle={isZh ? '这里先汇总设备会话、最近对话和归档项目。' : 'Summarize device sessions, recent conversations, and archived projects here.'}>
               <div className="grid grid-cols-3 gap-4">
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="text-[13px] text-claude-textSecondary">当前会话设备数</div>
-                  <div className="mt-1 text-[14px] font-medium text-claude-text">{sessions.length}</div>
-                </div>
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="text-[13px] text-claude-textSecondary">最近聊天数</div>
-                  <div className="mt-1 text-[14px] font-medium text-claude-text">{recentConversations.length}</div>
-                </div>
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="text-[13px] text-claude-textSecondary">归档项目数</div>
-                  <div className="mt-1 text-[14px] font-medium text-claude-text">{archivedProjects.length}</div>
-                </div>
+                <InfoStat label={isZh ? '当前设备会话' : 'Active device sessions'} value={sessions.length} />
+                <InfoStat label={isZh ? '最近对话' : 'Recent conversations'} value={recentConversations.length} />
+                <InfoStat label={isZh ? '归档项目' : 'Archived projects'} value={archivedProjects.length} />
               </div>
 
               <div className="mt-4 grid grid-cols-2 gap-4">
                 <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="mb-3 text-[13px] text-claude-textSecondary">最近聊天</div>
+                  <div className="mb-3 text-[13px] text-claude-textSecondary">{isZh ? '最近对话' : 'Recent conversations'}</div>
                   <div className="space-y-2">
-                    {recentConversations.length > 0 ? (
-                      recentConversations.slice(0, 6).map((conversation) => (
-                        <button
-                          key={conversation.id}
-                          type="button"
-                          onClick={() => openChatPage(conversation.id)}
-                          className="flex w-full items-center justify-between gap-3 rounded-lg border border-claude-border px-3 py-2 text-left hover:bg-claude-hover"
-                        >
-                          <span className="truncate text-[13px] text-claude-text">
-                            {conversation.title || '未命名聊天'}
-                          </span>
-                          <ChevronRight size={14} className="shrink-0 text-claude-textSecondary" />
-                        </button>
-                      ))
-                    ) : (
-                      <div className="text-[12px] leading-6 text-claude-textSecondary">还没有聊天历史。</div>
-                    )}
+                    {recentConversations.length > 0 ? recentConversations.slice(0, 6).map((conversation) => (
+                      <button key={conversation.id} type="button" onClick={() => openChatPage(conversation.id)} className="flex w-full items-center justify-between gap-3 rounded-lg border border-claude-border px-3 py-2 text-left hover:bg-claude-hover">
+                        <div className="min-w-0">
+                          <div className="truncate text-[13px] text-claude-text">{conversation.title || (isZh ? '未命名对话' : 'Untitled chat')}</div>
+                          <div className="mt-1 text-[11px] text-claude-textSecondary">{formatTime(conversation.updated_at || conversation.created_at)}</div>
+                        </div>
+                        <ChevronRight size={14} className="shrink-0 text-claude-textSecondary" />
+                      </button>
+                    )) : <div className="rounded-lg border border-dashed border-claude-border px-3 py-4 text-[12px] leading-6 text-claude-textSecondary">{isZh ? '当前还没有可展示的最近会话。' : 'There are no recent conversations to show yet.'}</div>}
                   </div>
                 </div>
 
                 <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="mb-3 text-[13px] text-claude-textSecondary">已归档项目</div>
+                  <div className="mb-3 text-[13px] text-claude-textSecondary">{isZh ? '归档项目' : 'Archived projects'}</div>
                   <div className="space-y-2">
-                    {archivedProjects.length > 0 ? (
-                      archivedProjects.slice(0, 6).map((project) => (
-                        <button
-                          key={project.id}
-                          type="button"
-                          onClick={openProjectsPage}
-                          className="flex w-full items-center justify-between gap-3 rounded-lg border border-claude-border px-3 py-2 text-left hover:bg-claude-hover"
-                        >
-                          <span className="truncate text-[13px] text-claude-text">{project.name}</span>
-                          <ChevronRight size={14} className="shrink-0 text-claude-textSecondary" />
-                        </button>
-                      ))
-                    ) : (
-                      <div className="text-[12px] leading-6 text-claude-textSecondary">
-                        当前还没有归档项目。后面把聊天归档正式接上后，这里会继续汇总历史线程。
-                      </div>
-                    )}
+                    {archivedProjects.length > 0 ? archivedProjects.slice(0, 6).map((project) => (
+                      <button key={project.id} type="button" onClick={openProjectsPage} className="flex w-full items-center justify-between gap-3 rounded-lg border border-claude-border px-3 py-2 text-left hover:bg-claude-hover">
+                        <div className="min-w-0">
+                          <div className="truncate text-[13px] text-claude-text">{project.name}</div>
+                          <div className="mt-1 text-[11px] text-claude-textSecondary">{isZh ? `文件 ${project.file_count || 0} · 对话 ${project.chat_count || 0}` : `Files ${project.file_count || 0} · Chats ${project.chat_count || 0}`}</div>
+                        </div>
+                        <ChevronRight size={14} className="shrink-0 text-claude-textSecondary" />
+                      </button>
+                    )) : <div className="rounded-lg border border-dashed border-claude-border px-3 py-4 text-[12px] leading-6 text-claude-textSecondary">{isZh ? '现在还没有归档项目。' : 'There are no archived projects yet.'}</div>}
                   </div>
                 </div>
               </div>
@@ -1586,42 +1540,35 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
       case 'usage':
         return (
           <div className="space-y-5">
-            <SectionCard title="使用情况" subtitle="把当前额度、消息量和平台侧统计放在一起。">
+            <SectionCard title={isZh ? '使用情况' : 'Usage'} subtitle={isZh ? '汇总平台配额、本地项目和客户端活跃度。' : 'Summarize platform quota, local projects, and client activity.'}>
               {isSelfHosted ? (
-                <div className="rounded-xl border border-dashed border-claude-border px-4 py-4 text-[13px] leading-6 text-claude-textSecondary">
-                  你当前处于自部署模式。平台套餐额度不一定适用，建议以后在这里补本地推理统计、请求次数、平均速度和模型命中率。
+                <div className="space-y-4">
+                  <div className="grid grid-cols-4 gap-4">
+                    <InfoStat label={isZh ? '项目总数' : 'Total projects'} value={projects.length} />
+                    <InfoStat label={isZh ? '活跃项目' : 'Active projects'} value={projects.length - archivedProjects.length} />
+                    <InfoStat label={isZh ? '最近对话' : 'Recent chats'} value={recentConversations.length} />
+                    <InfoStat label={isZh ? '已启用 Skills' : 'Enabled skills'} value={skillStats.enabled} />
+                  </div>
+                  <div className="rounded-xl border border-dashed border-claude-border px-4 py-4 text-[13px] leading-6 text-claude-textSecondary">{isZh ? '自部署模式下，后续可以继续加入本地推理速度、请求数、平均耗时和模型命中率。' : 'In self-hosted mode, good next additions are local inference speed, request counts, average latency, and model hit rate.'}</div>
                 </div>
               ) : usage ? (
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                    <div className="text-[13px] text-claude-textSecondary mb-1">Token 用量</div>
-                    <div className="text-[20px] font-semibold text-claude-text">
-                      {formatUsageValue(usage.token_used, usage.token_quota)}
-                    </div>
-                    <div className="mt-2 text-[12px] text-claude-textSecondary">
-                      已使用 {formatPercent(usage.usage_percent)}
-                    </div>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-3 gap-4">
+                    <InfoStat label="Tokens" value={formatUsageValue(usage.token_used, usage.token_quota)} hint={isZh ? `已使用 ${formatPercent(usage.usage_percent)}` : `${formatPercent(usage.usage_percent)} used`} />
+                    <InfoStat label={isZh ? '消息数' : 'Messages'} value={formatUsageValue(usage.message_used, usage.message_quota)} />
+                    <InfoStat label={isZh ? '本地上下文' : 'Local context'} value={`${projects.length} / ${recentConversations.length}`} hint={isZh ? '项目数 / 最近对话数' : 'Projects / recent conversations'} />
                   </div>
                   <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                    <div className="text-[13px] text-claude-textSecondary mb-1">今日消息</div>
-                    <div className="text-[20px] font-semibold text-claude-text">
-                      {usage.messages?.today ?? 0}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                    <div className="text-[13px] text-claude-textSecondary mb-1">本月消息</div>
-                    <div className="text-[20px] font-semibold text-claude-text">
-                      {usage.messages?.month ?? 0}
-                    </div>
+                    <div className="text-[14px] font-medium text-claude-text">{isZh ? '当前账号状态' : 'Account status'}</div>
+                    <div className="mt-2 text-[12px] leading-6 text-claude-textSecondary">{isZh ? '这里先展示配额和活跃度基础总览。后面适合继续补工具调用次数、失败重试率和模型使用占比。' : 'This currently shows a basic quota and activity overview. Good next additions include tool call counts, retry rate, and model share.'}</div>
                   </div>
                 </div>
               ) : (
-                <div className="text-[13px] text-claude-textSecondary">正在加载用量数据…</div>
+                <div className="rounded-xl border border-dashed border-claude-border px-4 py-4 text-[13px] leading-6 text-claude-textSecondary">{isZh ? '暂时还没有拿到可展示的使用统计。' : 'Usage statistics are not available yet.'}</div>
               )}
             </SectionCard>
           </div>
         );
-
       case 'account':
         return (
           <div className="space-y-5">

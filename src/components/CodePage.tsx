@@ -1163,6 +1163,40 @@ const CodePage = () => {
           </div>
         </div>
 
+        {workspacePath && (
+          <div className="h-9 border-b border-claude-border bg-claude-surface/35 px-5 shrink-0 flex items-center justify-between gap-3 text-[11px] text-claude-textSecondary">
+            <div className="min-w-0 flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-claude-border bg-claude-input px-2 py-1">
+                <FolderOpen size={12} />
+                <span className="truncate max-w-[320px]">{workspacePath}</span>
+              </span>
+              <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 ${
+                gitStatus?.isRepo
+                  ? gitStatus.clean
+                    ? 'border-emerald-500/30 text-emerald-500 bg-emerald-500/10'
+                    : 'border-[#C6613F]/30 text-[#C6613F] bg-[#C6613F]/10'
+                  : 'border-claude-border bg-claude-input'
+              }`}>
+                <GitBranch size={12} />
+                {gitStatus?.isRepo
+                  ? gitStatus.clean
+                    ? (isZh ? 'Git 干净' : 'Git clean')
+                    : (isZh ? '有未提交改动' : 'Uncommitted changes')
+                  : (isZh ? '未检测到 Git' : 'No Git repo')}
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-md border border-claude-border bg-claude-input px-2 py-1">
+                <Terminal size={12} />
+                {isZh ? `最近命令 ${recentCommands.length}` : `${recentCommands.length} recent commands`}
+              </span>
+            </div>
+            <div className="hidden lg:flex items-center gap-2">
+              <span>{getPermissionCopy(permissionMode, isZh).label}</span>
+              <span className="opacity-40">/</span>
+              <span>{localStorage.getItem('git_push_after_commit') === '1' ? (isZh ? '提交后自动推送' : 'Auto-push after commit') : (isZh ? '手动推送' : 'Manual push')}</span>
+            </div>
+          </div>
+        )}
+
         {error && (
           <div className="mx-5 mt-3 px-3 py-2 rounded-md border border-[#C6613F]/30 bg-[#C6613F]/10 text-[#C6613F] text-[12px] flex items-center gap-2 shrink-0">
             <AlertTriangle size={14} />
