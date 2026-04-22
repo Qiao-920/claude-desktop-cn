@@ -19,10 +19,10 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `1.6.19` |
-| Windows 安装包 | `Claude-Desktop-CN-Setup-1.6.19.exe` |
+| 当前版本 | `1.6.20` |
+| Windows 安装包 | `Claude-Desktop-CN-Setup-1.6.20.exe` |
 | 下载页面 | [GitHub Releases](https://github.com/Qiao-920/claude-desktop-cn/releases) |
-| 本轮更新说明 | [Claude Desktop CN v1.6.19](https://github.com/Qiao-920/claude-desktop-cn/releases/tag/v1.6.19) |
+| 本轮更新说明 | [Claude Desktop CN v1.6.20](https://github.com/Qiao-920/claude-desktop-cn/releases/tag/v1.6.20) |
 | 产品任务清单 | [cc-haha 能力对照与 Claude Desktop CN 产品任务清单](docs/cc-haha-capability-map.md) |
 
 默认安装路径通常是：
@@ -68,7 +68,10 @@ http://127.0.0.1:30080/api/github/callback
 - 提交、推送、提交后自动推送。
 - Shell 偏好、常用命令快捷入口、命令历史。
 - 命令执行权限守卫、风险命令拦截、超时控制。
+- 工作区健康检查：识别 Git、包管理器、脚本和常见风险。
+- 中高风险命令审批：执行前确认，并写入审计记录。
 - 命令输出显示 Shell、退出码、耗时、权限模式和超时状态。
+- Artifact / HTML 预览会回传脚本错误、空白状态和控制台日志，减少黑屏误判。
 
 ### Cowork 协作页
 
@@ -79,6 +82,7 @@ http://127.0.0.1:30080/api/github/callback
 - 当前队列：提示下一步应该连接什么、整理什么。
 - 最近项目列表。
 - 协作 / 代码页职责边界说明。
+- 本地任务看板：支持新增任务、移动状态、重置模板。
 
 它现在仍不是完整多人协作系统，但已经具备真实产品页的骨架和入口。
 
@@ -89,6 +93,8 @@ http://127.0.0.1:30080/api/github/callback
 - 常规、外观、模型、个性化、权限。
 - Git、MCP 服务器、环境、工作树。
 - 已归档聊天、使用情况。
+- Skills 能力页：查看内置 / 自定义 Skill，并切换启用状态。
+- MCP 服务器页：新增、启停、删除、基础连通性测试。
 
 其中 Git、MCP、环境、工作树、已归档聊天、使用情况已经不再是单纯占位，而是有状态、有入口、有说明的可继续扩展页面。
 
@@ -126,16 +132,17 @@ http://127.0.0.1:30080/api/github/callback
 
 | 优先级 | 方向 | 目标 |
 | --- | --- | --- |
-| P0 | 工作区健康检查 | 选择目录后自动识别 Git、Node、Python、包管理器和可运行脚本。 |
-| P0 | 命令审批与审计 | 让高风险命令有更清晰的确认、记录和回滚提示。 |
-| P1 | MCP 服务器 | 从设置页骨架升级成真实服务器列表、启停、环境变量和连接测试。 |
-| P1 | Skills | 增加中文解释、启用状态、详情页和项目绑定。 |
-| P1 | Cowork | 做成任务看板、上下文整理和审阅入口，而不是纯说明页。 |
+| P0 | 工作区健康检查 | 已落地第一版，下一步补更细的依赖诊断和一键修复建议。 |
+| P0 | 命令审批与审计 | 已落地第一版，下一步补按项目筛选、导出和撤销建议。 |
+| P1 | MCP 服务器 | 已支持新增、启停、删除、测试，下一步补环境变量和工具列表。 |
+| P1 | Skills | 已支持列表和开关，下一步补详情页、中文 tooltip 和项目绑定。 |
+| P1 | Cowork | 已做成本地任务看板，下一步接 GitHub Issues、项目状态和多人分工。 |
 
 ## 发布说明
 
 更新内容不再堆在 README 首页，版本日志统一放在 GitHub Releases 和 `docs/releases` 目录：
 
+- [v1.6.20 发布说明](docs/releases/v1.6.20-cn.md)
 - [v1.6.19 发布说明](docs/releases/v1.6.19-cn.md)
 - [全部 Releases](https://github.com/Qiao-920/claude-desktop-cn/releases)
 

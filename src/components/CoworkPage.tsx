@@ -3,12 +3,15 @@ import {
   AlertCircle,
   ArrowRight,
   CheckCircle2,
+  Circle,
+  Clock3,
   FolderGit2,
   FolderOpen,
   Github,
   LayoutGrid,
   Link2,
   MessageSquareText,
+  Plus,
   Settings2,
   ShieldCheck,
   Sparkles,
@@ -33,6 +36,51 @@ const formatPermissionLabel = (permissionMode?: string, isZh = true): string => 
   return '未知';
 };
 
+type CoworkTaskStatus = 'todo' | 'doing' | 'done';
+
+type CoworkTask = {
+  id: string;
+  title: string;
+  description: string;
+  status: CoworkTaskStatus;
+  source: string;
+  updatedAt: string;
+};
+
+const COWORK_BOARD_STORAGE_KEY = 'cowork_task_board_v1';
+
+const makeTaskId = () => `task-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+
+const createSeedTasks = (isZh: boolean, workspacePath: string): CoworkTask[] => {
+  const now = new Date().toISOString();
+  return [
+    {
+      id: makeTaskId(),
+      title: isZh ? '确认当前工作区' : 'Confirm current workspace',
+      description: workspacePath || (isZh ? '进入 Code 页选择项目目录。' : 'Open Code and choose a project folder.'),
+      status: workspacePath ? 'done' : 'todo',
+      source: 'Code',
+      updatedAt: now,
+    },
+    {
+      id: makeTaskId(),
+      title: isZh ? '补齐发布说明' : 'Complete release notes',
+      description: isZh ? '把每个版本的更新内容写到 GitHub Release，而不是堆在 README。' : 'Keep changelog entries in GitHub Releases instead of piling them into README.',
+      status: 'doing',
+      source: 'Release',
+      updatedAt: now,
+    },
+    {
+      id: makeTaskId(),
+      title: isZh ? '整理下一轮产品功能' : 'Plan the next product slice',
+      description: isZh ? '继续围绕工作区、命令执行、权限、预览稳定性推进。' : 'Continue around workspace, command execution, permissions, and preview stability.',
+      status: 'todo',
+      source: 'Product',
+      updatedAt: now,
+    },
+  ];
+};
+
 const CoworkPage = () => {
   const navigate = useNavigate();
   const isZh = getStoredUiLanguage() === 'zh-CN';
@@ -42,6 +90,15 @@ const CoworkPage = () => {
   const [loading, setLoading] = useState(true);
 
   const workspacePath = localStorage.getItem('code_workspace_path') || '';
+  const [boardTasks, setBoardTasks] = useState<CoworkTask[]>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(COWORK_BOARD_STORAGE_KEY) || '[]');
+      return Array.isArray(raw) && raw.length > 0 ? raw : createSeedTasks(isZh, workspacePath);
+    } catch {
+      return createSeedTasks(isZh, workspacePath);
+    }
+  });
+  const [newTaskTitle, setNewTaskTitle] = useState('');
   const linkedSourceCount = useMemo(
     () => projects.reduce((total, project) => total + (project.github_sources?.length || 0), 0),
     [projects],
@@ -92,8 +149,43 @@ const CoworkPage = () => {
     };
   }, [isZh]);
 
+  useEffect(() => {
+    localStorage.setItem(COWORK_BOARD_STORAGE_KEY, JSON.stringify(boardTasks));
+  }, [boardTasks]);
+
   const openSettingsSection = (section: string) => {
     window.dispatchEvent(new CustomEvent('open-settings', { detail: { section } }));
+  };
+
+  const boardColumns: Array<{ key: CoworkTaskStatus; title: string; icon: React.ComponentType<{ size?: number; className?: string }> }> = [
+    { key: 'todo', title: isZh ? '待处理' : 'To do', icon: Circle },
+    { key: 'doing', title: isZh ? '进行中' : 'Doing', icon: Clock3 },
+    { key: 'done', title: isZh ? '已完成' : 'Done', icon: CheckCircle2 },
+  ];
+
+  const moveTask = (taskId: string, status: CoworkTaskStatus) => {
+    setBoardTasks((current) => current.map((task) => task.id === taskId ? { ...task, status, updatedAt: new Date().toISOString() } : task));
+  };
+
+  const addBoardTask = () => {
+    const title = newTaskTitle.trim();
+    if (!title) return;
+    setBoardTasks((current) => [
+      {
+        id: makeTaskId(),
+        title,
+        description: isZh ? '从协作页手动添加。' : 'Added manually from Cowork.',
+        status: 'todo',
+        source: 'Cowork',
+        updatedAt: new Date().toISOString(),
+      },
+      ...current,
+    ]);
+    setNewTaskTitle('');
+  };
+
+  const resetBoardTasks = () => {
+    setBoardTasks(createSeedTasks(isZh, workspacePath));
   };
 
   const summaryCards = [
@@ -305,6 +397,100 @@ const CoworkPage = () => {
               </button>
             );
           })}
+        </div>
+
+        <div className="mt-6 rounded-2xl border border-claude-border bg-claude-input p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-3">
+                <UsersRound size={18} className="text-claude-textSecondary" />
+                <h2 className="text-[17px] font-semibold text-claude-text">
+                  {isZh ? '任务看板' : 'Task board'}
+                </h2>
+              </div>
+              <p className="mt-2 text-[13px] leading-6 text-claude-textSecondary">
+                {isZh
+                  ? '先用本地看板把产品任务、发布事项和工作区事项收起来。后面可以继续接多人分工、GitHub Issues 和状态流。'
+                  : 'A local board for product, release, and workspace tasks. Later it can connect to assignees, GitHub Issues, and status streams.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={resetBoardTasks}
+              className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-textSecondary hover:bg-claude-hover hover:text-claude-text"
+            >
+              {isZh ? '重置模板' : 'Reset'}
+            </button>
+          </div>
+
+          <div className="mt-4 flex gap-3">
+            <input
+              value={newTaskTitle}
+              onChange={(event) => setNewTaskTitle(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  addBoardTask();
+                }
+              }}
+              placeholder={isZh ? '添加一个任务，例如：补齐预览错误提示' : 'Add a task, e.g. improve preview diagnostics'}
+              className="h-10 flex-1 rounded-lg border border-claude-border bg-claude-bg px-3 text-[13px] text-claude-text outline-none"
+            />
+            <button
+              type="button"
+              onClick={addBoardTask}
+              disabled={!newTaskTitle.trim()}
+              className="flex h-10 items-center gap-2 rounded-lg bg-claude-text px-4 text-[13px] font-medium text-claude-bg disabled:opacity-50"
+            >
+              <Plus size={14} />
+              {isZh ? '添加' : 'Add'}
+            </button>
+          </div>
+
+          <div className="mt-5 grid grid-cols-3 gap-4">
+            {boardColumns.map((column) => {
+              const Icon = column.icon;
+              const tasks = boardTasks.filter((task) => task.status === column.key);
+              return (
+                <div key={column.key} className="min-h-[260px] rounded-xl border border-claude-border bg-claude-bg p-3">
+                  <div className="mb-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-[13px] font-medium text-claude-text">
+                      <Icon size={15} className="text-claude-textSecondary" />
+                      {column.title}
+                    </div>
+                    <span className="rounded-full bg-claude-hover px-2 py-0.5 text-[11px] text-claude-textSecondary">{tasks.length}</span>
+                  </div>
+                  <div className="space-y-2">
+                    {tasks.length > 0 ? tasks.map((task) => (
+                      <div key={task.id} className="rounded-lg border border-claude-border bg-claude-input px-3 py-3">
+                        <div className="text-[13px] font-medium text-claude-text">{task.title}</div>
+                        <div className="mt-1 text-[12px] leading-5 text-claude-textSecondary">{task.description}</div>
+                        <div className="mt-3 flex items-center justify-between gap-2">
+                          <span className="rounded border border-claude-border px-1.5 py-0.5 text-[10px] text-claude-textSecondary">{task.source}</span>
+                          <div className="flex gap-1">
+                            {boardColumns.filter((item) => item.key !== task.status).map((target) => (
+                              <button
+                                key={target.key}
+                                type="button"
+                                onClick={() => moveTask(task.id, target.key)}
+                                className="rounded border border-claude-border px-2 py-1 text-[10px] text-claude-textSecondary hover:bg-claude-hover hover:text-claude-text"
+                              >
+                                {target.title}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    )) : (
+                      <div className="rounded-lg border border-dashed border-claude-border px-3 py-6 text-center text-[12px] leading-6 text-claude-textSecondary">
+                        {isZh ? '这一列暂时为空。' : 'Nothing here yet.'}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         <div className="mt-6 grid grid-cols-[1.1fr_0.9fr] gap-4">

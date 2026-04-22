@@ -207,6 +207,8 @@ function initServer(mainWindow) {
     const userDataPath = app.getPath('userData');
     const dbPath = path.join(userDataPath, 'claude-desktop.json');
     const agentConfigPath = path.join(userDataPath, 'agent-config.json');
+    const mcpServersPath = path.join(userDataPath, 'mcp-servers.json');
+    const commandAuditPath = path.join(userDataPath, 'code-command-audit.json');
     setAccessConfigPath(agentConfigPath);
     const validPermissionModes = new Set(['workspace_write', 'project', 'full_access']);
     const defaultAgentConfig = {
@@ -228,6 +230,23 @@ function initServer(mainWindow) {
         fs.writeFileSync(agentConfigPath, JSON.stringify(next, null, 2));
         return next;
     };
+
+    const readJsonFile = (filePath, fallback) => {
+        try {
+            if (!fs.existsSync(filePath)) return fallback;
+            const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+            return parsed;
+        } catch (_) {
+            return fallback;
+        }
+    };
+
+    const writeJsonFile = (filePath, value) => {
+        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.writeFileSync(filePath, JSON.stringify(value, null, 2), 'utf8');
+    };
+
+    const makeLocalId = (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
     // Workspace: use user-chosen path, or default to ~/Documents/Claude Desktop
     const defaultWorkspacesDir = path.join(app.getPath('documents'), 'Claude Desktop');
@@ -2701,6 +2720,130 @@ function initServer(mainWindow) {
         res.json({ ok: true, enabled: !!enabled });
     });
 
+    function readMcpServers() {
+        const raw = readJsonFile(mcpServersPath, []);
+        if (!Array.isArray(raw)) return [];
+        return raw.map((item) => ({
+            id: item.id || makeLocalId('mcp'),
+            name: item.name || 'MCP Server',
+            type: item.type === 'http' ? 'http' : 'stdio',
+            command: item.command || '',
+            args: Array.isArray(item.args) ? item.args : [],
+            url: item.url || '',
+            enabled: item.enabled !== false,
+            lastTestAt: item.lastTestAt || '',
+            lastTestStatus: item.lastTestStatus || 'unknown',
+            lastTestMessage: item.lastTestMessage || '',
+        }));
+    }
+
+    function saveMcpServers(servers) {
+        writeJsonFile(mcpServersPath, servers);
+        return servers;
+    }
+
+    async function testMcpServer(serverConfig) {
+        const now = new Date().toISOString();
+        if (serverConfig.type === 'http') {
+            if (!serverConfig.url) {
+                return { ok: false, lastTestAt: now, lastTestStatus: 'error', lastTestMessage: 'Missing server URL' };
+            }
+            try {
+                const parsed = new URL(serverConfig.url);
+                return {
+                    ok: true,
+                    lastTestAt: now,
+                    lastTestStatus: 'ok',
+                    lastTestMessage: `URL looks valid (${parsed.protocol.replace(':', '')})`,
+                };
+            } catch (_) {
+                return { ok: false, lastTestAt: now, lastTestStatus: 'error', lastTestMessage: 'Invalid URL' };
+            }
+        }
+
+        if (!serverConfig.command) {
+            return { ok: false, lastTestAt: now, lastTestStatus: 'error', lastTestMessage: 'Missing command' };
+        }
+        const checker = process.platform === 'win32' ? 'where.exe' : 'which';
+        return new Promise((resolve) => {
+            require('child_process').execFile(checker, [serverConfig.command], { windowsHide: true, timeout: 5000 }, (error, stdout) => {
+                if (error) {
+                    resolve({ ok: false, lastTestAt: now, lastTestStatus: 'error', lastTestMessage: `Command not found: ${serverConfig.command}` });
+                    return;
+                }
+                resolve({
+                    ok: true,
+                    lastTestAt: now,
+                    lastTestStatus: 'ok',
+                    lastTestMessage: String(stdout || '').split(/\r?\n/).filter(Boolean)[0] || 'Command found',
+                });
+            });
+        });
+    }
+
+    server.get('/api/mcp/servers', (_req, res) => {
+        res.json({ servers: readMcpServers() });
+    });
+
+    server.post('/api/mcp/servers', (req, res) => {
+        const body = req.body || {};
+        const serverConfig = {
+            id: makeLocalId('mcp'),
+            name: String(body.name || 'MCP Server').trim() || 'MCP Server',
+            type: body.type === 'http' ? 'http' : 'stdio',
+            command: String(body.command || '').trim(),
+            args: Array.isArray(body.args) ? body.args.map(String) : String(body.args || '').split(/\s+/).filter(Boolean),
+            url: String(body.url || '').trim(),
+            enabled: body.enabled !== false,
+            lastTestAt: '',
+            lastTestStatus: 'unknown',
+            lastTestMessage: '',
+        };
+        const servers = readMcpServers();
+        servers.unshift(serverConfig);
+        saveMcpServers(servers);
+        res.json({ server: serverConfig, servers });
+    });
+
+    server.patch('/api/mcp/servers/:id', (req, res) => {
+        const { id } = req.params;
+        const servers = readMcpServers();
+        const index = servers.findIndex(item => item.id === id);
+        if (index < 0) return res.status(404).json({ error: 'MCP server not found' });
+        const body = req.body || {};
+        servers[index] = {
+            ...servers[index],
+            ...(typeof body.name === 'string' ? { name: body.name.trim() || servers[index].name } : {}),
+            ...(body.type === 'http' || body.type === 'stdio' ? { type: body.type } : {}),
+            ...(typeof body.command === 'string' ? { command: body.command.trim() } : {}),
+            ...(Array.isArray(body.args) ? { args: body.args.map(String) } : typeof body.args === 'string' ? { args: body.args.split(/\s+/).filter(Boolean) } : {}),
+            ...(typeof body.url === 'string' ? { url: body.url.trim() } : {}),
+            ...(typeof body.enabled === 'boolean' ? { enabled: body.enabled } : {}),
+        };
+        saveMcpServers(servers);
+        res.json({ server: servers[index], servers });
+    });
+
+    server.delete('/api/mcp/servers/:id', (req, res) => {
+        const { id } = req.params;
+        const servers = readMcpServers();
+        const next = servers.filter(item => item.id !== id);
+        if (next.length === servers.length) return res.status(404).json({ error: 'MCP server not found' });
+        saveMcpServers(next);
+        res.json({ ok: true, servers: next });
+    });
+
+    server.post('/api/mcp/servers/:id/test', async (req, res) => {
+        const { id } = req.params;
+        const servers = readMcpServers();
+        const index = servers.findIndex(item => item.id === id);
+        if (index < 0) return res.status(404).json({ error: 'MCP server not found' });
+        const result = await testMcpServer(servers[index]);
+        servers[index] = { ...servers[index], ...result };
+        saveMcpServers(servers);
+        res.json({ server: servers[index], result, servers });
+    });
+
     // Get all enabled skills with full content (for UseSkill tool)
     function getAllEnabledSkills() {
         const prefs = loadSkillPrefs();
@@ -3298,13 +3441,134 @@ You have the following skills available. When a user's request matches a skill's
             { pattern: /\bgit\s+clean\s+-fd\b/, reason: 'destructive git clean' },
         ];
         const matched = highRiskPatterns.find(item => item.pattern.test(normalized));
-        return matched ? { level: 'high', reason: matched.reason } : { level: 'normal', reason: '' };
+        if (matched) return { level: 'high', reason: matched.reason };
+        const mediumRiskPatterns = [
+            { pattern: /\bnpm\s+(i|install|add)\b/, reason: 'dependency install' },
+            { pattern: /\bpnpm\s+(i|install|add)\b/, reason: 'dependency install' },
+            { pattern: /\byarn\s+(add|install)\b/, reason: 'dependency install' },
+            { pattern: /\bpip\s+install\b/, reason: 'python package install' },
+            { pattern: /\bcurl\b.*\|\s*(bash|sh|powershell|pwsh)\b/, reason: 'remote script execution' },
+            { pattern: /\binvoke-webrequest\b.*\|\s*(iex|invoke-expression)\b/, reason: 'remote script execution' },
+            { pattern: /\bgit\s+push\b.*\s--force\b/, reason: 'force push' },
+        ];
+        const mediumMatched = mediumRiskPatterns.find(item => item.pattern.test(normalized));
+        return mediumMatched ? { level: 'medium', reason: mediumMatched.reason } : { level: 'normal', reason: '' };
     }
 
     function clampCommandTimeout(timeout) {
         const numeric = Number(timeout || 120000);
         if (!Number.isFinite(numeric)) return 120000;
         return Math.max(1000, Math.min(600000, numeric));
+    }
+
+    function readCommandAudit() {
+        const raw = readJsonFile(commandAuditPath, []);
+        return Array.isArray(raw) ? raw : [];
+    }
+
+    function appendCommandAudit(entry) {
+        const history = readCommandAudit();
+        const next = [{
+            id: makeLocalId('audit'),
+            createdAt: new Date().toISOString(),
+            ...entry,
+        }, ...history].slice(0, 250);
+        writeJsonFile(commandAuditPath, next);
+        return next;
+    }
+
+    function readPackageJsonSafe(workspaceRoot) {
+        const packagePath = path.join(workspaceRoot, 'package.json');
+        try {
+            if (!fs.existsSync(packagePath)) return null;
+            return JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+        } catch (_) {
+            return null;
+        }
+    }
+
+    function detectPackageManager(workspaceRoot) {
+        if (fs.existsSync(path.join(workspaceRoot, 'pnpm-lock.yaml'))) return 'pnpm';
+        if (fs.existsSync(path.join(workspaceRoot, 'yarn.lock'))) return 'yarn';
+        if (fs.existsSync(path.join(workspaceRoot, 'bun.lockb'))) return 'bun';
+        if (fs.existsSync(path.join(workspaceRoot, 'package-lock.json'))) return 'npm';
+        return fs.existsSync(path.join(workspaceRoot, 'package.json')) ? 'npm' : '';
+    }
+
+    async function buildCodeWorkspaceHealth(workspaceRoot) {
+        const packageJson = readPackageJsonSafe(workspaceRoot);
+        const packageManager = detectPackageManager(workspaceRoot);
+        const checks = [];
+        const exists = fs.existsSync(workspaceRoot) && fs.statSync(workspaceRoot).isDirectory();
+        checks.push({
+            id: 'workspace',
+            label: 'Workspace folder',
+            status: exists ? 'ok' : 'error',
+            detail: exists ? 'Folder is readable' : 'Folder does not exist',
+        });
+
+        const gitStatus = await getCodeGitStatus(workspaceRoot).catch(() => null);
+        checks.push({
+            id: 'git',
+            label: 'Git repository',
+            status: gitStatus?.isRepo ? 'ok' : 'warning',
+            detail: gitStatus?.isRepo ? `${gitStatus.branch || 'branch'} · ${gitStatus.summary || 'ready'}` : 'No Git repository detected',
+        });
+
+        checks.push({
+            id: 'package',
+            label: 'Package manifest',
+            status: packageJson ? 'ok' : 'warning',
+            detail: packageJson ? `package.json found${packageManager ? ` · ${packageManager}` : ''}` : 'No package.json in workspace root',
+        });
+
+        const hasTsConfig = fs.existsSync(path.join(workspaceRoot, 'tsconfig.json'));
+        const hasVite = fs.existsSync(path.join(workspaceRoot, 'vite.config.ts')) || fs.existsSync(path.join(workspaceRoot, 'vite.config.js'));
+        const hasElectron = fs.existsSync(path.join(workspaceRoot, 'electron')) || !!packageJson?.devDependencies?.electron || !!packageJson?.dependencies?.electron;
+        const hasPython = fs.existsSync(path.join(workspaceRoot, 'pyproject.toml')) || fs.existsSync(path.join(workspaceRoot, 'requirements.txt'));
+        const projectTypes = [
+            hasVite ? 'Vite' : '',
+            hasElectron ? 'Electron' : '',
+            hasTsConfig ? 'TypeScript' : '',
+            hasPython ? 'Python' : '',
+        ].filter(Boolean);
+        checks.push({
+            id: 'project-type',
+            label: 'Project type',
+            status: projectTypes.length ? 'ok' : 'warning',
+            detail: projectTypes.length ? projectTypes.join(' / ') : 'Only generic file operations detected',
+        });
+
+        const scripts = packageJson?.scripts && typeof packageJson.scripts === 'object' ? packageJson.scripts : {};
+        checks.push({
+            id: 'scripts',
+            label: 'Runnable scripts',
+            status: Object.keys(scripts).length ? 'ok' : 'warning',
+            detail: Object.keys(scripts).length ? Object.keys(scripts).slice(0, 8).join(', ') : 'No npm scripts detected',
+        });
+
+        const suggestedCommands = [
+            { label: 'List files', command: process.platform === 'win32' ? 'dir' : 'ls -la' },
+            { label: 'Git status', command: 'git status --short --branch' },
+            ...Object.keys(scripts).slice(0, 6).map(name => ({
+                label: `npm ${name}`,
+                command: `${packageManager || 'npm'} ${packageManager === 'npm' ? 'run ' : ''}${name}`.trim(),
+            })),
+        ];
+
+        const warnings = checks.filter(item => item.status !== 'ok').map(item => item.detail);
+        const score = Math.max(25, Math.round((checks.filter(item => item.status === 'ok').length / checks.length) * 100));
+        return {
+            workspacePath: workspaceRoot,
+            checkedAt: new Date().toISOString(),
+            projectType: projectTypes.join(' / ') || 'Generic workspace',
+            packageManager,
+            score,
+            checks,
+            scripts: Object.keys(scripts).map(name => ({ name, command: scripts[name] })),
+            suggestedCommands,
+            warnings,
+        };
     }
 
     function assertSafeCodeName(name) {
@@ -3600,24 +3864,84 @@ You have the following skills available. When a user's request matches a skill's
         }
     });
 
+    server.post('/api/code/workspace/health', async (req, res) => {
+        try {
+            const { workspacePath } = req.body || {};
+            const { workspaceRoot } = resolveCodeWorkspacePath(workspacePath, workspacePath);
+            res.json(await buildCodeWorkspaceHealth(workspaceRoot));
+        } catch (err) {
+            res.status(err.statusCode || 500).json({ error: err.message || 'Failed to inspect workspace health' });
+        }
+    });
+
+    server.post('/api/code/workspace/command-audit', (req, res) => {
+        try {
+            const { workspacePath } = req.body || {};
+            const { workspaceRoot } = resolveCodeWorkspacePath(workspacePath, workspacePath);
+            const audit = readCommandAudit().filter(item => !item.cwd || path.resolve(item.cwd) === workspaceRoot).slice(0, 80);
+            res.json({ audit });
+        } catch (err) {
+            res.status(err.statusCode || 500).json({ error: err.message || 'Failed to read command audit' });
+        }
+    });
+
     server.post('/api/code/workspace/command', async (req, res) => {
         const startedAt = Date.now();
         try {
-            const { workspacePath, command, timeout, shell } = req.body || {};
+            const { workspacePath, command, timeout, shell, approved } = req.body || {};
             if (!command || typeof command !== 'string') return res.status(400).json({ error: 'Missing command' });
             const { workspaceRoot } = resolveCodeWorkspacePath(workspacePath, workspacePath);
             const config = readAgentConfig();
+            const risk = classifyCodeCommandRisk(command);
             if (config.permissionMode === 'workspace_write') {
+                appendCommandAudit({
+                    cwd: workspaceRoot,
+                    command,
+                    shell: shell || 'powershell',
+                    permissionMode: config.permissionMode,
+                    risk,
+                    decision: 'blocked',
+                    reason: 'safe mode disables command execution',
+                });
                 return res.status(403).json({ error: 'Command execution is disabled in safe mode. Switch to project permission or full access.' });
             }
-            const risk = classifyCodeCommandRisk(command);
             if (risk.level === 'high' && config.permissionMode !== 'full_access') {
+                appendCommandAudit({
+                    cwd: workspaceRoot,
+                    command,
+                    shell: shell || 'powershell',
+                    permissionMode: config.permissionMode,
+                    risk,
+                    decision: 'blocked',
+                    reason: risk.reason,
+                });
                 return res.status(403).json({ error: `This command looks destructive (${risk.reason}). Switch to full access if you intentionally want to run it.` });
+            }
+            if ((risk.level === 'medium' || risk.level === 'high') && !approved) {
+                appendCommandAudit({
+                    cwd: workspaceRoot,
+                    command,
+                    shell: shell || 'powershell',
+                    permissionMode: config.permissionMode,
+                    risk,
+                    decision: 'approval_required',
+                    reason: risk.reason,
+                });
+                return res.status(409).json({
+                    error: `Command requires approval: ${risk.reason}`,
+                    requiresApproval: true,
+                    approval: {
+                        command,
+                        risk,
+                        permissionMode: config.permissionMode,
+                        message: `This command is classified as ${risk.level}: ${risk.reason}`,
+                    },
+                });
             }
             const safeTimeout = clampCommandTimeout(timeout);
             const result = await runCodeShellCommand(workspaceRoot, command, shell || 'powershell', safeTimeout);
             const finishedAt = Date.now();
-            res.json({
+            const payload = {
                 cwd: workspaceRoot,
                 command,
                 output: result.output || '',
@@ -3630,7 +3954,23 @@ You have the following skills available. When a user's request matches a skill's
                 startedAt: new Date(startedAt).toISOString(),
                 finishedAt: new Date(finishedAt).toISOString(),
                 durationMs: finishedAt - startedAt,
+                risk,
+                approved: !!approved,
+            };
+            appendCommandAudit({
+                cwd: workspaceRoot,
+                command,
+                shell: payload.shell,
+                permissionMode: config.permissionMode,
+                risk,
+                approved: !!approved,
+                decision: result.ok ? 'executed' : 'failed',
+                exitCode: result.code,
+                timedOut: !!result.timedOut,
+                durationMs: payload.durationMs,
+                outputPreview: (result.output || '').slice(0, 1000),
             });
+            res.json(payload);
         } catch (err) {
             res.status(err.statusCode || 500).json({ error: err.message || 'Failed to run command' });
         }

@@ -28,16 +28,20 @@ import {
 } from 'lucide-react';
 import {
   CodeCommandResult,
+  CodeCommandAuditEntry,
   CodeFileResult,
   CodeGitFile,
   CodeGitFileDiffResult,
   CodeGitStatusResult,
+  CodeWorkspaceHealthResult,
   CodeWorkspaceEntry,
   createCodeEntry,
   deleteCodeEntry,
   getAgentConfig,
+  getCodeCommandAudit,
   getCodeGitFileDiff,
   getCodeGitStatus,
+  getCodeWorkspaceHealth,
   listCodeWorkspace,
   readCodeFile,
   renameCodeEntry,
@@ -91,6 +95,15 @@ type WorkspaceDialogState =
       entry: CodeWorkspaceEntry;
     };
 
+type CommandApprovalState = {
+  command: string;
+  approval: {
+    risk?: { level: 'normal' | 'medium' | 'high'; reason: string };
+    permissionMode?: PermissionMode;
+    message?: string;
+  };
+};
+
 const formatBytes = (bytes: number) => {
   if (!bytes) return '0 B';
   if (bytes < 1024) return `${bytes} B`;
@@ -101,6 +114,24 @@ const formatBytes = (bytes: number) => {
 const formatDuration = (ms: number) => {
   if (ms < 1000) return `${ms}ms`;
   return `${(ms / 1000).toFixed(1)}s`;
+};
+
+const formatRiskLabel = (level?: string, isZh = true) => {
+  if (level === 'high') return isZh ? '高风险' : 'High risk';
+  if (level === 'medium') return isZh ? '需确认' : 'Needs approval';
+  return isZh ? '正常' : 'Normal';
+};
+
+const riskToneClass = (level?: string) => {
+  if (level === 'high') return 'border-[#C6613F]/40 bg-[#C6613F]/10 text-[#C6613F]';
+  if (level === 'medium') return 'border-amber-500/40 bg-amber-500/10 text-amber-300';
+  return 'border-emerald-500/35 bg-emerald-500/10 text-emerald-400';
+};
+
+const healthToneClass = (status?: string) => {
+  if (status === 'ok') return 'text-emerald-400';
+  if (status === 'warning') return 'text-amber-300';
+  return 'text-[#C6613F]';
 };
 
 const getRelativePath = (root: string, target: string) => {
@@ -260,6 +291,8 @@ const CodePage = () => {
   const [originalContent, setOriginalContent] = useState('');
   const [command, setCommand] = useState('');
   const [commandHistory, setCommandHistory] = useState<CodeCommandResult[]>([]);
+  const [workspaceHealth, setWorkspaceHealth] = useState<CodeWorkspaceHealthResult | null>(null);
+  const [commandAudit, setCommandAudit] = useState<CodeCommandAuditEntry[]>([]);
   const [gitStatus, setGitStatus] = useState<CodeGitStatusResult | null>(null);
   const [selectedGitFile, setSelectedGitFile] = useState<CodeGitFile | null>(null);
   const [gitFileDiff, setGitFileDiff] = useState<CodeGitFileDiffResult | null>(null);
@@ -270,6 +303,7 @@ const CodePage = () => {
   const [savingFile, setSavingFile] = useState(false);
   const [runningCommand, setRunningCommand] = useState(false);
   const [loadingGit, setLoadingGit] = useState(false);
+  const [loadingHealth, setLoadingHealth] = useState(false);
   const [loadingGitDiff, setLoadingGitDiff] = useState(false);
   const [gitBusyAction, setGitBusyAction] = useState<GitAction | null>(null);
   const [gitFileBusyAction, setGitFileBusyAction] = useState<GitFileAction | null>(null);
@@ -277,6 +311,7 @@ const CodePage = () => {
   const [showDiff, setShowDiff] = useState(false);
   const [treeMenu, setTreeMenu] = useState<TreeContextMenuState | null>(null);
   const [workspaceDialog, setWorkspaceDialog] = useState<WorkspaceDialogState | null>(null);
+  const [pendingApproval, setPendingApproval] = useState<CommandApprovalState | null>(null);
   const [error, setError] = useState('');
   const treeMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -309,6 +344,17 @@ const CodePage = () => {
       .slice(0, 5);
   }, [commandHistory]);
   const commandQuickActions = useMemo(() => {
+    if (workspaceHealth?.suggestedCommands?.length) {
+      const healthCommands = workspaceHealth.suggestedCommands.slice(0, 4).map((item) => ({
+        label: item.label,
+        command: item.command,
+        desc: isZh ? '来自工作区健康检查的建议命令' : 'Suggested by workspace health check',
+      }));
+      return [
+        { label: isZh ? 'Git 状态' : 'Git status', command: 'git status --short --branch', desc: isZh ? '查看分支和改动' : 'Check branch and changes' },
+        ...healthCommands,
+      ];
+    }
     const base = [
       { label: isZh ? '列出文件' : 'List files', command: 'dir', desc: isZh ? '快速确认当前工作区内容' : 'Inspect workspace files' },
       { label: isZh ? 'Git 状态' : 'Git status', command: 'git status --short --branch', desc: isZh ? '查看分支和改动' : 'Check branch and changes' },
@@ -319,7 +365,7 @@ const CodePage = () => {
       { label: isZh ? '构建项目' : 'Build', command: 'npm run build', desc: isZh ? '执行项目构建脚本' : 'Run the build script' },
     ];
     return [...base, ...projectCommands];
-  }, [isZh]);
+  }, [isZh, workspaceHealth]);
 
   const rememberWorkspacePath = useCallback((nextWorkspacePath: string) => {
     if (!nextWorkspacePath) return;
@@ -382,6 +428,31 @@ const CodePage = () => {
     }
   }, [isZh, workspacePath]);
 
+  const refreshWorkspaceHealth = useCallback(async (workspaceOverride?: string) => {
+    const root = workspaceOverride || workspacePath;
+    if (!root) return;
+    setLoadingHealth(true);
+    try {
+      const health = await getCodeWorkspaceHealth(root);
+      setWorkspaceHealth(health);
+    } catch (_) {
+      setWorkspaceHealth(null);
+    } finally {
+      setLoadingHealth(false);
+    }
+  }, [workspacePath]);
+
+  const refreshCommandAudit = useCallback(async (workspaceOverride?: string) => {
+    const root = workspaceOverride || workspacePath;
+    if (!root) return;
+    try {
+      const data = await getCodeCommandAudit(root);
+      setCommandAudit(Array.isArray(data.entries) ? data.entries : []);
+    } catch (_) {
+      setCommandAudit([]);
+    }
+  }, [workspacePath]);
+
   const loadDirectory = useCallback(async (target?: string, workspaceOverride?: string) => {
     const rootPath = workspaceOverride || workspacePath;
     if (!rootPath) return;
@@ -415,6 +486,8 @@ const CodePage = () => {
     if (workspacePath) {
       loadDirectory(workspacePath);
       refreshGitStatus(workspacePath);
+      refreshWorkspaceHealth(workspacePath);
+      refreshCommandAudit(workspacePath);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -455,6 +528,8 @@ const CodePage = () => {
     rememberWorkspacePath(dir);
     await loadDirectory(dir, dir);
     await refreshGitStatus(dir);
+    await refreshWorkspaceHealth(dir);
+    await refreshCommandAudit(dir);
   };
 
   const openWorkspaceFolder = () => {
@@ -731,10 +806,10 @@ const CodePage = () => {
     }
   };
 
-  const submitCommand = async (commandOverride?: string) => {
+  const submitCommand = async (commandOverride?: string, approved = false) => {
     const trimmed = (commandOverride ?? command).trim();
     if (!trimmed || !workspacePath || runningCommand) return;
-    if (isDangerousCommand(trimmed)) {
+    if (!approved && isDangerousCommand(trimmed)) {
       const ok = window.confirm(
         isZh
           ? `这条命令可能会删除文件、重置仓库或影响系统：\n\n${trimmed}\n\n确定继续执行吗？`
@@ -747,13 +822,30 @@ const CodePage = () => {
     try {
       const shellPreference = localStorage.getItem('integrated_shell') || 'powershell';
       const timeout = Number(localStorage.getItem('code_command_timeout_ms') || '120000') || 120000;
-      const result = await runCodeCommand(workspacePath, trimmed, timeout, shellPreference);
+      const result = await runCodeCommand(workspacePath, trimmed, timeout, shellPreference, approved);
       setCommandHistory(prev => [result, ...prev].slice(0, 12));
+      setPendingApproval(null);
       if (!commandOverride) setCommand('');
       await refreshGitStatus();
+      await refreshWorkspaceHealth();
+      await refreshCommandAudit();
       await loadDirectory(currentPath);
     } catch (err: any) {
-      setError(err?.message || (isZh ? '命令执行失败' : 'Command failed'));
+      if (err?.requiresApproval) {
+        setPendingApproval({
+          command: trimmed,
+          approval: err.approval || {
+            risk: { level: 'medium', reason: err.message },
+            permissionMode,
+            message: err.message,
+          },
+        });
+        await refreshCommandAudit();
+        setError('');
+      } else {
+        setError(err?.message || (isZh ? '命令执行失败' : 'Command failed'));
+        await refreshCommandAudit();
+      }
     } finally {
       setRunningCommand(false);
     }
@@ -1446,6 +1538,46 @@ const CodePage = () => {
 
               <div className="p-3 border-b border-claude-border space-y-3">
                 <div className="flex items-center justify-between">
+                  <div className="text-[12px] font-medium">{isZh ? '工作区健康检查' : 'Workspace health'}</div>
+                  <button
+                    type="button"
+                    onClick={() => refreshWorkspaceHealth()}
+                    className="p-1.5 rounded-md hover:bg-claude-hover text-claude-textSecondary"
+                    title={isZh ? '重新检查' : 'Check again'}
+                  >
+                    <RefreshCw size={13} className={loadingHealth ? 'animate-spin' : ''} />
+                  </button>
+                </div>
+                {workspaceHealth ? (
+                  <div className="rounded-md border border-claude-border bg-claude-input px-3 py-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="text-[22px] font-semibold text-claude-text">{workspaceHealth.score}</div>
+                      <div className="min-w-0 text-right">
+                        <div className="text-[12px] text-claude-text truncate">{workspaceHealth.projectType}</div>
+                        <div className="text-[10px] text-claude-textSecondary truncate">{workspaceHealth.packageManager || (isZh ? '未检测到包管理器' : 'No package manager')}</div>
+                      </div>
+                    </div>
+                    <div className="mt-2 space-y-1.5">
+                      {workspaceHealth.checks.slice(0, 4).map((check) => (
+                        <div key={check.id} className="flex items-start gap-2 text-[11px] leading-5">
+                          <span className={`mt-1.5 h-1.5 w-1.5 rounded-full shrink-0 ${check.status === 'ok' ? 'bg-emerald-400' : check.status === 'warning' ? 'bg-amber-300' : 'bg-[#C6613F]'}`} />
+                          <div className="min-w-0">
+                            <span className={healthToneClass(check.status)}>{check.label}</span>
+                            <span className="text-claude-textSecondary"> · {check.detail}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-md border border-dashed border-claude-border px-3 py-3 text-[12px] leading-5 text-claude-textSecondary">
+                    {loadingHealth ? (isZh ? '正在检查工作区...' : 'Checking workspace...') : (isZh ? '还没有健康检查结果。' : 'No health check result yet.')}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-3 border-b border-claude-border space-y-3">
+                <div className="flex items-center justify-between">
                   <div className="text-[12px] font-medium">{isZh ? 'Git 状态' : 'Git status'}</div>
                   <div className="text-[10px] text-claude-textSecondary truncate max-w-[190px]">
                     {gitStatus?.repoRoot ? getRelativePath(workspacePath, gitStatus.repoRoot) : ''}
@@ -1533,6 +1665,28 @@ const CodePage = () => {
                       ? (isZh ? '执行中...' : 'Running...')
                       : (isZh ? '执行命令 Ctrl+Enter' : 'Run command Ctrl+Enter')}
                 </button>
+                {commandAudit.length > 0 && (
+                  <div className="mt-3 rounded-md border border-claude-border bg-claude-input px-3 py-2">
+                    <div className="mb-2 flex items-center justify-between text-[11px] text-claude-textSecondary">
+                      <span>{isZh ? '命令审计' : 'Command audit'}</span>
+                      <button type="button" onClick={() => refreshCommandAudit()} className="hover:text-claude-text">
+                        {isZh ? '刷新' : 'Refresh'}
+                      </button>
+                    </div>
+                    <div className="space-y-1.5">
+                      {commandAudit.slice(0, 4).map((entry) => (
+                        <div key={entry.id} className="grid grid-cols-[74px_minmax(0,1fr)] items-center gap-2 text-[10px]">
+                          <span className={`rounded border px-1.5 py-0.5 text-center ${riskToneClass(entry.risk?.level)}`}>
+                            {entry.decision === 'approval_required' ? (isZh ? '待确认' : 'Approval') : entry.decision}
+                          </span>
+                          <span className="truncate font-mono text-claude-textSecondary" title={entry.command}>
+                            {entry.command}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3">
                 {commandHistory.length === 0 ? (
@@ -1552,6 +1706,16 @@ const CodePage = () => {
                         {item.shell && <span className="rounded border border-claude-border px-1.5 py-0.5">{item.shell}</span>}
                         {typeof item.exitCode === 'number' && <span className="rounded border border-claude-border px-1.5 py-0.5">exit {item.exitCode}</span>}
                         {item.permissionMode && <span className="rounded border border-claude-border px-1.5 py-0.5">{getPermissionCopy(item.permissionMode as PermissionMode, isZh).label}</span>}
+                        {item.risk && item.risk.level !== 'normal' && (
+                          <span className={`rounded border px-1.5 py-0.5 ${riskToneClass(item.risk.level)}`}>
+                            {formatRiskLabel(item.risk.level, isZh)}
+                          </span>
+                        )}
+                        {item.approved && (
+                          <span className="rounded border border-[#2E7CF6]/40 bg-[#2E7CF6]/10 px-1.5 py-0.5 text-[#6EA8FF]">
+                            {isZh ? '已确认' : 'Approved'}
+                          </span>
+                        )}
                         <span className="truncate">{item.cwd}</span>
                       </div>
                     </div>
@@ -1565,6 +1729,66 @@ const CodePage = () => {
           </div>
         )}
       </div>
+      {pendingApproval && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 backdrop-blur-sm px-4" onClick={() => setPendingApproval(null)}>
+          <div
+            className="w-full max-w-[520px] overflow-hidden rounded-2xl border border-claude-border bg-claude-bg shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start justify-between border-b border-claude-border px-6 py-5">
+              <div>
+                <div className="text-[18px] font-semibold text-claude-text">
+                  {isZh ? '需要确认后执行' : 'Approval required'}
+                </div>
+                <div className="mt-1 text-[13px] leading-6 text-claude-textSecondary">
+                  {pendingApproval.approval.message || (isZh ? '这条命令可能会修改项目或影响系统，请确认风险后再执行。' : 'This command may change the project or affect the system. Review it before running.')}
+                </div>
+              </div>
+              <button
+                onClick={() => setPendingApproval(null)}
+                className="rounded-md p-1.5 text-claude-textSecondary hover:bg-claude-hover hover:text-claude-text"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="space-y-4 px-6 py-5">
+              <div className="flex flex-wrap items-center gap-2 text-[12px]">
+                <span className={`rounded border px-2 py-1 ${riskToneClass(pendingApproval.approval.risk?.level)}`}>
+                  {formatRiskLabel(pendingApproval.approval.risk?.level, isZh)}
+                </span>
+                {pendingApproval.approval.permissionMode && (
+                  <span className="rounded border border-claude-border px-2 py-1 text-claude-textSecondary">
+                    {getPermissionCopy(pendingApproval.approval.permissionMode as PermissionMode, isZh).label}
+                  </span>
+                )}
+              </div>
+              {pendingApproval.approval.risk?.reason && (
+                <div className="rounded-xl border border-[#C6613F]/30 bg-[#C6613F]/10 px-4 py-3 text-[13px] leading-6 text-[#ffb49d]">
+                  {pendingApproval.approval.risk.reason}
+                </div>
+              )}
+              <pre className="max-h-[220px] overflow-auto rounded-xl border border-claude-border bg-claude-input p-4 font-mono text-[12px] leading-5 text-claude-text">
+                {pendingApproval.command}
+              </pre>
+            </div>
+            <div className="flex items-center justify-end gap-3 border-t border-claude-border bg-claude-input/40 px-6 py-4">
+              <button
+                onClick={() => setPendingApproval(null)}
+                className="h-9 rounded-xl border border-claude-border px-4 text-[13px] text-claude-textSecondary hover:bg-claude-hover"
+              >
+                {isZh ? '取消' : 'Cancel'}
+              </button>
+              <button
+                onClick={() => submitCommand(pendingApproval.command, true)}
+                disabled={runningCommand}
+                className="h-9 rounded-xl bg-[#C6613F] px-4 text-[13px] font-medium text-white disabled:opacity-50"
+              >
+                {runningCommand ? (isZh ? '执行中...' : 'Running...') : (isZh ? '确认执行' : 'Run anyway')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {workspaceDialog && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/45 backdrop-blur-sm px-4" onClick={closeWorkspaceDialog}>
           <div

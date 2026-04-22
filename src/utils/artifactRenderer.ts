@@ -125,6 +125,27 @@ window.__claudePreviewError = function(error) {
     stack: error && error.stack ? error.stack : ''
   });
 };
+(function() {
+  var levels = ['log', 'info', 'warn', 'error'];
+  levels.forEach(function(level) {
+    var original = console[level];
+    console[level] = function() {
+      var message = Array.prototype.slice.call(arguments).map(function(item) {
+        if (item instanceof Error) return item.message;
+        if (typeof item === 'object') {
+          try {
+            return JSON.stringify(item);
+          } catch (_) {
+            return String(item);
+          }
+        }
+        return String(item);
+      }).join(' ');
+      window.__claudePreviewPost({ type: 'console', level: level, message: message });
+      if (original) return original.apply(console, arguments);
+    };
+  });
+})();
 window.addEventListener('error', function(event) {
   window.__claudePreviewError(event.error || event.message);
 });

@@ -14,11 +14,13 @@ import { buildArtifactHtml } from '../utils/artifactRenderer';
 const ArtifactPreview: React.FC<{ content: string; type: string; refreshKey: number }> = ({ content, type, refreshKey }) => {
   const [previewState, setPreviewState] = React.useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
   const [previewMessage, setPreviewMessage] = React.useState('');
+  const [previewLogs, setPreviewLogs] = React.useState<Array<{ level: string; message: string }>>([]);
   const html = React.useMemo(() => buildArtifactHtml(content, type), [content, type, refreshKey]);
 
   React.useEffect(() => {
     setPreviewState('loading');
     setPreviewMessage('');
+    setPreviewLogs([]);
     const timeout = window.setTimeout(() => {
       setPreviewState((current) => current === 'loading' ? 'empty' : current);
       setPreviewMessage((current) => current || '预览仍在加载，可能是外部 CDN、脚本错误或生成内容为空。');
@@ -40,6 +42,12 @@ const ArtifactPreview: React.FC<{ content: string; type: string; refreshKey: num
         window.clearTimeout(timeout);
         setPreviewState('error');
         setPreviewMessage(data.message || '预览脚本执行失败。');
+      }
+      if (data.type === 'console') {
+        setPreviewLogs((current) => [
+          ...current,
+          { level: data.level || 'log', message: data.message || '' },
+        ].slice(-8));
       }
     };
     window.addEventListener('message', handleMessage);
@@ -77,6 +85,21 @@ const ArtifactPreview: React.FC<{ content: string; type: string; refreshKey: num
         className="w-full h-full border-0 bg-white"
         title="Artifact Preview"
       />
+      {previewLogs.length > 0 && (
+        <div className="absolute bottom-3 left-3 right-3 z-10 max-h-[160px] overflow-auto rounded-md border border-claude-border bg-[#171513]/95 p-3 text-[11px] text-claude-textSecondary shadow-xl">
+          <div className="mb-2 flex items-center justify-between text-[12px] font-medium text-claude-text">
+            <span>预览日志</span>
+            <button className="text-claude-textSecondary hover:text-claude-text" onClick={() => setPreviewLogs([])}>清空</button>
+          </div>
+          <div className="space-y-1 font-mono">
+            {previewLogs.map((log, index) => (
+              <div key={`${log.level}-${index}`} className={log.level === 'error' ? 'text-[#ffb49d]' : log.level === 'warn' ? 'text-amber-200' : ''}>
+                [{log.level}] {log.message}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

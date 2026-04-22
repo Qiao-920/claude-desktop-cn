@@ -565,6 +565,49 @@ export interface CodeCommandResult {
   signal?: string | null;
   startedAt?: string;
   finishedAt?: string;
+  risk?: CodeCommandRisk;
+  approved?: boolean;
+}
+
+export interface CodeCommandRisk {
+  level: 'normal' | 'medium' | 'high';
+  reason: string;
+}
+
+export interface CodeWorkspaceHealthCheck {
+  id: string;
+  label: string;
+  status: 'ok' | 'warning' | 'error';
+  detail: string;
+}
+
+export interface CodeWorkspaceHealthResult {
+  workspacePath: string;
+  checkedAt: string;
+  projectType: string;
+  packageManager?: string;
+  score: number;
+  checks: CodeWorkspaceHealthCheck[];
+  scripts: Array<{ name: string; command: string }>;
+  suggestedCommands: Array<{ label: string; command: string }>;
+  warnings: string[];
+}
+
+export interface CodeCommandAuditEntry {
+  id: string;
+  createdAt: string;
+  cwd: string;
+  command: string;
+  shell?: string;
+  permissionMode?: AgentConfig['permissionMode'];
+  risk?: CodeCommandRisk;
+  decision: 'executed' | 'failed' | 'blocked' | 'approval_required';
+  reason?: string;
+  approved?: boolean;
+  exitCode?: number;
+  timedOut?: boolean;
+  durationMs?: number;
+  outputPreview?: string;
 }
 
 export interface CodeGitFile {
@@ -706,15 +749,51 @@ export async function deleteCodeEntry(workspacePath: string, path: string): Prom
   return res.json();
 }
 
-export async function runCodeCommand(workspacePath: string, command: string, timeout = 120000, shell = 'powershell'): Promise<CodeCommandResult> {
-  const res = await fetch(`${API_BASE}/code/workspace/command`, {
+export async function getCodeWorkspaceHealth(workspacePath: string): Promise<CodeWorkspaceHealthResult> {
+  const res = await fetch(`${API_BASE}/code/workspace/health`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ workspacePath, command, timeout, shell }),
+    body: JSON.stringify({ workspacePath }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Failed to run command');
+    throw new Error(err.error || 'Failed to check workspace health');
+  }
+  return res.json();
+}
+
+export async function getCodeCommandAudit(workspacePath: string): Promise<{ entries: CodeCommandAuditEntry[] }> {
+  const res = await fetch(`${API_BASE}/code/workspace/command-audit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspacePath }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to read command audit');
+  }
+  return res.json();
+}
+
+export async function runCodeCommand(workspacePath: string, command: string, timeout = 120000, shell = 'powershell', approved = false): Promise<CodeCommandResult> {
+  const res = await fetch(`${API_BASE}/code/workspace/command`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspacePath, command, timeout, shell, approved }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const error = new Error(err.error || 'Failed to run command') as Error & {
+      status?: number;
+      requiresApproval?: boolean;
+      approval?: unknown;
+      data?: unknown;
+    };
+    error.status = res.status;
+    error.requiresApproval = !!err.requiresApproval;
+    error.approval = err.approval;
+    error.data = err;
+    throw error;
   }
   return res.json();
 }
@@ -1355,6 +1434,56 @@ export async function toggleSkill(id: string, enabled: boolean) {
   const res = await request(`/skills/${id}/toggle`, {
     method: 'PATCH',
     body: JSON.stringify({ enabled }),
+  });
+  return res.json();
+}
+
+export interface McpServerConfig {
+  id: string;
+  name: string;
+  type: 'stdio' | 'http';
+  command?: string;
+  args?: string[];
+  url?: string;
+  enabled: boolean;
+  lastTestAt?: string;
+  lastTestStatus?: 'unknown' | 'ok' | 'error';
+  lastTestMessage?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export async function getMcpServers(): Promise<{ servers: McpServerConfig[] }> {
+  const res = await request('/mcp/servers');
+  return res.json();
+}
+
+export async function createMcpServer(data: Partial<McpServerConfig>): Promise<{ server: McpServerConfig; servers: McpServerConfig[] }> {
+  const res = await request('/mcp/servers', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+export async function updateMcpServer(id: string, data: Partial<McpServerConfig>): Promise<{ server: McpServerConfig; servers: McpServerConfig[] }> {
+  const res = await request(`/mcp/servers/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+export async function deleteMcpServer(id: string): Promise<{ ok: boolean; servers: McpServerConfig[] }> {
+  const res = await request(`/mcp/servers/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+  return res.json();
+}
+
+export async function testMcpServer(id: string): Promise<{ server: McpServerConfig; result: any; servers: McpServerConfig[] }> {
+  const res = await request(`/mcp/servers/${encodeURIComponent(id)}/test`, {
+    method: 'POST',
   });
   return res.json();
 }
