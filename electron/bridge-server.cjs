@@ -3272,10 +3272,39 @@ You have the following skills available. When a user's request matches a skill's
                 resolve({
                     ok: !error,
                     code: error && typeof error.code !== 'undefined' ? error.code : 0,
+                    signal: error && error.signal ? error.signal : null,
+                    timedOut: !!(error && error.killed),
+                    shell: normalizedShell,
                     output: `${stdout || ''}${stderr || ''}`.trim(),
                 });
             });
         });
+    }
+
+    function classifyCodeCommandRisk(command) {
+        const normalized = String(command || '').trim().toLowerCase();
+        const highRiskPatterns = [
+            { pattern: /\brm\s+-rf\b/, reason: 'recursive delete' },
+            { pattern: /\brm\s+-r\b/, reason: 'recursive delete' },
+            { pattern: /\bdel\s+\/[a-z]*[fqs]/, reason: 'force delete' },
+            { pattern: /\berase\s+\/[a-z]*[fqs]/, reason: 'force delete' },
+            { pattern: /\bformat\s+[a-z]:/i, reason: 'disk format' },
+            { pattern: /\bshutdown\b/, reason: 'system shutdown' },
+            { pattern: /\breboot\b/, reason: 'system reboot' },
+            { pattern: /\bpoweroff\b/, reason: 'system poweroff' },
+            { pattern: /\bmkfs\b/, reason: 'filesystem format' },
+            { pattern: /\bdd\s+if=/, reason: 'raw disk write' },
+            { pattern: /\bgit\s+reset\s+--hard\b/, reason: 'destructive git reset' },
+            { pattern: /\bgit\s+clean\s+-fd\b/, reason: 'destructive git clean' },
+        ];
+        const matched = highRiskPatterns.find(item => item.pattern.test(normalized));
+        return matched ? { level: 'high', reason: matched.reason } : { level: 'normal', reason: '' };
+    }
+
+    function clampCommandTimeout(timeout) {
+        const numeric = Number(timeout || 120000);
+        if (!Number.isFinite(numeric)) return 120000;
+        return Math.max(1000, Math.min(600000, numeric));
     }
 
     function assertSafeCodeName(name) {
@@ -3577,13 +3606,30 @@ You have the following skills available. When a user's request matches a skill's
             const { workspacePath, command, timeout, shell } = req.body || {};
             if (!command || typeof command !== 'string') return res.status(400).json({ error: 'Missing command' });
             const { workspaceRoot } = resolveCodeWorkspacePath(workspacePath, workspacePath);
-            const result = await runCodeShellCommand(workspaceRoot, command, shell || 'powershell', timeout || 120000);
+            const config = readAgentConfig();
+            if (config.permissionMode === 'workspace_write') {
+                return res.status(403).json({ error: 'Command execution is disabled in safe mode. Switch to project permission or full access.' });
+            }
+            const risk = classifyCodeCommandRisk(command);
+            if (risk.level === 'high' && config.permissionMode !== 'full_access') {
+                return res.status(403).json({ error: `This command looks destructive (${risk.reason}). Switch to full access if you intentionally want to run it.` });
+            }
+            const safeTimeout = clampCommandTimeout(timeout);
+            const result = await runCodeShellCommand(workspaceRoot, command, shell || 'powershell', safeTimeout);
+            const finishedAt = Date.now();
             res.json({
                 cwd: workspaceRoot,
                 command,
                 output: result.output || '',
                 isError: !result.ok,
-                durationMs: Date.now() - startedAt,
+                exitCode: result.code,
+                shell: result.shell || shell || 'powershell',
+                permissionMode: config.permissionMode,
+                timedOut: !!result.timedOut,
+                signal: result.signal || null,
+                startedAt: new Date(startedAt).toISOString(),
+                finishedAt: new Date(finishedAt).toISOString(),
+                durationMs: finishedAt - startedAt,
             });
         } catch (err) {
             res.status(err.statusCode || 500).json({ error: err.message || 'Failed to run command' });

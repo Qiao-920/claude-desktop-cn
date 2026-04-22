@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { FileText, Download, X, Code, Eye, RefreshCw, Copy, ChevronDown } from 'lucide-react';
+import { AlertTriangle, FileText, Download, X, Code, Eye, RefreshCw, Copy, ChevronDown } from 'lucide-react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneLight, vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import MarkdownRenderer from './MarkdownRenderer';
@@ -12,23 +12,72 @@ import { buildArtifactHtml } from '../utils/artifactRenderer';
 
 /** Renders HTML/React artifact content in a sandboxed iframe */
 const ArtifactPreview: React.FC<{ content: string; type: string; refreshKey: number }> = ({ content, type, refreshKey }) => {
-  const [blobUrl, setBlobUrl] = React.useState<string | null>(null);
+  const [previewState, setPreviewState] = React.useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
+  const [previewMessage, setPreviewMessage] = React.useState('');
+  const html = React.useMemo(() => buildArtifactHtml(content, type), [content, type, refreshKey]);
 
   React.useEffect(() => {
-    const html = buildArtifactHtml(content, type);
-    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    setBlobUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [content, type, refreshKey]);
+    setPreviewState('loading');
+    setPreviewMessage('');
+    const timeout = window.setTimeout(() => {
+      setPreviewState((current) => current === 'loading' ? 'empty' : current);
+      setPreviewMessage((current) => current || '预览仍在加载，可能是外部 CDN、脚本错误或生成内容为空。');
+    }, 1800);
+    const handleMessage = (event: MessageEvent) => {
+      const data = event.data || {};
+      if (data.source !== 'claude-desktop-cn-artifact-preview') return;
+      if (data.type === 'ready') {
+        window.clearTimeout(timeout);
+        setPreviewState(data.textLength || data.height ? 'ready' : 'empty');
+        setPreviewMessage(data.textLength || data.height ? '' : '预览已加载，但没有检测到可见内容。');
+      }
+      if (data.type === 'empty') {
+        window.clearTimeout(timeout);
+        setPreviewState('empty');
+        setPreviewMessage(data.message || '预览已加载，但没有检测到可见内容。');
+      }
+      if (data.type === 'error') {
+        window.clearTimeout(timeout);
+        setPreviewState('error');
+        setPreviewMessage(data.message || '预览脚本执行失败。');
+      }
+    };
+    window.addEventListener('message', handleMessage);
+    return () => {
+      window.clearTimeout(timeout);
+      window.removeEventListener('message', handleMessage);
+    };
+  }, [html, refreshKey]);
 
-  if (!blobUrl) return null;
   return (
-    <iframe
-      src={blobUrl}
-      className="w-full h-full border-0 bg-white"
-      title="Artifact Preview"
-    />
+    <div className="relative w-full h-full bg-white">
+      {previewState !== 'ready' && (
+        <div className={`absolute left-3 top-3 z-10 max-w-[460px] rounded-md border px-3 py-2 text-[12px] shadow-lg ${
+          previewState === 'error'
+            ? 'border-[#C6613F]/50 bg-[#2b1812] text-[#ffb49d]'
+            : previewState === 'empty'
+              ? 'border-amber-500/50 bg-[#2b2413] text-amber-200'
+              : 'border-claude-border bg-claude-input text-claude-textSecondary'
+        }`}>
+          <div className="flex items-start gap-2">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <div>
+              <div className="font-medium">
+                {previewState === 'loading' ? '正在加载预览' : previewState === 'error' ? '预览执行出错' : '预览可能为空'}
+              </div>
+              {previewMessage && <div className="mt-1 leading-5">{previewMessage}</div>}
+            </div>
+          </div>
+        </div>
+      )}
+      <iframe
+        key={refreshKey}
+        srcDoc={html}
+        sandbox="allow-scripts allow-forms allow-modals allow-popups"
+        className="w-full h-full border-0 bg-white"
+        title="Artifact Preview"
+      />
+    </div>
   );
 };
 

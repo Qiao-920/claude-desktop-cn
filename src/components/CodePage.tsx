@@ -308,6 +308,18 @@ const CodePage = () => {
       })
       .slice(0, 5);
   }, [commandHistory]);
+  const commandQuickActions = useMemo(() => {
+    const base = [
+      { label: isZh ? '列出文件' : 'List files', command: 'dir', desc: isZh ? '快速确认当前工作区内容' : 'Inspect workspace files' },
+      { label: isZh ? 'Git 状态' : 'Git status', command: 'git status --short --branch', desc: isZh ? '查看分支和改动' : 'Check branch and changes' },
+    ];
+    const projectCommands = [
+      { label: isZh ? '依赖检查' : 'Dependency check', command: 'npm ls --depth=0', desc: isZh ? '查看项目依赖是否完整' : 'Check installed dependencies' },
+      { label: isZh ? '运行测试' : 'Run tests', command: 'npm test', desc: isZh ? '如果项目有测试脚本就执行' : 'Run the project test script' },
+      { label: isZh ? '构建项目' : 'Build', command: 'npm run build', desc: isZh ? '执行项目构建脚本' : 'Run the build script' },
+    ];
+    return [...base, ...projectCommands];
+  }, [isZh]);
 
   const rememberWorkspacePath = useCallback((nextWorkspacePath: string) => {
     if (!nextWorkspacePath) return;
@@ -1460,6 +1472,29 @@ const CodePage = () => {
                   placeholder={isZh ? '输入命令，例如：dir 或 npm test' : 'Enter a command, e.g. dir or npm test'}
                   className="w-full h-20 resize-none rounded-md border border-claude-border bg-claude-input px-3 py-2 text-[12px] font-mono outline-none focus:border-[#2E7CF6]/70"
                 />
+                <div className="mt-2">
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <span className="text-[11px] text-claude-textSecondary">{isZh ? '常用命令' : 'Quick commands'}</span>
+                    <span className="text-[10px] text-claude-textSecondary">
+                      {localStorage.getItem('integrated_shell') || 'powershell'}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {commandQuickActions.map((item) => (
+                      <button
+                        key={item.command}
+                        type="button"
+                        onClick={() => setCommand(item.command)}
+                        disabled={permissionMode === 'workspace_write'}
+                        className="min-h-8 rounded-md border border-claude-border bg-claude-input px-2 py-1 text-left hover:bg-claude-hover disabled:opacity-40 disabled:cursor-not-allowed"
+                        title={`${item.desc}: ${item.command}`}
+                      >
+                        <div className="text-[11px] text-claude-text truncate">{item.label}</div>
+                        <div className="text-[10px] text-claude-textSecondary font-mono truncate">{item.command}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 {recentCommands.length > 0 && (
                   <div className="mt-2 space-y-2">
                     <div className="text-[11px] text-claude-textSecondary">{isZh ? '最近命令' : 'Recent commands'}</div>
@@ -1506,14 +1541,22 @@ const CodePage = () => {
                   </div>
                 ) : commandHistory.map((item, index) => (
                   <div key={`${item.command}-${index}`} className="rounded-md border border-claude-border bg-claude-input overflow-hidden">
-                    <div className="px-3 py-2 border-b border-claude-border flex items-center justify-between gap-2">
-                      <code className="text-[11px] truncate text-claude-text">{item.command}</code>
-                      <span className={`text-[10px] shrink-0 ${item.isError ? 'text-[#C6613F]' : 'text-claude-textSecondary'}`}>
-                        {item.isError ? (isZh ? '错误' : 'error') : 'ok'} · {formatDuration(item.durationMs)}
-                      </span>
+                    <div className="px-3 py-2 border-b border-claude-border space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <code className="text-[11px] truncate text-claude-text">{item.command}</code>
+                        <span className={`text-[10px] shrink-0 ${item.isError ? 'text-[#C6613F]' : 'text-claude-textSecondary'}`}>
+                          {item.timedOut ? (isZh ? '超时' : 'timeout') : item.isError ? (isZh ? '错误' : 'error') : 'ok'} · {formatDuration(item.durationMs)}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-claude-textSecondary">
+                        {item.shell && <span className="rounded border border-claude-border px-1.5 py-0.5">{item.shell}</span>}
+                        {typeof item.exitCode === 'number' && <span className="rounded border border-claude-border px-1.5 py-0.5">exit {item.exitCode}</span>}
+                        {item.permissionMode && <span className="rounded border border-claude-border px-1.5 py-0.5">{getPermissionCopy(item.permissionMode as PermissionMode, isZh).label}</span>}
+                        <span className="truncate">{item.cwd}</span>
+                      </div>
                     </div>
                     <pre className="m-0 p-3 text-[11px] leading-5 font-mono whitespace-pre-wrap break-words text-claude-textSecondary max-h-[220px] overflow-auto">
-                      {item.output}
+                      {item.output || (isZh ? '命令没有输出。' : 'The command produced no output.')}
                     </pre>
                   </div>
                 ))}

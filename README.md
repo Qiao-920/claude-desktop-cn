@@ -8,9 +8,10 @@
 
 ## 当前版本
 
-- 当前版本：`1.6.18`
-- Windows 安装包：`Claude-Desktop-CN-Setup-1.6.18.exe`
+- 当前版本：`1.6.19`
+- Windows 安装包：`Claude-Desktop-CN-Setup-1.6.19.exe`
 - Releases 页面：[GitHub Releases](https://github.com/Qiao-920/claude-desktop-cn/releases)
+- 产品任务清单：[cc-haha 能力对照与 Claude Desktop CN 产品任务清单](docs/cc-haha-capability-map.md)
 
 ## 已完成的主线能力
 
@@ -49,6 +50,9 @@ http://127.0.0.1:30080/api/github/callback
 - 从 Git 恢复单文件
 - 提交 / 推送 / 提交后自动推送
 - Shell 偏好与命令历史
+- 常用命令快捷入口
+- 命令执行权限守卫、风险命令拦截和超时控制
+- 命令输出会显示 Shell、退出码、耗时、权限模式和超时状态
 - 工作区状态条，直接显示权限、Git 状态、最近命令和推送策略
 
 ### Cowork 协作页
@@ -81,6 +85,16 @@ http://127.0.0.1:30080/api/github/callback
 
 其中 Git、MCP、环境、工作树、已归档聊天、使用情况已经不再是单纯占位，而是有状态、有入口、有说明的可继续扩展页面。
 
+## 1.6.19 更新内容
+
+这一版开始把 `cc-haha` 的能力拆成我们自己的产品任务清单，并优先补 Code 工作区主线：
+
+1. 新增 `docs/cc-haha-capability-map.md`，把 cc-haha 的 TUI、MCP、Skills、权限、Diff、桌面端、多 Agent 等能力拆成 Claude Desktop CN 的 P0/P1/P2 任务。
+2. Code 工作区加入常用命令快捷入口，方便直接跑 `dir`、`git status`、依赖检查、测试和构建。
+3. 后端命令执行开始真正读取权限模式：`项目权限` 禁止直接执行命令，非 `完全访问` 会拦截高风险命令。
+4. 命令结果补充 Shell、退出码、耗时、超时、权限模式等信息，方便判断到底是命令失败、权限拦截还是模型生成的问题。
+5. Artifact / HTML 预览切到沙盒 `srcDoc` 流程，增加加载、空白和错误状态检测，减少黑屏和“看起来没反应”的情况。
+
 ## 1.6.18 更新内容
 
 这一版把发布链路正式接上：
@@ -107,7 +121,7 @@ http://127.0.0.1:30080/api/github/callback
 
 从 Releases 下载：
 
-- [Claude-Desktop-CN-Setup-1.6.18.exe](https://github.com/Qiao-920/claude-desktop-cn/releases)
+- [Claude-Desktop-CN-Setup-1.6.19.exe](https://github.com/Qiao-920/claude-desktop-cn/releases)
 
 默认安装路径通常是：
 

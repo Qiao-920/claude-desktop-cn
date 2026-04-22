@@ -7,9 +7,9 @@
 export function buildArtifactHtml(content: string, type: string): string {
   if (type === 'text/html') {
     if (!content.includes('<html')) {
-      return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:system-ui,-apple-system,sans-serif}</style></head><body>${content}</body></html>`;
+      return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:system-ui,-apple-system,sans-serif}</style></head><body>${content}${buildPreviewRuntime()}</body></html>`;
     }
-    return content;
+    return injectPreviewRuntime(content);
   }
 
   // React component — preprocess and wrap
@@ -34,6 +34,7 @@ body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sa
 <body>
 <div id="root"></div>
 <script type="text/babel">
+${buildPreviewRuntimeSource()}
 // Shim React hooks as globals for convenience
 const { useState, useEffect, useRef, useMemo, useCallback, useReducer, useContext, createContext, Fragment, forwardRef, memo, lazy, Suspense } = React;
 
@@ -92,13 +93,70 @@ try {
   const _Component = ${processed.componentName};
   const _root = ReactDOM.createRoot(document.getElementById('root'));
   _root.render(React.createElement(_Component));
+  window.__claudePreviewReady && window.__claudePreviewReady();
 } catch(e) {
   document.getElementById('root').innerHTML = '<div style="padding:24px;color:#e44;font-family:monospace;font-size:13px"><b>Render error:</b><br>' + e.message + '</div>';
+  window.__claudePreviewError && window.__claudePreviewError(e);
   console.error('Artifact render error:', e);
 }
 <\/script>
 </body>
 </html>`;
+}
+
+function buildPreviewRuntimeSource(): string {
+  return `
+window.__claudePreviewPost = function(payload) {
+  try {
+    parent.postMessage(Object.assign({ source: 'claude-desktop-cn-artifact-preview' }, payload), '*');
+  } catch (_) {}
+};
+window.__claudePreviewReady = function() {
+  window.__claudePreviewPost({
+    type: 'ready',
+    textLength: (document.body && document.body.innerText || '').trim().length,
+    height: document.documentElement ? document.documentElement.scrollHeight : 0
+  });
+};
+window.__claudePreviewError = function(error) {
+  window.__claudePreviewPost({
+    type: 'error',
+    message: error && error.message ? error.message : String(error || 'Unknown preview error'),
+    stack: error && error.stack ? error.stack : ''
+  });
+};
+window.addEventListener('error', function(event) {
+  window.__claudePreviewError(event.error || event.message);
+});
+window.addEventListener('unhandledrejection', function(event) {
+  window.__claudePreviewError(event.reason || 'Unhandled promise rejection');
+});
+window.addEventListener('load', function() {
+  window.setTimeout(window.__claudePreviewReady, 80);
+  window.setTimeout(function() {
+    var text = (document.body && document.body.innerText || '').trim();
+    var hasVisibleElement = document.body && Array.from(document.body.children || []).some(function(el) {
+      var rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    });
+    if (!text && !hasVisibleElement) {
+      window.__claudePreviewPost({ type: 'empty', message: 'Preview loaded but no visible content was detected.' });
+    }
+  }, 900);
+});
+`;
+}
+
+function buildPreviewRuntime(): string {
+  return `<script>${buildPreviewRuntimeSource()}<\/script>`;
+}
+
+function injectPreviewRuntime(html: string): string {
+  const runtime = buildPreviewRuntime();
+  if (/<\/body>/i.test(html)) {
+    return html.replace(/<\/body>/i, `${runtime}</body>`);
+  }
+  return `${html}${runtime}`;
 }
 
 /**

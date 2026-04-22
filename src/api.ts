@@ -558,6 +558,13 @@ export interface CodeCommandResult {
   output: string;
   isError: boolean;
   durationMs: number;
+  exitCode?: number;
+  shell?: string;
+  permissionMode?: 'workspace_write' | 'project' | 'full_access';
+  timedOut?: boolean;
+  signal?: string | null;
+  startedAt?: string;
+  finishedAt?: string;
 }
 
 export interface CodeGitFile {
