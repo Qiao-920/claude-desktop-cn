@@ -101,6 +101,66 @@ type SkillItem = {
   file_count?: number;
 };
 
+type SkillDescriptionLanguage = 'zh-CN' | 'en';
+
+const SKILL_DESCRIPTION_ZH: Record<string, string> = {
+  'code-review': '代码审查助手。重点检查 bug、安全风险、性能问题、可维护性和缺少测试，适合在提交前做最后一轮质量把关。',
+  'create-project': '从零搭建可运行项目。会根据目标类型生成结构、依赖、脚本和最佳实践，适合新建应用、工具、小游戏或脚本工程。',
+  'doc-writer': '文档写作助手。适合生成 README、API 文档、使用指南、项目说明，或把复杂代码解释给他人看。',
+  'frontend-design': '前端设计与实现助手。适合网页、组件、仪表盘、小游戏和交互界面的视觉打磨与代码实现。',
+  'skill-creator': 'Skill 创建与优化助手。用于创建新 Skill、修改现有 Skill、补触发规则、写说明和做效果评估。',
+  'find-skills': 'Skill 发现助手。用于查找和安装适合某个任务的 Skill，帮你扩展客户端能力。',
+  'generate-import-html': '结构化 HTML 生成助手。适合把内容整理成可导入的 HTML 区块，处理图片、元数据和页面结构。',
+  'ui-ux-pro-max': 'UI/UX 设计知识库。包含大量设计风格、配色、字体、布局和体验规则，适合做界面评审和视觉优化。',
+  'vercel-react-best-practices': 'React / Next.js 性能实践助手。用于检查组件、数据获取、包体积和渲染性能问题。',
+  'web-design-guidelines': '网页体验审查助手。用于检查可访问性、排版、交互状态、响应式和整体 UX 风险。',
+  'Excel': '表格处理助手。适合创建、修改、分析 xlsx / csv，处理公式、格式、图表和数据表。',
+  'PowerPoint': '幻灯片制作助手。适合创建、修改、渲染和导出可编辑的 PPTX 演示文稿。',
+  'imagegen': '图片生成与编辑助手。适合生成位图视觉、插画、纹理、素材或基于参考图做变体。',
+  'openai-docs': 'OpenAI 官方文档助手。用于查询 OpenAI API、模型、产品能力和最新官方用法。',
+  'plugin-creator': '插件脚手架助手。用于创建 Codex 插件目录、插件配置和基础文件结构。',
+  'skill-installer': 'Skill 安装助手。用于从精选列表或 GitHub 仓库安装 Codex Skill。',
+  'github': 'GitHub 通用助手。用于梳理仓库、PR、Issue 和发布上下文。',
+  'gh-address-comments': 'PR 评论处理助手。用于读取未解决的 review 线程并实现对应修复。',
+  'gh-fix-ci': 'CI 修复助手。用于查看 GitHub Actions 失败日志并修复测试或构建问题。',
+  'yeet': 'GitHub 发布助手。用于提交本地修改、推送分支并打开 PR。',
+  'hf-cli': 'Hugging Face 命令行助手。用于下载、上传和管理 Hugging Face Hub 仓库。',
+  'huggingface-datasets': 'Hugging Face 数据集助手。用于读取数据集结构、分页行、过滤、搜索和 parquet 地址。',
+  'huggingface-gradio': 'Gradio 应用助手。用于创建或修改 Python Gradio Web UI。',
+  'huggingface-jobs': 'Hugging Face Jobs 助手。用于在云端运行 Python、Docker 或 GPU 工作负载。',
+  'huggingface-llm-trainer': '大语言模型训练助手。用于 SFT、DPO、GRPO、奖励模型训练和 GGUF 转换。',
+  'huggingface-paper-publisher': 'Hugging Face 论文发布助手。用于创建论文页面、关联模型和数据集。',
+  'huggingface-papers': '论文阅读助手。用于读取 Hugging Face Papers 或 arXiv 论文并提炼信息。',
+  'huggingface-trackio': '训练实验追踪助手。用于记录、查看和分析机器学习训练指标。',
+  'huggingface-vision-trainer': '视觉模型训练助手。用于目标检测、图像分类和 SAM/SAM2 分割训练。',
+  'transformers-js': 'Transformers.js 助手。用于在浏览器或 Node.js 里运行文本、视觉、音频等模型。',
+};
+
+const getSkillKeyCandidates = (skill: SkillItem) => {
+  const parts = [skill.name, skill.id, skill.id?.split(':').pop(), skill.source]
+    .filter((item): item is string => Boolean(item))
+    .map((item) => item.trim());
+  const normalized = parts.flatMap((item) => [
+    item,
+    item.toLowerCase(),
+    item.replace(/^.*:/, ''),
+    item.replace(/^.*:/, '').toLowerCase(),
+  ]);
+  return Array.from(new Set(normalized));
+};
+
+const getSkillDescription = (skill: SkillItem, language: SkillDescriptionLanguage) => {
+  const fallback = skill.description?.trim();
+  if (language === 'en') {
+    return fallback || 'This skill has no English description yet.';
+  }
+  const translated = getSkillKeyCandidates(skill).map((key) => SKILL_DESCRIPTION_ZH[key]).find(Boolean);
+  if (translated) return translated;
+  if (fallback && /[\u4e00-\u9fff]/.test(fallback)) return fallback;
+  if (fallback) return `英文原文：${fallback}`;
+  return '这个 Skill 还没有中文说明。后续可以补充用途、触发方式和示例。';
+};
+
 const WORK_OPTIONS = [
   '软件工程',
   '产品经理',
@@ -363,6 +423,38 @@ const InlineActionButton = ({
   </button>
 );
 
+const ToggleSwitch = ({
+  checked,
+  onChange,
+  disabled = false,
+  label,
+}: {
+  checked: boolean;
+  onChange: () => void;
+  disabled?: boolean;
+  label?: string;
+}) => (
+  <button
+    type="button"
+    role="switch"
+    aria-checked={checked}
+    aria-label={label}
+    disabled={disabled}
+    onClick={onChange}
+    className={`group inline-flex h-8 w-[58px] shrink-0 items-center rounded-full border px-1 transition-all focus:outline-none focus:ring-2 focus:ring-[#2E7CF6]/35 disabled:cursor-not-allowed disabled:opacity-55 ${
+      checked
+        ? 'border-[#2E7CF6]/45 bg-[#2E7CF6]'
+        : 'border-claude-border bg-claude-input hover:border-claude-textSecondary/45'
+    }`}
+  >
+    <span
+      className={`h-6 w-6 rounded-full bg-white shadow-[0_2px_8px_rgba(0,0,0,0.25)] transition-transform ${
+        checked ? 'translate-x-6' : 'translate-x-0'
+      }`}
+    />
+  </button>
+);
+
 const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const navigate = useNavigate();
   const isSelfHosted = localStorage.getItem('user_mode') === 'selfhosted';
@@ -409,6 +501,10 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const [gitStatus, setGitStatus] = useState<CodeGitStatusResult | null>(null);
   const [skillStats, setSkillStats] = useState({ enabled: 0, builtIn: 0, custom: 0 });
   const [skillsList, setSkillsList] = useState<SkillItem[]>([]);
+  const [skillDescriptionLanguage, setSkillDescriptionLanguage] = useState<SkillDescriptionLanguage>(() => {
+    const saved = localStorage.getItem('skills_description_language');
+    return saved === 'en' || saved === 'zh-CN' ? saved : 'zh-CN';
+  });
   const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([]);
   const [mcpDraft, setMcpDraft] = useState({
     name: 'Local MCP',
@@ -849,6 +945,11 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
       setSaveMsg(error?.message || (isZh ? '切换 Skill 失败' : 'Failed to update skill'));
       window.setTimeout(() => setSaveMsg(''), 2200);
     }
+  };
+
+  const changeSkillDescriptionLanguage = (language: SkillDescriptionLanguage) => {
+    setSkillDescriptionLanguage(language);
+    localStorage.setItem('skills_description_language', language);
   };
 
   const applyDefaultModel = (base: string, thinking: boolean) => {
@@ -1460,13 +1561,11 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                       <div className="text-[14px] font-medium text-claude-text">{isZh ? '提交后自动推送' : 'Push after commit'}</div>
                       <div className="mt-1 text-[12px] leading-6 text-claude-textSecondary">{isZh ? '完成 commit 后自动执行 push，适合发布流。' : 'Run push automatically after a successful commit.'}</div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => saveBooleanPref('git_push_after_commit', !gitPushAfterCommit, setGitPushAfterCommit)}
-                      className={`relative h-7 w-12 rounded-full transition-colors ${gitPushAfterCommit ? 'bg-[#2E7CF6]' : 'bg-claude-border'}`}
-                    >
-                      <span className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-transform ${gitPushAfterCommit ? 'translate-x-6' : 'translate-x-1'}`} />
-                    </button>
+                    <ToggleSwitch
+                      checked={gitPushAfterCommit}
+                      label={isZh ? '提交后自动推送' : 'Push after commit'}
+                      onChange={() => saveBooleanPref('git_push_after_commit', !gitPushAfterCommit, setGitPushAfterCommit)}
+                    />
                   </div>
                 </div>
                 <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
@@ -1579,13 +1678,12 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                               {server.lastTestStatus ? `${server.lastTestStatus}: ${server.lastTestMessage || ''}` : (isZh ? '尚未测试' : 'Not tested yet')}
                             </div>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => handleToggleMcpServer(server)}
-                            className={`relative h-6 w-10 shrink-0 rounded-full transition-colors ${server.enabled ? 'bg-[#2E7CF6]' : 'bg-claude-border'}`}
-                          >
-                            <span className={`absolute top-1 h-4 w-4 rounded-full bg-white transition-transform ${server.enabled ? 'translate-x-5' : 'translate-x-1'}`} />
-                          </button>
+                          <ToggleSwitch
+                            checked={Boolean(server.enabled)}
+                            disabled={mcpBusy === server.id}
+                            label={server.enabled ? (isZh ? '禁用 MCP 服务' : 'Disable MCP server') : (isZh ? '启用 MCP 服务' : 'Enable MCP server')}
+                            onChange={() => handleToggleMcpServer(server)}
+                          />
                         </div>
                         <div className="mt-3 flex flex-wrap gap-2">
                           <InlineActionButton onClick={() => handleTestMcpServer(server)}>
@@ -1613,15 +1711,37 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
               title={isZh ? 'Skills 能力' : 'Skills'}
               subtitle={isZh ? '集中查看和开关内置、自定义 Skills。聊天输入区的 Skills 菜单会读取这里的状态。' : 'View and toggle built-in and custom skills. The chat Skills menu uses this state.'}
             >
-              <div className="mb-4 grid grid-cols-3 gap-4">
+              <div className="mb-4 grid grid-cols-2 items-stretch gap-4 xl:grid-cols-[1fr_1fr_1fr_auto]">
                 <InfoStat label={isZh ? '已启用' : 'Enabled'} value={skillStats.enabled} />
                 <InfoStat label={isZh ? '内置' : 'Built-in'} value={skillStats.builtIn} />
                 <InfoStat label={isZh ? '自定义' : 'Custom'} value={skillStats.custom} />
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="text-[13px] text-claude-textSecondary">{isZh ? '说明语言' : 'Description language'}</div>
+                  <div className="mt-3 inline-flex rounded-lg border border-claude-border bg-claude-input p-1">
+                    {[
+                      { value: 'zh-CN' as const, label: '中文' },
+                      { value: 'en' as const, label: 'English' },
+                    ].map((item) => (
+                      <button
+                        key={item.value}
+                        type="button"
+                        onClick={() => changeSkillDescriptionLanguage(item.value)}
+                        className={`rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                          skillDescriptionLanguage === item.value
+                            ? 'bg-[#2E7CF6] text-white shadow-sm'
+                            : 'text-claude-textSecondary hover:text-claude-text'
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
               <div className="space-y-2">
                 {skillsList.length > 0 ? skillsList.map((skill) => (
-                  <div key={skill.id} className="flex items-center justify-between gap-4 rounded-xl border border-claude-border bg-claude-bg px-4 py-3">
-                    <div className="min-w-0">
+                  <div key={skill.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 rounded-xl border border-claude-border bg-claude-bg px-4 py-3 transition-colors hover:border-claude-textSecondary/25">
+                    <div className="min-w-0 pr-2">
                       <div className="flex items-center gap-2">
                         <div className="truncate text-[14px] font-medium text-claude-text">{skill.name || skill.id}</div>
                         <span className="rounded border border-claude-border px-1.5 py-0.5 text-[10px] text-claude-textSecondary">
@@ -1629,16 +1749,19 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                         </span>
                       </div>
                       <div className="mt-1 line-clamp-2 text-[12px] leading-5 text-claude-textSecondary">
-                        {skill.description || (isZh ? '这个 Skill 还没有说明，后续可以补充用途、触发方式和示例。' : 'This skill has no description yet. Add purpose, triggers, and examples later.')}
+                        {getSkillDescription(skill, skillDescriptionLanguage)}
                       </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => handleToggleSkill(skill)}
-                      className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${skill.enabled ? 'bg-[#2E7CF6]' : 'bg-claude-border'}`}
-                    >
-                      <span className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-transform ${skill.enabled ? 'translate-x-6' : 'translate-x-1'}`} />
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <span className={`w-10 text-right text-[11px] ${skill.enabled ? 'text-[#2E7CF6]' : 'text-claude-textSecondary'}`}>
+                        {skill.enabled ? (isZh ? '启用' : 'On') : (isZh ? '停用' : 'Off')}
+                      </span>
+                      <ToggleSwitch
+                        checked={Boolean(skill.enabled)}
+                        label={skill.enabled ? (isZh ? '停用 Skill' : 'Disable skill') : (isZh ? '启用 Skill' : 'Enable skill')}
+                        onChange={() => handleToggleSkill(skill)}
+                      />
+                    </div>
                   </div>
                 )) : (
                   <div className="rounded-xl border border-dashed border-claude-border px-4 py-5 text-[13px] leading-6 text-claude-textSecondary">
@@ -1699,13 +1822,11 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                         <div className="text-[14px] font-medium text-claude-text">{item.title}</div>
                         <div className="mt-1 text-[12px] leading-6 text-claude-textSecondary">{item.desc}</div>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => saveBooleanPref(item.key, !item.value, item.setter)}
-                        className={`relative h-7 w-12 rounded-full transition-colors ${item.value ? 'bg-[#2E7CF6]' : 'bg-claude-border'}`}
-                      >
-                        <span className={`absolute top-1 h-5 w-5 rounded-full bg-white transition-transform ${item.value ? 'translate-x-6' : 'translate-x-1'}`} />
-                      </button>
+                      <ToggleSwitch
+                        checked={Boolean(item.value)}
+                        label={item.title}
+                        onChange={() => saveBooleanPref(item.key, !item.value, item.setter)}
+                      />
                     </div>
                   </div>
                 ))}
