@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, globalShortcut, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, globalShortcut, Tray, Menu, nativeImage, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const archiver = require('archiver');
@@ -97,16 +97,39 @@ function sanitizePreviewName(name) {
     return withExt || fallback;
 }
 
+function getPublicIconPath(fileName) {
+    return path.join(__dirname, '..', 'public', fileName);
+}
+
 function getWindowIconPath() {
-    return path.join(__dirname, '..', 'public', process.platform === 'win32' ? 'favicon.ico' : 'favicon.png');
+    return firstExistingPath([
+        process.platform === 'win32' ? getPublicIconPath('favicon.ico') : null,
+        getPublicIconPath('favicon.png'),
+    ]);
 }
 
 function getTrayIcon() {
-    const baseIcon = nativeImage.createFromPath(getWindowIconPath());
-    if (process.platform === 'win32' && !baseIcon.isEmpty()) {
-        return baseIcon.resize({ width: 16, height: 16 });
+    const trayIcoPath = getPublicIconPath('favicon.ico');
+    const trayPngPath = getPublicIconPath('favicon.png');
+
+    // Windows notification area is most reliable with a real .ico path.
+    if (process.platform === 'win32' && fs.existsSync(trayIcoPath)) {
+        return trayIcoPath;
     }
-    return baseIcon;
+
+    const baseIcon = nativeImage.createFromPath(trayPngPath);
+    if (!baseIcon.isEmpty()) {
+        const scaleFactor = Math.max(1, Math.round(screen.getPrimaryDisplay?.().scaleFactor || 1));
+        const size = process.platform === 'darwin' ? 18 : 16 * scaleFactor;
+        return baseIcon.resize({ width: size, height: size, quality: 'best' });
+    }
+
+    const fallbackPath = getWindowIconPath();
+    if (fallbackPath && fs.existsSync(fallbackPath)) {
+        return fallbackPath;
+    }
+
+    return nativeImage.createEmpty();
 }
 
 function showMainWindow() {
@@ -125,7 +148,11 @@ function showMainWindow() {
 
 function createTray() {
     if (tray) return;
-    tray = new Tray(getTrayIcon());
+    const trayIcon = getTrayIcon();
+    tray = new Tray(trayIcon);
+    if (process.platform === 'win32' && typeof trayIcon === 'string') {
+        tray.setImage(trayIcon);
+    }
     tray.setToolTip('Claude Desktop CN');
 
     const refreshTrayMenu = () => {
