@@ -448,6 +448,11 @@ const Layout = () => {
       const data = await getUnreadAnnouncements();
       setUnreadAnnouncements(Array.isArray(data?.announcements) ? data.announcements : []);
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('404')) {
+        setUnreadAnnouncements([]);
+        return;
+      }
       console.error('Failed to fetch announcements:', err);
     }
   }, []);

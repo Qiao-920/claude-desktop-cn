@@ -4,7 +4,7 @@ const fs = require('fs');
 const archiver = require('archiver');
 const { autoUpdater } = require('electron-updater');
 // Load build-time secrets before requiring bridge-server so they're available on process.env.
-// secrets.json is gitignored — populated by CI at build time from GitHub Actions secrets.
+// secrets.json is gitignored 鈥?populated by CI at build time from GitHub Actions secrets.
 // In dev just export the env vars in your shell (or put them in this file locally).
 try {
     const secretsPath = path.join(__dirname, 'secrets.json');
@@ -26,7 +26,7 @@ if (process.platform === 'win32') {
     process.stderr.setEncoding?.('utf8');
 }
 
-// Squirrel startup handler removed — using NSIS installer, not Squirrel
+// Squirrel startup handler removed 鈥?using NSIS installer, not Squirrel
 
 let mainWindow;
 let tray = null;
@@ -34,6 +34,15 @@ let isQuitting = false;
 let hasShownTrayHint = false;
 
 const isDev = process.env.NODE_ENV === 'development';
+const isWindows = process.platform === 'win32';
+let lastRendererRecoveryAt = 0;
+
+function appendMainLog(scope, message) {
+    try {
+        const line = `[${new Date().toISOString()}] [${scope}] ${message}\n`;
+        fs.appendFileSync(path.join(app.getPath('userData'), 'main-process.log'), line, 'utf8');
+    } catch (_) {}
+}
 
 function spawnDetached(command, args, options = {}) {
     try {
@@ -101,34 +110,56 @@ function getPublicIconPath(fileName) {
     return path.join(__dirname, '..', 'public', fileName);
 }
 
+function getDistIconPath(fileName) {
+    return path.join(__dirname, '..', 'dist', fileName);
+}
+
+function getPackagedIconPath(fileName) {
+    return path.join(process.resourcesPath, 'assets', fileName);
+}
+
+function getRuntimeIconPath(fileName) {
+    return firstExistingPath([
+        app.isPackaged ? getPackagedIconPath(fileName) : null,
+        getDistIconPath(fileName),
+        getPublicIconPath(fileName),
+    ]);
+}
+
 function getWindowIconPath() {
     return firstExistingPath([
-        process.platform === 'win32' ? getPublicIconPath('favicon.ico') : null,
-        getPublicIconPath('favicon.png'),
+        process.platform === 'win32' ? getRuntimeIconPath('favicon.ico') : null,
+        getRuntimeIconPath('favicon.png'),
     ]);
 }
 
 function getTrayIcon() {
-    const trayIcoPath = getPublicIconPath('favicon.ico');
-    const trayPngPath = getPublicIconPath('favicon.png');
+    const trayIcoPath = getRuntimeIconPath('favicon.ico');
+    const trayPngPath = getRuntimeIconPath('favicon.png');
 
-    // Windows notification area is most reliable with a real .ico path.
-    if (process.platform === 'win32' && fs.existsSync(trayIcoPath)) {
-        return trayIcoPath;
+    if (trayPngPath && fs.existsSync(trayPngPath)) {
+        const baseIcon = nativeImage.createFromPath(trayPngPath);
+        if (!baseIcon.isEmpty()) {
+            const scaleFactor = Math.max(1, Math.round(screen.getPrimaryDisplay?.().scaleFactor || 1));
+            const size = process.platform === 'darwin' ? 18 : 16 * scaleFactor;
+            const resized = baseIcon.resize({ width: size, height: size, quality: 'best' });
+            appendMainLog('tray-icon', `using png icon ${trayPngPath} (${size}x${size})`);
+            return resized;
+        }
     }
 
-    const baseIcon = nativeImage.createFromPath(trayPngPath);
-    if (!baseIcon.isEmpty()) {
-        const scaleFactor = Math.max(1, Math.round(screen.getPrimaryDisplay?.().scaleFactor || 1));
-        const size = process.platform === 'darwin' ? 18 : 16 * scaleFactor;
-        return baseIcon.resize({ width: size, height: size, quality: 'best' });
+    if (process.platform === 'win32' && trayIcoPath && fs.existsSync(trayIcoPath)) {
+        appendMainLog('tray-icon', `using ico fallback ${trayIcoPath}`);
+        return trayIcoPath;
     }
 
     const fallbackPath = getWindowIconPath();
     if (fallbackPath && fs.existsSync(fallbackPath)) {
+        appendMainLog('tray-icon', `using window icon fallback ${fallbackPath}`);
         return fallbackPath;
     }
 
+    appendMainLog('tray-icon', 'no icon available, using empty native image');
     return nativeImage.createEmpty();
 }
 
@@ -150,9 +181,7 @@ function createTray() {
     if (tray) return;
     const trayIcon = getTrayIcon();
     tray = new Tray(trayIcon);
-    if (process.platform === 'win32' && typeof trayIcon === 'string') {
-        tray.setImage(trayIcon);
-    }
+    tray.setImage(trayIcon);
     tray.setToolTip('Claude Desktop CN');
 
     const refreshTrayMenu = () => {
@@ -202,6 +231,9 @@ function createTray() {
 }
 
 function createWindow() {
+    let startupWatchdog = null;
+    let attemptedStartupReload = false;
+
     mainWindow = new BrowserWindow({
         width: 1150,
         height: 700,
@@ -224,17 +256,22 @@ function createWindow() {
                 }
             }),
         icon: getWindowIconPath(),
-        backgroundColor: '#F8F8F6',
+        backgroundColor: '#1f1f1d',
         show: false, // Show after ready-to-show to prevent flash
     });
 
     // Reset zoom to default on startup & register zoom shortcuts
     mainWindow.once('ready-to-show', () => {
+        if (startupWatchdog) {
+            clearTimeout(startupWatchdog);
+            startupWatchdog = null;
+        }
         mainWindow.webContents.setZoomFactor(1.0);
         mainWindow.show();
+        appendMainLog('window', 'ready-to-show');
     });
 
-    // Zoom keyboard shortcuts — Electron doesn't handle Ctrl+= (plus) by default on some layouts
+    // Zoom keyboard shortcuts 鈥?Electron doesn't handle Ctrl+= (plus) by default on some layouts
     const TITLE_BAR_BASE_HEIGHT = 44;
     const applyZoom = (factor) => {
         const wc = mainWindow.webContents;
@@ -277,6 +314,57 @@ function createWindow() {
         mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
     }
     // mainWindow.webContents.openDevTools();
+
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+        if (!isMainFrame) return;
+        appendMainLog('did-fail-load', `${errorCode} ${errorDescription} ${validatedURL || ''}`.trim());
+    });
+
+    mainWindow.webContents.on('did-finish-load', () => {
+        if (startupWatchdog) {
+            clearTimeout(startupWatchdog);
+            startupWatchdog = null;
+        }
+        appendMainLog('did-finish-load', 'renderer finished loading');
+        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+            mainWindow.show();
+        }
+    });
+
+    mainWindow.webContents.on('render-process-gone', (event, details) => {
+        appendMainLog('render-process-gone', JSON.stringify(details || {}));
+        const now = Date.now();
+        if (now - lastRendererRecoveryAt < 10000) return;
+        lastRendererRecoveryAt = now;
+        setTimeout(() => {
+            if (!mainWindow || mainWindow.isDestroyed()) return;
+            try {
+                if (isDev) {
+                    mainWindow.loadURL('http://localhost:3000');
+                } else {
+                    mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+                }
+            } catch (error) {
+                appendMainLog('render-process-reload-failed', error?.message || String(error));
+            }
+        }, 1200);
+    });
+
+    mainWindow.on('unresponsive', () => {
+        appendMainLog('window-unresponsive', 'BrowserWindow became unresponsive');
+    });
+
+    startupWatchdog = setTimeout(() => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        if (attemptedStartupReload) return;
+        attemptedStartupReload = true;
+        appendMainLog('startup-watchdog', 'window did not become ready in time, forcing reload');
+        try {
+            mainWindow.webContents.reloadIgnoringCache();
+        } catch (error) {
+            appendMainLog('startup-watchdog-failed', error?.message || String(error));
+        }
+    }, 12000);
 
     // Open all external links in the system browser, not in the app
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -343,11 +431,16 @@ function createWindow() {
     });
 }
 
+if (isWindows) {
+    app.disableHardwareAcceleration();
+    app.commandLine.appendSwitch('disable-gpu');
+}
+
 app.whenReady().then(() => {
     app.setAppUserModelId('com.claude.desktop.cn');
     // macOS: clear quarantine flags on bundled bun binary. Downloaded .dmg/.zip
     // files get Apple's com.apple.quarantine xattr, and since our bun binary is
-    // unsigned, Gatekeeper silently blocks execution — the engine subprocess just
+    // unsigned, Gatekeeper silently blocks execution 鈥?the engine subprocess just
     // exits immediately with no output. This one-liner strips the flag so bun can
     // run. Safe to call every launch (no-op if already cleared or on non-Mac).
     if (process.platform === 'darwin') {
@@ -366,7 +459,7 @@ app.whenReady().then(() => {
     createTray();
     createWindow();
 
-    // No SDK subprocess needed — using direct API calls
+    // No SDK subprocess needed 鈥?using direct API calls
     enableNodeModeForChildProcesses();
 
     // Auto-update is disabled in this local Chinese build.
@@ -398,7 +491,7 @@ app.whenReady().then(() => {
             if (mainWindow) {
                 mainWindow.webContents.send('update-status', { type: 'downloaded', version: info.version });
             }
-            // Don't auto-quit — let the user click "Relaunch" in the UI.
+            // Don't auto-quit 鈥?let the user click "Relaunch" in the UI.
             // On Mac, quitAndInstall's isForceRunAfter param is ignored,
             // so we use app.relaunch() + app.exit() to ensure the app restarts.
         });
@@ -469,7 +562,7 @@ ipcMain.handle('resize-window', (_, width, height) => {
 
 // Open the folder containing the given file path in system explorer
 // Returns true if opened, false if file/folder not found
-const recentlyOpenedFolders = new Map(); // path → timestamp, prevents duplicate opens
+const recentlyOpenedFolders = new Map(); // path 鈫?timestamp, prevents duplicate opens
 ipcMain.handle('show-item-in-folder', (event, filePath) => {
     if (!filePath || !fs.existsSync(filePath)) return false;
     // Deduplicate: ignore if same folder was opened within last 2 seconds
@@ -583,7 +676,7 @@ ipcMain.handle('select-directory', async () => {
 ipcMain.handle('export-workspace', async (event, workspaceId, contextMarkdown, defaultFilename) => {
     try {
         const result = await dialog.showSaveDialog(mainWindow, {
-            title: '导出模型对话工作空间',
+            title: '瀵煎嚭妯″瀷瀵硅瘽宸ヤ綔绌洪棿',
             defaultPath: defaultFilename,
             filters: [
                 { name: 'Zip Archives', extensions: ['zip'] },
@@ -598,15 +691,15 @@ ipcMain.handle('export-workspace', async (event, workspaceId, contextMarkdown, d
         const zipDest = result.filePath;
         const workspacePath = path.join(app.getPath('userData'), 'workspaces', workspaceId);
 
-        // 确保对应的 workspace 目录存在 (即使之前因为没有发生过相关文件操作而没创建)
+        // 纭繚瀵瑰簲鐨?workspace 鐩綍瀛樺湪 (鍗充娇涔嬪墠鍥犱负娌℃湁鍙戠敓杩囩浉鍏虫枃浠舵搷浣滆€屾病鍒涘缓)
         if (!fs.existsSync(workspacePath)) {
             fs.mkdirSync(workspacePath, { recursive: true });
         }
 
-        // 把前段归集的完整文本上下文放进去一起归档
+        // 鎶婂墠娈靛綊闆嗙殑瀹屾暣鏂囨湰涓婁笅鏂囨斁杩涘幓涓€璧峰綊妗?
         fs.writeFileSync(path.join(workspacePath, 'chat_context.md'), contextMarkdown || '', 'utf-8');
 
-        // 执行异步 zip 打包保存
+        // 鎵ц寮傛 zip 鎵撳寘淇濆瓨
         return await new Promise((resolve, reject) => {
             const output = fs.createWriteStream(zipDest);
             const archive = archiver('zip', {
@@ -623,7 +716,7 @@ ipcMain.handle('export-workspace', async (event, workspaceId, contextMarkdown, d
 
             archive.pipe(output);
 
-            // 将整个文件夹里的所有文件平摊塞入这个压缩包里 (不用多套一层文件夹壳)
+            // 灏嗘暣涓枃浠跺す閲岀殑鎵€鏈夋枃浠跺钩鎽婂鍏ヨ繖涓帇缂╁寘閲?(涓嶇敤澶氬涓€灞傛枃浠跺す澹?
             archive.directory(workspacePath, false);
 
             archive.finalize();
@@ -633,3 +726,5 @@ ipcMain.handle('export-workspace', async (event, workspaceId, contextMarkdown, d
         throw err;
     }
 });
+
+

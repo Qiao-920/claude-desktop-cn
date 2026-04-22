@@ -684,6 +684,7 @@ interface ModelCatalog {
 
 /** Memoized message list — skips re-render when only inputText changes */
 interface MessageListProps {
+  uiLanguage: UiLanguage;
   messages: any[];
   currentModelString: string;
   loading: boolean;
@@ -705,6 +706,7 @@ interface MessageListProps {
 }
 
 const MessageList = React.memo<MessageListProps>(({
+  uiLanguage,
   messages, currentModelString, loading, expandedMessages, editingMessageIdx, editingContent,
   copiedMessageIdx, compactStatus, onSetEditingContent, onEditCancel, onEditSave,
   onToggleExpand, onResend, onEdit, onCopy, onOpenDocument, onSetMessages,
@@ -4155,6 +4157,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
             style={{ maxWidth: `${tunerConfig?.mainContentWidth || 768}px` }}
           >
             <MessageList
+              uiLanguage={uiLanguage}
               messages={messages}
               currentModelString={currentModelString}
               loading={loading}
