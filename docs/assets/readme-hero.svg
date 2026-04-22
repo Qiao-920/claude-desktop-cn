@@ -1,0 +1,58 @@
+<svg width="1200" height="480" viewBox="0 0 1200 480" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="480" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#181818"/>
+      <stop offset="0.54" stop-color="#24231F"/>
+      <stop offset="1" stop-color="#151515"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="290" y1="70" x2="960" y2="420" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#30302C"/>
+      <stop offset="1" stop-color="#20201E"/>
+    </linearGradient>
+    <filter id="shadow" x="180" y="28" width="860" height="430" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="24" stdDeviation="28" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="480" rx="32" fill="url(#bg)"/>
+  <g opacity="0.12">
+    <path d="M1020 90H1140" stroke="#E8DCCB" stroke-width="2"/>
+    <path d="M80 390H230" stroke="#E8DCCB" stroke-width="2"/>
+    <path d="M1040 120H1120" stroke="#C6613F" stroke-width="2"/>
+  </g>
+  <g filter="url(#shadow)">
+    <rect x="215" y="64" width="770" height="352" rx="20" fill="url(#panel)" stroke="#4A4842"/>
+    <rect x="215" y="64" width="770" height="44" rx="20" fill="#191919"/>
+    <rect x="215" y="92" width="770" height="16" fill="#191919"/>
+    <circle cx="250" cy="86" r="6" fill="#6D6A60"/>
+    <circle cx="272" cy="86" r="6" fill="#6D6A60"/>
+    <circle cx="294" cy="86" r="6" fill="#6D6A60"/>
+    <rect x="250" y="140" width="160" height="232" rx="14" fill="#171817" stroke="#3C3B37"/>
+    <rect x="285" y="166" width="82" height="10" rx="5" fill="#E8DCCB" opacity="0.8"/>
+    <rect x="285" y="207" width="96" height="12" rx="6" fill="#E8DCCB" opacity="0.62"/>
+    <rect x="285" y="250" width="70" height="12" rx="6" fill="#E8DCCB" opacity="0.62"/>
+    <rect x="285" y="293" width="90" height="12" rx="6" fill="#E8DCCB" opacity="0.62"/>
+    <rect x="285" y="336" width="54" height="12" rx="6" fill="#E8DCCB" opacity="0.62"/>
+    <rect x="450" y="145" width="470" height="66" rx="18" fill="#343431"/>
+    <rect x="475" y="166" width="245" height="12" rx="6" fill="#E8DCCB" opacity="0.76"/>
+    <rect x="475" y="188" width="130" height="8" rx="4" fill="#A49D91"/>
+    <rect x="450" y="235" width="220" height="108" rx="14" fill="#171817" stroke="#3C3B37"/>
+    <rect x="700" y="235" width="220" height="108" rx="14" fill="#171817" stroke="#3C3B37"/>
+    <rect x="475" y="258" width="92" height="12" rx="6" fill="#E8DCCB" opacity="0.8"/>
+    <rect x="475" y="288" width="150" height="8" rx="4" fill="#A49D91"/>
+    <rect x="725" y="258" width="112" height="12" rx="6" fill="#E8DCCB" opacity="0.8"/>
+    <rect x="725" y="288" width="145" height="8" rx="4" fill="#A49D91"/>
+  </g>
+  <g transform="translate(118 126)">
+    <path d="M47.2 0L53.9 36.4L83.6 14.3L61.5 44L97.9 50.7L61.5 57.4L83.6 87.1L53.9 65L47.2 101.4L40.5 65L10.8 87.1L32.9 57.4L-3.5 50.7L32.9 44L10.8 14.3L40.5 36.4L47.2 0Z" fill="#D97757"/>
+  </g>
+  <text x="112" y="274" fill="#F3EEE7" font-family="Segoe UI, Arial, sans-serif" font-size="54" font-weight="700">Claude Desktop CN</text>
+  <text x="116" y="318" fill="#C9C1B6" font-family="Segoe UI, Arial, sans-serif" font-size="22">中文桌面 Claude / Claude Code 工作台</text>
+  <g transform="translate(116 352)">
+    <rect width="104" height="30" rx="15" fill="#C6613F"/>
+    <text x="18" y="20" fill="#FFFFFF" font-family="Segoe UI, Arial, sans-serif" font-size="14" font-weight="600">v1.6.19</text>
+    <rect x="116" width="132" height="30" rx="15" fill="#2E2F2B" stroke="#57534A"/>
+    <text x="134" y="20" fill="#E8DCCB" font-family="Segoe UI, Arial, sans-serif" font-size="14">Windows</text>
+    <rect x="260" width="170" height="30" rx="15" fill="#2E2F2B" stroke="#57534A"/>
+    <text x="278" y="20" fill="#E8DCCB" font-family="Segoe UI, Arial, sans-serif" font-size="14">Code Workspace</text>
+  </g>
+</svg>

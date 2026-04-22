@@ -1,32 +1,54 @@
 # Claude Desktop CN
 
+<p align="center">
+  <img src="docs/assets/readme-hero.svg" alt="Claude Desktop CN" width="100%" />
+</p>
+
+<p align="center">
+  <a href="https://github.com/Qiao-920/claude-desktop-cn/releases"><img alt="release" src="https://img.shields.io/github/v/release/Qiao-920/claude-desktop-cn?label=release&color=C6613F"></a>
+  <a href="https://github.com/Qiao-920/claude-desktop-cn/actions"><img alt="build" src="https://img.shields.io/github/actions/workflow/status/Qiao-920/claude-desktop-cn/build-release.yml?branch=main&label=build"></a>
+  <img alt="platform" src="https://img.shields.io/badge/platform-Windows-497BA7">
+  <img alt="language" src="https://img.shields.io/badge/UI-中文%20%2F%20English-6A8F5D">
+</p>
+
 面向中文用户持续维护的 Claude 风格桌面客户端分支，基于 [`pretend1111/claude-desktop-app`](https://github.com/pretend1111/claude-desktop-app) 二次整理、汉化和增强。
 
-这个分支的目标不是简单换皮，而是把原本零散、半占位的能力慢慢补成一套可维护、可发布、可日用的桌面工作流。
+这个分支的目标不是简单换皮，而是把原本零散、半占位的能力慢慢补成一套可维护、可发布、可日用的桌面工作流：中文聊天、项目上下文、GitHub 导入、本地 Code 工作区、权限守卫、命令执行和 Artifact 预览。
 
-仓库地址：[Qiao-920/claude-desktop-cn](https://github.com/Qiao-920/claude-desktop-cn)
+## 下载
 
-## 当前版本
+| 项目 | 内容 |
+| --- | --- |
+| 当前版本 | `1.6.19` |
+| Windows 安装包 | `Claude-Desktop-CN-Setup-1.6.19.exe` |
+| 下载页面 | [GitHub Releases](https://github.com/Qiao-920/claude-desktop-cn/releases) |
+| 本轮更新说明 | [Claude Desktop CN v1.6.19](https://github.com/Qiao-920/claude-desktop-cn/releases/tag/v1.6.19) |
+| 产品任务清单 | [cc-haha 能力对照与 Claude Desktop CN 产品任务清单](docs/cc-haha-capability-map.md) |
 
-- 当前版本：`1.6.19`
-- Windows 安装包：`Claude-Desktop-CN-Setup-1.6.19.exe`
-- Releases 页面：[GitHub Releases](https://github.com/Qiao-920/claude-desktop-cn/releases)
-- 产品任务清单：[cc-haha 能力对照与 Claude Desktop CN 产品任务清单](docs/cc-haha-capability-map.md)
+默认安装路径通常是：
 
-## 已完成的主线能力
+```text
+C:\Users\Administrator\AppData\Local\Programs\claude-desktop\
+```
 
-### 中文界面
+## 产品能力
 
-- 主界面、设置页、协作页、代码页持续中文化
-- 支持中文 / 英文 UI 切换
-- 清理零散英文文案，让界面更像一个正式客户端
-- 收紧聊天正文、输入区和设置页布局，降低大屏空旷感
+<p align="center">
+  <img src="docs/assets/product-map.svg" alt="Claude Desktop CN 产品能力图" width="100%" />
+</p>
+
+### 中文桌面体验
+
+- 主界面、设置页、协作页、代码页持续中文化。
+- 支持中文 / 英文 UI 切换。
+- 清理零散英文文案，让界面更像一个正式客户端。
+- 收紧聊天正文、输入区和设置页布局，降低大屏空旷感。
 
 ### GitHub 连接
 
-- 支持配置自己的 GitHub OAuth App
-- 不再复用原作者的 Client ID / Client Secret
-- 支持 GitHub 仓库导入和项目资料来源绑定
+- 支持配置自己的 GitHub OAuth App。
+- 不再复用原作者的 Client ID / Client Secret。
+- 支持 GitHub 仓库导入和项目资料来源绑定。
 
 OAuth 回调地址：
 
@@ -38,32 +60,25 @@ http://127.0.0.1:30080/api/github/callback
 
 当前已经支持：
 
-- 选择本地工作区
-- 文件树浏览
-- 文件预览、编辑、保存
-- HTML 预览
-- 新建文件 / 新建文件夹
-- 重命名 / 删除
-- Git 状态查看
-- 单文件 diff
-- 单文件暂存 / 取消暂存 / 丢弃修改
-- 从 Git 恢复单文件
-- 提交 / 推送 / 提交后自动推送
-- Shell 偏好与命令历史
-- 常用命令快捷入口
-- 命令执行权限守卫、风险命令拦截和超时控制
-- 命令输出会显示 Shell、退出码、耗时、权限模式和超时状态
-- 工作区状态条，直接显示权限、Git 状态、最近命令和推送策略
+- 选择本地工作区。
+- 文件树浏览、文件预览、编辑、保存。
+- HTML / Artifact 预览。
+- 新建文件、新建文件夹、重命名、删除。
+- Git 状态查看、单文件 diff、暂存、取消暂存、丢弃修改。
+- 提交、推送、提交后自动推送。
+- Shell 偏好、常用命令快捷入口、命令历史。
+- 命令执行权限守卫、风险命令拦截、超时控制。
+- 命令输出显示 Shell、退出码、耗时、权限模式和超时状态。
 
 ### Cowork 协作页
 
 协作页已经从空白说明页升级为工作总览：
 
-- 项目、GitHub、权限、归档状态总览
-- 快捷入口：项目、代码工作区、权限环境设置
-- 当前队列：提示下一步应该连接什么、整理什么
-- 最近项目列表
-- 协作 / 代码页职责边界说明
+- 项目、GitHub、权限、归档状态总览。
+- 快捷入口：项目、代码工作区、权限环境设置。
+- 当前队列：提示下一步应该连接什么、整理什么。
+- 最近项目列表。
+- 协作 / 代码页职责边界说明。
 
 它现在仍不是完整多人协作系统，但已经具备真实产品页的骨架和入口。
 
@@ -71,100 +86,58 @@ http://127.0.0.1:30080/api/github/callback
 
 设置页已经补齐原生 Claude / Codex 风格的第一版骨架：
 
-- 常规
-- 外观
-- 模型
-- 个性化
-- 权限
-- Git
-- MCP 服务器
-- 环境
-- 工作树
-- 已归档聊天
-- 使用情况
+- 常规、外观、模型、个性化、权限。
+- Git、MCP 服务器、环境、工作树。
+- 已归档聊天、使用情况。
 
 其中 Git、MCP、环境、工作树、已归档聊天、使用情况已经不再是单纯占位，而是有状态、有入口、有说明的可继续扩展页面。
 
-## 1.6.19 更新内容
+## 首次使用
 
-这一版开始把 `cc-haha` 的能力拆成我们自己的产品任务清单，并优先补 Code 工作区主线：
+### 1. 选择用户模式
 
-1. 新增 `docs/cc-haha-capability-map.md`，把 cc-haha 的 TUI、MCP、Skills、权限、Diff、桌面端、多 Agent 等能力拆成 Claude Desktop CN 的 P0/P1/P2 任务。
-2. Code 工作区加入常用命令快捷入口，方便直接跑 `dir`、`git status`、依赖检查、测试和构建。
-3. 后端命令执行开始真正读取权限模式：`项目权限` 禁止直接执行命令，非 `完全访问` 会拦截高风险命令。
-4. 命令结果补充 Shell、退出码、耗时、超时、权限模式等信息，方便判断到底是命令失败、权限拦截还是模型生成的问题。
-5. Artifact / HTML 预览切到沙盒 `srcDoc` 流程，增加加载、空白和错误状态检测，减少黑屏和“看起来没反应”的情况。
+- 自部署：使用自己的 API Key / Base URL。
+- Clawparrot：使用托管 API 服务。
 
-## 1.6.18 更新内容
+### 2. 连接 GitHub
 
-这一版把发布链路正式接上：
-
-1. GitHub Actions 改成 Windows 优先的稳定构建线。
-2. 手动运行 workflow 会上传 Windows 安装包 artifact。
-3. 推送 `v*` 标签时会自动创建 GitHub Release。
-4. Release 会自动上传 `.exe`、`.blockmap` 和 `latest.yml`。
-5. 构建时继续注入 GitHub OAuth App 配置，缺少密钥时客户端仍可运行，只是 GitHub 导入会给出明确提示。
-
-## 1.6.17 更新内容
-
-这一版是一次“成品化收口”：
-
-1. Cowork 页升级成正式工作总览，不再只是说明占位。
-2. Settings 页修复骨架区，并补齐 Git / MCP / 环境 / 工作树 / 已归档 / 使用情况等页面的正式说明和入口。
-3. Code 页补充工作流状态条，能直接看到当前工作区、Git 状态、最近命令数量、权限模式和推送策略。
-4. README 和发布说明同步更新到 `1.6.17`。
-5. 保持 Windows 托盘后台运行、托盘图标和黑屏修复路线继续生效。
-
-## 安装
-
-### Windows
-
-从 Releases 下载：
-
-- [Claude-Desktop-CN-Setup-1.6.19.exe](https://github.com/Qiao-920/claude-desktop-cn/releases)
-
-默认安装路径通常是：
-
-```text
-C:\Users\Administrator\AppData\Local\Programs\claude-desktop\
-```
-
-## 首次使用建议
-
-### 1. 先确认用户模式
-
-- 自部署：使用自己的 API Key / Base URL
-- Clawparrot：使用托管 API 服务
-
-### 2. 如果要接 GitHub
-
-1. 在 GitHub 创建 OAuth App
+1. 在 GitHub 创建 OAuth App。
 2. 回调地址填写：
 
 ```text
 http://127.0.0.1:30080/api/github/callback
 ```
 
-3. 把 Client ID / Client Secret 配到客户端
-4. 在客户端重新走一次 GitHub 连接流程
+3. 把 Client ID / Client Secret 配到客户端。
+4. 在客户端重新走一次 GitHub 连接流程。
 
-### 3. 如果要用 Code 工作区
+### 3. 使用 Code 工作区
 
 建议流程：
 
-1. 打开 `代码`
-2. 选择一个本地工作区
-3. 确认当前权限模式
-4. 浏览、编辑文件，查看 Git 状态，再执行命令
+1. 打开 `代码`。
+2. 选择一个本地工作区。
+3. 确认当前权限模式。
+4. 浏览、编辑文件，查看 Git 状态，再执行命令。
 
-## 接下来会继续补什么
+## 路线图
 
-优先主线：
+下一阶段会继续补这些方向：
 
-1. Code 页继续补更完整的终端、文件预览和 Git 工作流。
-2. Cowork 页继续向任务看板、共享上下文和项目协作中心推进。
-3. Settings 页继续把“骨架”入口改成真实配置项。
-4. 持续跟进上游可复用更新，只合并适合中文分支路线的内容。
+| 优先级 | 方向 | 目标 |
+| --- | --- | --- |
+| P0 | 工作区健康检查 | 选择目录后自动识别 Git、Node、Python、包管理器和可运行脚本。 |
+| P0 | 命令审批与审计 | 让高风险命令有更清晰的确认、记录和回滚提示。 |
+| P1 | MCP 服务器 | 从设置页骨架升级成真实服务器列表、启停、环境变量和连接测试。 |
+| P1 | Skills | 增加中文解释、启用状态、详情页和项目绑定。 |
+| P1 | Cowork | 做成任务看板、上下文整理和审阅入口，而不是纯说明页。 |
+
+## 发布说明
+
+更新内容不再堆在 README 首页，版本日志统一放在 GitHub Releases 和 `docs/releases` 目录：
+
+- [v1.6.19 发布说明](docs/releases/v1.6.19-cn.md)
+- [全部 Releases](https://github.com/Qiao-920/claude-desktop-cn/releases)
 
 ## 支持
 
@@ -175,5 +148,9 @@ http://127.0.0.1:30080/api/github/callback
 上游项目：
 
 - [pretend1111/claude-desktop-app](https://github.com/pretend1111/claude-desktop-app)
+
+参考项目：
+
+- [NanmiCoder/cc-haha](https://github.com/NanmiCoder/cc-haha)
 
 本分支会持续跟进上游可复用更新，但只并入适合当前路线的内容。
