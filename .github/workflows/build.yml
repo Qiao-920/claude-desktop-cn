@@ -1,83 +1,88 @@
 name: Build & Release
+
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  build:
-    strategy:
-      matrix:
-        include:
-          - os: windows-latest
-            platform: win
-            bun_target: bun-windows-x64
-            bun_ext: .exe
-          - os: macos-latest
-            platform: mac
-            bun_target: bun-darwin-arm64
-            bun_ext: ""
-          - os: ubuntu-latest
-            platform: linux
-            bun_target: bun-linux-x64
-            bun_ext: ""
-    runs-on: ${{ matrix.os }}
-    permissions:
-      contents: write
+  windows:
+    name: Build Windows installer
+    runs-on: windows-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+
       - name: Install app dependencies
         run: npm ci
+
       - name: Install engine dependencies
-        run: cd engine && bun install
-      - name: Copy Bun binary to engine/bin
-        shell: bash
+        working-directory: engine
+        run: bun install
+
+      - name: Copy Bun runtime into app resources
+        shell: pwsh
         run: |
-          mkdir -p engine/bin
-          BUN_PATH=$(which bun)
-          cp "$BUN_PATH" "engine/bin/bun${{ matrix.bun_ext }}"
-          chmod +x "engine/bin/bun${{ matrix.bun_ext }}" 2>/dev/null || true
-          ls -lh engine/bin/
+          New-Item -ItemType Directory -Force -Path engine/bin | Out-Null
+          $bun = (Get-Command bun).Source
+          Copy-Item -LiteralPath $bun -Destination engine/bin/bun.exe -Force
+          Get-ChildItem engine/bin | Format-Table Name,Length,LastWriteTime
+
       - name: Write build-time secrets
-        shell: bash
+        shell: pwsh
         env:
           GH_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
-          GH_OAUTH_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET }}
+          GH_OAUTH_CLIENT_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET }}
         run: |
-          # Inject GitHub OAuth client secret into electron/secrets.json, read by main.cjs
-          # at launch. If the GitHub Actions secret is missing the file is written empty —
-          # app still runs, only the "import from GitHub" feature shows an explicit error.
-          node -e "
-            const fs = require('fs');
-            const secrets = {};
-            if (process.env.GH_OAUTH_CLIENT_ID) secrets.GITHUB_CLIENT_ID = process.env.GH_OAUTH_CLIENT_ID;
-            if (process.env.GH_OAUTH_SECRET) secrets.GITHUB_CLIENT_SECRET = process.env.GH_OAUTH_SECRET;
-            fs.writeFileSync('electron/secrets.json', JSON.stringify(secrets, null, 2));
-            console.log('secrets.json written, keys:', Object.keys(secrets));
-          "
+          node -e "const fs=require('fs'); const secrets={}; if(process.env.GH_OAUTH_CLIENT_ID) secrets.GITHUB_CLIENT_ID=process.env.GH_OAUTH_CLIENT_ID; if(process.env.GH_OAUTH_CLIENT_SECRET) secrets.GITHUB_CLIENT_SECRET=process.env.GH_OAUTH_CLIENT_SECRET; fs.writeFileSync('electron/secrets.json', JSON.stringify(secrets,null,2)); console.log('secrets.json written, keys:', Object.keys(secrets));"
+
       - name: Build frontend
-        run: npx vite build
-      - name: Build & Publish (Windows)
-        if: matrix.platform == 'win'
-        run: npx electron-builder --win --publish always
+        run: npm run build
+
+      - name: Build Windows installer
+        run: npx electron-builder --win --publish never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build & Publish (Mac)
-        if: matrix.platform == 'mac'
-        run: npx electron-builder --mac --publish always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build & Publish (Linux)
-        if: matrix.platform == 'linux'
-        run: npx electron-builder --linux AppImage deb --publish always
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Upload Windows installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Claude-Desktop-CN-Windows
+          path: |
+            release/Claude-Desktop-CN-Setup-*.exe
+            release/Claude-Desktop-CN-Setup-*.exe.blockmap
+            release/latest.yml
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Claude Desktop CN ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            release/Claude-Desktop-CN-Setup-*.exe
+            release/Claude-Desktop-CN-Setup-*.exe.blockmap
+            release/latest.yml

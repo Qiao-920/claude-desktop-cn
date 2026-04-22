@@ -8,8 +8,8 @@
 
 ## 当前版本
 
-- 当前版本：`1.6.17`
-- Windows 安装包：`Claude-Desktop-CN-Setup-1.6.17.exe`
+- 当前版本：`1.6.18`
+- Windows 安装包：`Claude-Desktop-CN-Setup-1.6.18.exe`
 - Releases 页面：[GitHub Releases](https://github.com/Qiao-920/claude-desktop-cn/releases)
 
 ## 已完成的主线能力
@@ -81,6 +81,16 @@ http://127.0.0.1:30080/api/github/callback
 
 其中 Git、MCP、环境、工作树、已归档聊天、使用情况已经不再是单纯占位，而是有状态、有入口、有说明的可继续扩展页面。
 
+## 1.6.18 更新内容
+
+这一版把发布链路正式接上：
+
+1. GitHub Actions 改成 Windows 优先的稳定构建线。
+2. 手动运行 workflow 会上传 Windows 安装包 artifact。
+3. 推送 `v*` 标签时会自动创建 GitHub Release。
+4. Release 会自动上传 `.exe`、`.blockmap` 和 `latest.yml`。
+5. 构建时继续注入 GitHub OAuth App 配置，缺少密钥时客户端仍可运行，只是 GitHub 导入会给出明确提示。
+
 ## 1.6.17 更新内容
 
 这一版是一次“成品化收口”：
@@ -97,7 +107,7 @@ http://127.0.0.1:30080/api/github/callback
 
 从 Releases 下载：
 
-- [Claude-Desktop-CN-Setup-1.6.17.exe](https://github.com/Qiao-920/claude-desktop-cn/releases)
+- [Claude-Desktop-CN-Setup-1.6.18.exe](https://github.com/Qiao-920/claude-desktop-cn/releases)
 
 默认安装路径通常是：
 
