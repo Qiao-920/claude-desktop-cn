@@ -554,7 +554,7 @@ const CoworkPage = () => {
                     <button
                       key={project.id}
                       type="button"
-                      onClick={() => navigate('/projects')}
+                      onClick={() => navigate(`/projects?project=${project.id}`)}
                       className="flex w-full items-start justify-between gap-4 rounded-xl border border-claude-border bg-claude-bg px-4 py-4 text-left transition-colors hover:bg-claude-hover"
                     >
                       <div className="min-w-0">

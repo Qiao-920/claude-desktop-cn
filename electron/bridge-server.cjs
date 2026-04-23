@@ -6,6 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const { v4: uuidv4 } = require('uuid');
 const { app } = require('electron');
+const { execFileSync } = require('child_process');
 const { TOOL_DEFINITIONS, executeTool, setAccessConfigPath } = require('./tools.cjs');
 const { runResearchPipeline } = require('./research-orchestrator.cjs');
 
@@ -285,6 +286,98 @@ function initServer(mainWindow) {
         } catch (e) { }
     }
     const saveDb = () => fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
+
+    const slugifySegment = (value, fallback = 'project') => {
+        const slug = String(value || '')
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+            .slice(0, 40);
+        return slug || fallback;
+    };
+
+    const ensureExistingDirectory = (dirPath) => {
+        if (!dirPath || typeof dirPath !== 'string') {
+            throw new Error('Workspace path is required');
+        }
+        const resolved = path.resolve(dirPath);
+        if (!fs.existsSync(resolved)) {
+            throw new Error('Workspace path does not exist');
+        }
+        const stat = fs.statSync(resolved);
+        if (!stat.isDirectory()) {
+            throw new Error('Workspace path must be a directory');
+        }
+        return resolved;
+    };
+
+    const copyDirectoryRecursive = (sourceDir, targetDir) => {
+        fs.mkdirSync(targetDir, { recursive: true });
+        const entries = fs.readdirSync(sourceDir, { withFileTypes: true });
+        for (const entry of entries) {
+            const sourcePath = path.join(sourceDir, entry.name);
+            const targetPath = path.join(targetDir, entry.name);
+            if (entry.isDirectory()) {
+                copyDirectoryRecursive(sourcePath, targetPath);
+            } else if (entry.isSymbolicLink()) {
+                try {
+                    const linkTarget = fs.readlinkSync(sourcePath);
+                    fs.symlinkSync(linkTarget, targetPath);
+                } catch (_) {}
+            } else {
+                fs.copyFileSync(sourcePath, targetPath);
+            }
+        }
+    };
+
+    const getGitRepoRoot = (cwd) => {
+        try {
+            return execFileSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], {
+                encoding: 'utf8',
+                stdio: ['ignore', 'pipe', 'pipe'],
+                windowsHide: true,
+            }).trim();
+        } catch (_) {
+            return null;
+        }
+    };
+
+    const deriveProjectWorkspace = (project) => {
+        const sourcePath = ensureExistingDirectory(project.workspace_path);
+        const timestamp = Date.now().toString(36);
+        const baseName = slugifySegment(path.basename(sourcePath), 'workspace');
+        const projectSlug = slugifySegment(project.name, 'project');
+        const targetParent = path.dirname(sourcePath);
+        const targetPath = path.join(targetParent, `${baseName}-worktree-${timestamp}`);
+        const repoRoot = getGitRepoRoot(sourcePath);
+
+        if (repoRoot) {
+            const branchName = `cowork/${projectSlug}-${timestamp}`;
+            execFileSync('git', ['-C', repoRoot, 'worktree', 'add', '-b', branchName, targetPath], {
+                encoding: 'utf8',
+                stdio: ['ignore', 'pipe', 'pipe'],
+                windowsHide: true,
+            });
+            return {
+                path: targetPath,
+                source_path: sourcePath,
+                requested_mode: 'worktree',
+                actual_mode: 'git_worktree',
+                branch_name: branchName,
+                repo_root: repoRoot,
+                used_fallback: false,
+            };
+        }
+
+        copyDirectoryRecursive(sourcePath, targetPath);
+        return {
+            path: targetPath,
+            source_path: sourcePath,
+            requested_mode: 'worktree',
+            actual_mode: 'directory_copy',
+            used_fallback: true,
+        };
+    };
 
     // ===== Provider Management =====
     const providersPath = path.join(userDataPath, 'providers.json');
@@ -1233,6 +1326,13 @@ function initServer(mainWindow) {
         if (req.body.description !== undefined) project.description = req.body.description;
         if (req.body.instructions !== undefined) project.instructions = req.body.instructions;
         if (req.body.is_archived !== undefined) project.is_archived = req.body.is_archived;
+        if (req.body.workspace_path !== undefined) {
+            try {
+                project.workspace_path = ensureExistingDirectory(req.body.workspace_path);
+            } catch (error) {
+                return res.status(400).json({ error: error.message || 'Invalid workspace path' });
+            }
+        }
         if (!Array.isArray(project.github_sources)) project.github_sources = [];
         project.updated_at = new Date().toISOString();
 
@@ -1362,6 +1462,19 @@ function initServer(mainWindow) {
         project.updated_at = new Date().toISOString();
         saveDb();
         res.json(newConv);
+    });
+
+    server.post('/api/projects/:id/derive-worktree', (req, res) => {
+        const project = db.projects.find(p => p.id === req.params.id);
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+
+        try {
+            const result = deriveProjectWorkspace(project);
+            res.json(result);
+        } catch (error) {
+            console.error('[Projects] Failed to derive workspace:', error);
+            res.status(400).json({ error: error.message || 'Failed to derive workspace' });
+        }
     });
 
     // 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?Conversations 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?

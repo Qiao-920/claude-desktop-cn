@@ -1,15 +1,17 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Search, Plus, ChevronDown, ArrowLeft, MoreVertical, Star, ArrowUp, FileText, Trash, Pencil, MessageSquare, X, Upload, Check, AudioLines, ChevronRight, Archive, Github, RefreshCw } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Search, Plus, ChevronDown, ArrowLeft, MoreVertical, Star, ArrowUp, FileText, Trash, Pencil, MessageSquare, X, Upload, Check, AudioLines, ChevronRight, Archive, Github, RefreshCw, FolderOpen, Copy, GitBranch, Link2 } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Paperclip, ListCollapse } from 'lucide-react';
-import { getProjects, createProject, getProject, updateProject, deleteProject, uploadProjectFile, deleteProjectFile, createProjectConversation, deleteConversation, getSkills, Project, ProjectFile, ProjectGithubSource, importProjectGithub, syncProjectGithubSource, updateProjectGithubSource, removeProjectGithubSource } from '../api';
+import { getProjects, createProject, getProject, updateProject, deleteProject, uploadProjectFile, deleteProjectFile, createProjectConversation, deleteConversation, getSkills, Project, ProjectFile, ProjectGithubSource, importProjectGithub, syncProjectGithubSource, updateProjectGithubSource, removeProjectGithubSource, deriveProjectWorkspace } from '../api';
 import ModelSelector, { SelectableModel } from './ModelSelector';
 import { IconPlus } from './Icons';
 import startProjectsImg from '../assets/icons/start-projects.png';
 import AddFromGithubModal, { GithubAddPayload } from './AddFromGithubModal';
+import { copyToClipboard } from '../utils/clipboard';
 
 const ProjectsPage = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const isZh = localStorage.getItem('ui_language') === 'zh-CN';
   const [searchQuery, setSearchQuery] = useState('');
   const [isCreating, setIsCreating] = useState(false);
@@ -42,6 +44,8 @@ const ProjectsPage = () => {
   const [editingGithubSource, setEditingGithubSource] = useState<ProjectGithubSource | null>(null);
   const [githubError, setGithubError] = useState<string | null>(null);
   const [syncingSourceId, setSyncingSourceId] = useState<string | null>(null);
+  const [projectActionMessage, setProjectActionMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
+  const [derivingProjectId, setDerivingProjectId] = useState<string | null>(null);
   const plusMenuRef = useRef<HTMLDivElement>(null);
   const plusBtnRef = useRef<HTMLButtonElement>(null);
 
@@ -137,6 +141,35 @@ const ProjectsPage = () => {
     } catch (_) { }
   }, []);
 
+  useEffect(() => {
+    const projectId = new URLSearchParams(location.search).get('project');
+    if (projectId) {
+      loadProject(projectId);
+    }
+  }, [location.search, loadProject]);
+
+  useEffect(() => {
+    if (!projectActionMessage) return;
+    const timer = window.setTimeout(() => setProjectActionMessage(null), 3200);
+    return () => window.clearTimeout(timer);
+  }, [projectActionMessage]);
+
+  const getCodeWorkspacePath = () => localStorage.getItem('code_workspace_path') || '';
+
+  const setCodeWorkspacePath = (nextWorkspacePath: string) => {
+    localStorage.setItem('code_workspace_path', nextWorkspacePath);
+    window.dispatchEvent(new CustomEvent('projectWorkspaceSelected', { detail: { path: nextWorkspacePath } }));
+  };
+
+  const getProjectDeepLink = (projectId: string) => {
+    const base = window.location.href.split('#')[0];
+    return `${base}#/projects?project=${projectId}`;
+  };
+
+  const showProjectActionResult = (tone: 'success' | 'error', text: string) => {
+    setProjectActionMessage({ tone, text });
+  };
+
   const handleCreate = async () => {
     const name = projectName.trim() || 'Untitled Project';
     try {
@@ -144,6 +177,7 @@ const ProjectsPage = () => {
       setIsCreating(false);
       setProjectName('');
       setProjectDescription('');
+      navigate(`/projects?project=${project.id}`);
       loadProject(project.id);
       loadProjects();
     } catch (_) { }
@@ -317,6 +351,109 @@ const ProjectsPage = () => {
     setEditingGithubSource(null);
   };
 
+  const handleCopyProjectWorkspace = async (project: Project) => {
+    const ok = await copyToClipboard(project.workspace_path || '');
+    showProjectActionResult(ok ? 'success' : 'error', ok ? (isZh ? '已复制工作目录' : 'Workspace path copied') : (isZh ? '复制工作目录失败' : 'Failed to copy workspace path'));
+  };
+
+  const handleCopyProjectDeeplink = async (project: Project) => {
+    const ok = await copyToClipboard(getProjectDeepLink(project.id));
+    showProjectActionResult(ok ? 'success' : 'error', ok ? (isZh ? '已复制项目 Deeplink' : 'Project deeplink copied') : (isZh ? '复制项目 Deeplink 失败' : 'Failed to copy project deeplink'));
+  };
+
+  const handleOpenProjectFolder = async (project: Project) => {
+    const workspacePath = project.workspace_path;
+    if (!workspacePath) {
+      showProjectActionResult('error', isZh ? '这个项目还没有绑定工作目录' : 'This project does not have a workspace path yet');
+      return;
+    }
+    try {
+      if ((window as any).electronAPI?.openFolder) {
+        await (window as any).electronAPI.openFolder(workspacePath);
+        showProjectActionResult('success', isZh ? '已打开项目目录' : 'Project folder opened');
+      }
+    } catch (error) {
+      console.error(error);
+      showProjectActionResult('error', isZh ? '打开项目目录失败' : 'Failed to open project folder');
+    }
+  };
+
+  const handleBindCurrentWorkspace = async (project: Project) => {
+    const codeWorkspacePath = getCodeWorkspacePath();
+    if (!codeWorkspacePath) {
+      showProjectActionResult('error', isZh ? '请先在代码页选择一个工作区' : 'Choose a code workspace first');
+      return;
+    }
+    try {
+      await updateProject(project.id, { workspace_path: codeWorkspacePath });
+      if (currentProject?.id === project.id) {
+        await loadProject(project.id);
+      }
+      await loadProjects();
+      showProjectActionResult('success', isZh ? '已绑定当前 Code 工作区' : 'Current Code workspace linked');
+    } catch (error: any) {
+      console.error(error);
+      showProjectActionResult('error', error?.message || (isZh ? '绑定当前工作区失败' : 'Failed to link current workspace'));
+    }
+  };
+
+  const handleChooseWorkspaceFolder = async (project: Project) => {
+    try {
+      const selected = await (window as any).electronAPI?.selectDirectory?.();
+      if (!selected || typeof selected !== 'string') return;
+      await updateProject(project.id, { workspace_path: selected });
+      if (currentProject?.id === project.id) {
+        await loadProject(project.id);
+      }
+      await loadProjects();
+      showProjectActionResult('success', isZh ? '已更新项目工作目录' : 'Project workspace updated');
+    } catch (error: any) {
+      console.error(error);
+      showProjectActionResult('error', error?.message || (isZh ? '选择项目目录失败' : 'Failed to update workspace'));
+    }
+  };
+
+  const handleDeriveToLocalCode = (project: Project) => {
+    if (!project.workspace_path) {
+      showProjectActionResult('error', isZh ? '这个项目还没有工作目录' : 'This project does not have a workspace path yet');
+      return;
+    }
+    setCodeWorkspacePath(project.workspace_path);
+    navigate('/code');
+  };
+
+  const handleDeriveProjectWorktree = async (project: Project) => {
+    try {
+      setDerivingProjectId(project.id);
+      const result = await deriveProjectWorkspace(project.id);
+      setCodeWorkspacePath(result.path);
+      showProjectActionResult(
+        'success',
+        result.actual_mode === 'git_worktree'
+          ? (isZh ? `已创建新工作树：${result.branch_name}` : `New worktree created: ${result.branch_name}`)
+          : (isZh ? '当前目录不是 Git 仓库，已派生为新的本地工作区副本' : 'This folder is not a Git repo, so a copied workspace was created instead'),
+      );
+      navigate('/code');
+    } catch (error: any) {
+      console.error(error);
+      showProjectActionResult('error', error?.message || (isZh ? '派生新工作树失败' : 'Failed to derive a new worktree'));
+    } finally {
+      setDerivingProjectId(null);
+    }
+  };
+
+  const handleOpenProjectChat = async (project: Project) => {
+    try {
+      const conv = await createProjectConversation(project.id, `${project.name} chat`, currentModelString);
+      navigate(`/chat/${conv.id}`);
+      setActiveMenu(null);
+      setShowMenu(false);
+    } catch (error) {
+      console.error(error);
+      showProjectActionResult('error', isZh ? '创建项目聊天失败' : 'Failed to create project chat');
+    }
+  };
+
   // ═══ Project Detail View ═══
   if (currentProject) {
     return (
@@ -324,13 +461,23 @@ const ProjectsPage = () => {
         <div className="max-w-[800px] mx-auto px-8 py-12">
           <div className="mb-4">
             <button
-              onClick={() => { setCurrentProject(null); loadProjects(); }}
+              onClick={() => { setCurrentProject(null); loadProjects(); navigate('/projects'); }}
               className="flex items-center gap-1.5 text-[14px] text-claude-textSecondary hover:text-claude-text transition-colors font-medium -ml-1"
             >
               <ArrowLeft size={16} />
               All projects
             </button>
           </div>
+
+          {projectActionMessage && (
+            <div className={`mb-5 rounded-xl border px-4 py-3 text-[13px] ${
+              projectActionMessage.tone === 'success'
+                ? 'border-emerald-500/35 bg-emerald-500/10 text-emerald-300'
+                : 'border-[#C6613F]/35 bg-[#C6613F]/10 text-[#E8B09B]'
+            }`}>
+              {projectActionMessage.text}
+            </div>
+          )}
 
           <div className="flex items-start justify-between mb-8 gap-4">
             <div className="flex-1 min-w-0">
@@ -357,8 +504,96 @@ const ProjectsPage = () => {
                 <p className="text-[15.5px] text-claude-textSecondary">{currentProject.description}</p>
               )}
             </div>
-            <div className="flex items-center gap-1 text-claude-textSecondary mt-2 flex-shrink-0">
-              <button className="p-1 hover:text-claude-text hover:bg-black/5 dark:hover:bg-white/5 rounded-md transition-colors"><MoreVertical size={18} /></button>
+            <div className="relative flex items-center gap-1 text-claude-textSecondary mt-2 flex-shrink-0">
+              <button
+                onClick={() => setShowMenu((prev) => !prev)}
+                className="p-1 hover:text-claude-text hover:bg-black/5 dark:hover:bg-white/5 rounded-md transition-colors"
+              >
+                <MoreVertical size={18} />
+              </button>
+              {showMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowMenu(false)} />
+                  <div className="absolute top-full right-0 mt-1 z-50 w-[240px] rounded-[16px] border border-gray-200 bg-white py-1.5 shadow-[0_4px_24px_rgba(0,0,0,0.15)] dark:border-[#65645F] dark:bg-[#30302E]">
+                    <button
+                      onClick={() => { setShowMenu(false); handleOpenProjectChat(currentProject); }}
+                      className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-[14px] text-claude-text transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <MessageSquare size={16} className="text-claude-textSecondary" />
+                      {isZh ? '新建项目聊天' : 'New project chat'}
+                    </button>
+                    <button
+                      onClick={() => { setShowMenu(false); handleOpenProjectFolder(currentProject); }}
+                      className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-[14px] text-claude-text transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <FolderOpen size={16} className="text-claude-textSecondary" />
+                      {isZh ? '在资源管理器中打开' : 'Open in Explorer'}
+                    </button>
+                    <button
+                      onClick={() => { setShowMenu(false); handleCopyProjectWorkspace(currentProject); }}
+                      className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-[14px] text-claude-text transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <Copy size={16} className="text-claude-textSecondary" />
+                      {isZh ? '复制工作目录' : 'Copy workspace path'}
+                    </button>
+                    <button
+                      onClick={() => { setShowMenu(false); handleCopyProjectDeeplink(currentProject); }}
+                      className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-[14px] text-claude-text transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <Link2 size={16} className="text-claude-textSecondary" />
+                      {isZh ? '复制 Deeplink' : 'Copy deeplink'}
+                    </button>
+                    <div className="my-1.5 border-t border-claude-border opacity-50" />
+                    <button
+                      onClick={() => { setShowMenu(false); handleDeriveToLocalCode(currentProject); }}
+                      className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-[14px] text-claude-text transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <ChevronRight size={16} className="text-claude-textSecondary" />
+                      {isZh ? '派生到本地 Code' : 'Derive to local Code'}
+                    </button>
+                    <button
+                      onClick={() => { setShowMenu(false); handleDeriveProjectWorktree(currentProject); }}
+                      className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-[14px] text-claude-text transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                    >
+                      <GitBranch size={16} className="text-claude-textSecondary" />
+                      {isZh ? '派生到新工作树' : 'Derive to new worktree'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="mb-4 grid grid-cols-2 gap-3">
+            <div className="rounded-[16px] border border-claude-border bg-transparent px-4 py-4">
+              <div className="text-[12px] uppercase tracking-[0.08em] text-claude-textSecondary">{isZh ? '项目文档' : 'Project doc'}</div>
+              <div className="mt-2 text-[14px] leading-7 text-claude-textSecondary">
+                {currentProject.instructions || currentProject.description || (isZh ? '这里还没有项目文档。补充项目目标、约束和常用命令后，这个项目会更像一个长期上下文容器。' : 'This project does not have a document yet. Add goals, constraints, and common commands to turn it into a durable context hub.')}
+              </div>
+            </div>
+            <div className="rounded-[16px] border border-claude-border bg-transparent px-4 py-4">
+              <div className="text-[12px] uppercase tracking-[0.08em] text-claude-textSecondary">{isZh ? '项目工作区' : 'Project workspace'}</div>
+              <div className="mt-2 break-all text-[13px] leading-6 text-claude-text">
+                {currentProject.workspace_path || (isZh ? '还没有绑定工作目录' : 'No workspace linked yet')}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2 text-[12px]">
+                <button onClick={() => handleBindCurrentWorkspace(currentProject)} className="rounded-lg border border-claude-border px-3 py-1.5 text-claude-text transition-colors hover:bg-claude-hover">
+                  {isZh ? '绑定当前 Code 工作区' : 'Bind current Code workspace'}
+                </button>
+                <button onClick={() => handleChooseWorkspaceFolder(currentProject)} className="rounded-lg border border-claude-border px-3 py-1.5 text-claude-text transition-colors hover:bg-claude-hover">
+                  {isZh ? '选择目录' : 'Choose folder'}
+                </button>
+                <button onClick={() => handleDeriveToLocalCode(currentProject)} className="rounded-lg border border-claude-border px-3 py-1.5 text-claude-text transition-colors hover:bg-claude-hover">
+                  {isZh ? '派生到本地 Code' : 'Derive to Code'}
+                </button>
+                <button
+                  onClick={() => handleDeriveProjectWorktree(currentProject)}
+                  disabled={derivingProjectId === currentProject.id}
+                  className="rounded-lg border border-claude-border px-3 py-1.5 text-claude-text transition-colors hover:bg-claude-hover disabled:opacity-50"
+                >
+                  {derivingProjectId === currentProject.id ? (isZh ? '派生中...' : 'Deriving...') : (isZh ? '派生到新工作树' : 'New worktree')}
+                </button>
+              </div>
             </div>
           </div>
 
@@ -369,15 +604,9 @@ const ProjectsPage = () => {
             >
               <div className="flex-1 overflow-y-auto min-h-0">
                 <div className="relative">
-                  {/* Skill overlay */}
-                  {message.match(/^\/[a-zA-Z0-9_-]+/) && (
-                    <div className="pl-5 pr-4 pt-5 pb-1 text-[16px] font-sans font-[350]" style={{ minHeight: '48px', position: 'absolute', top: 0, left: 0, right: 0, pointerEvents: 'none', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }} aria-hidden>
-                      {(() => { const m = message.match(/^(\/[a-zA-Z0-9_-]+)([\s\S]*)$/); return m ? <><span className="text-[#4B9EFA]">{m[1]}</span><span className="text-claude-text">{m[2]}</span></> : null; })()}
-                    </div>
-                  )}
                   <textarea
                     ref={textareaRef}
-                    className={`w-full pl-5 pr-4 pt-5 pb-1 placeholder:text-claude-textSecondary text-[16px] outline-none resize-none overflow-hidden bg-transparent font-sans font-[350] ${message.match(/^\/[a-zA-Z0-9_-]+/) ? 'text-transparent caret-claude-text' : 'text-claude-text'}`}
+                    className="w-full pl-5 pr-4 pt-5 pb-1 placeholder:text-claude-textSecondary text-[16px] outline-none resize-none overflow-hidden bg-transparent font-sans font-[350] text-claude-text"
                     style={{ minHeight: '48px', borderRadius: '16px 16px 0 0' }}
                     placeholder={selectedSkill ? `Describe what you want ${selectedSkill.name} to do...` : "How can I help you today?"}
                     value={message}
@@ -875,7 +1104,7 @@ const ProjectsPage = () => {
             {filteredProjects.map(p => (
               <div
                 key={p.id}
-                onClick={() => loadProject(p.id)}
+                onClick={() => navigate(`/projects?project=${p.id}`)}
                 className="flex flex-col p-5 border border-claude-border rounded-[12px] bg-transparent hover:bg-black/[0.02] dark:hover:bg-white/[0.02] cursor-pointer transition-colors group min-h-[170px]"
               >
                 <div className="flex items-center justify-between mb-2.5 relative">
@@ -893,23 +1122,53 @@ const ProjectsPage = () => {
                     {activeMenu === p.id && (
                       <>
                         <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setActiveMenu(null); }} />
-                        <div className="absolute top-full right-0 mt-1 w-[180px] bg-white dark:bg-[#30302E] rounded-[16px] shadow-[0_4px_24px_rgba(0,0,0,0.15)] border border-gray-200 dark:border-[#65645F] py-1.5 z-50">
-                          <button className="w-full flex items-center gap-3 px-4 py-2.5 text-[14px] text-claude-text hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left" onClick={(e) => { e.stopPropagation(); setActiveMenu(null); }}>
-                            <Star size={16} className="text-claude-textSecondary" />
-                            Star
+                        <div className="absolute top-full right-0 mt-1 w-[240px] bg-white dark:bg-[#30302E] rounded-[16px] shadow-[0_4px_24px_rgba(0,0,0,0.15)] border border-gray-200 dark:border-[#65645F] py-1.5 z-50">
+                          <button className="w-full flex items-center gap-3 px-4 py-2.5 text-[14px] text-claude-text hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left" onClick={(e) => { e.stopPropagation(); setActiveMenu(null); navigate(`/projects?project=${p.id}`); }}>
+                            <FileText size={16} className="text-claude-textSecondary" />
+                            {isZh ? '打开项目' : 'Open project'}
                           </button>
-                          <button className="w-full flex items-center gap-3 px-4 py-2.5 text-[14px] text-claude-text hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left" onClick={(e) => { e.stopPropagation(); setActiveMenu(null); setProjectToEdit(p); setEditDetailsName(p.name); setEditDetailsDesc(p.description || ''); }}>
-                            <Pencil size={16} className="text-claude-textSecondary" />
-                            Edit details
+                          <button className="w-full flex items-center gap-3 px-4 py-2.5 text-[14px] text-claude-text hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left" onClick={(e) => { e.stopPropagation(); handleOpenProjectChat(p); }}>
+                            <MessageSquare size={16} className="text-claude-textSecondary" />
+                            {isZh ? '新建项目聊天' : 'New project chat'}
                           </button>
                           <div className="my-1.5 border-t border-claude-border opacity-50" />
-                          <button className="w-full flex items-center gap-3 px-4 py-2.5 text-[14px] text-claude-text hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left" onClick={(e) => { e.stopPropagation(); setActiveMenu(null); }}>
-                            <Archive size={16} className="text-claude-textSecondary" />
-                            Archive
+                          <button className="w-full flex items-center gap-3 px-4 py-2.5 text-[14px] text-claude-text hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left" onClick={(e) => { e.stopPropagation(); setActiveMenu(null); handleBindCurrentWorkspace(p); }}>
+                            <ChevronRight size={16} className="text-claude-textSecondary" />
+                            {isZh ? '绑定当前 Code 工作区' : 'Bind current Code workspace'}
+                          </button>
+                          <button className="w-full flex items-center gap-3 px-4 py-2.5 text-[14px] text-claude-text hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left" onClick={(e) => { e.stopPropagation(); setActiveMenu(null); handleChooseWorkspaceFolder(p); }}>
+                            <FolderOpen size={16} className="text-claude-textSecondary" />
+                            {isZh ? '选择项目目录' : 'Choose project folder'}
+                          </button>
+                          <button className="w-full flex items-center gap-3 px-4 py-2.5 text-[14px] text-claude-text hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left" onClick={(e) => { e.stopPropagation(); setActiveMenu(null); handleDeriveToLocalCode(p); }}>
+                            <ArrowRight size={16} className="text-claude-textSecondary" />
+                            {isZh ? '派生到本地 Code' : 'Derive to local Code'}
+                          </button>
+                          <button className="w-full flex items-center gap-3 px-4 py-2.5 text-[14px] text-claude-text hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left" onClick={(e) => { e.stopPropagation(); setActiveMenu(null); handleDeriveProjectWorktree(p); }}>
+                            <GitBranch size={16} className="text-claude-textSecondary" />
+                            {isZh ? '派生到新工作树' : 'Derive to new worktree'}
+                          </button>
+                          <div className="my-1.5 border-t border-claude-border opacity-50" />
+                          <button className="w-full flex items-center gap-3 px-4 py-2.5 text-[14px] text-claude-text hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left" onClick={(e) => { e.stopPropagation(); setActiveMenu(null); handleOpenProjectFolder(p); }}>
+                            <FolderOpen size={16} className="text-claude-textSecondary" />
+                            {isZh ? '在资源管理器中打开' : 'Open in Explorer'}
+                          </button>
+                          <button className="w-full flex items-center gap-3 px-4 py-2.5 text-[14px] text-claude-text hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left" onClick={(e) => { e.stopPropagation(); setActiveMenu(null); handleCopyProjectWorkspace(p); }}>
+                            <Copy size={16} className="text-claude-textSecondary" />
+                            {isZh ? '复制工作目录' : 'Copy workspace path'}
+                          </button>
+                          <button className="w-full flex items-center gap-3 px-4 py-2.5 text-[14px] text-claude-text hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left" onClick={(e) => { e.stopPropagation(); setActiveMenu(null); handleCopyProjectDeeplink(p); }}>
+                            <Link2 size={16} className="text-claude-textSecondary" />
+                            {isZh ? '复制 Deeplink' : 'Copy deeplink'}
+                          </button>
+                          <div className="my-1.5 border-t border-claude-border opacity-50" />
+                          <button className="w-full flex items-center gap-3 px-4 py-2.5 text-[14px] text-claude-text hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left" onClick={(e) => { e.stopPropagation(); setActiveMenu(null); setProjectToEdit(p); setEditDetailsName(p.name); setEditDetailsDesc(p.description || ''); }}>
+                            <Pencil size={16} className="text-claude-textSecondary" />
+                            {isZh ? '编辑详情' : 'Edit details'}
                           </button>
                           <button className="w-full flex items-center gap-3 px-4 py-2.5 text-[14px] text-[#E05A5A] hover:bg-red-500/10 transition-colors text-left" onClick={(e) => { e.stopPropagation(); setActiveMenu(null); setProjectToDelete(p); }}>
                             <Trash size={16} className="text-[#E05A5A]" />
-                            Delete
+                            {isZh ? '删除' : 'Delete'}
                           </button>
                         </div>
                       </>
@@ -925,6 +1184,16 @@ const ProjectsPage = () => {
                   <span>Updated {new Date(p.updated_at).toLocaleDateString()}</span>
                   {(p.file_count ?? 0) > 0 && <span>• {p.file_count} files</span>}
                   {(p.chat_count ?? 0) > 0 && <span>• {p.chat_count} chats</span>}
+                </div>
+                <div className="mt-3 flex items-center gap-2 text-[11px] text-claude-textSecondary">
+                  <span className="rounded-full border border-claude-border px-2 py-1">
+                    {p.workspace_path ? (isZh ? '已绑定工作区' : 'Workspace linked') : (isZh ? '未绑定工作区' : 'No workspace')}
+                  </span>
+                  {(p.github_sources?.length || 0) > 0 && (
+                    <span className="rounded-full border border-claude-border px-2 py-1">
+                      GitHub {p.github_sources?.length || 0}
+                    </span>
+                  )}
                 </div>
               </div>
             ))}

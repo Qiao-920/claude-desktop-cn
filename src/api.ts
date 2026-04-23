@@ -444,6 +444,16 @@ export interface ProjectGithubSource {
   last_synced_at: string;
 }
 
+export interface ProjectDerivedWorkspaceResult {
+  path: string;
+  source_path: string;
+  requested_mode: 'worktree';
+  actual_mode: 'git_worktree' | 'directory_copy';
+  branch_name?: string;
+  repo_root?: string;
+  used_fallback: boolean;
+}
+
 export async function getProjects(): Promise<Project[]> {
   const res = await request('/projects');
   return res.json();
@@ -462,7 +472,10 @@ export async function getProject(id: string) {
   return res.json();
 }
 
-export async function updateProject(id: string, data: Partial<Pick<Project, 'name' | 'description' | 'instructions' | 'is_archived'>>) {
+export async function updateProject(
+  id: string,
+  data: Partial<Pick<Project, 'name' | 'description' | 'instructions' | 'is_archived' | 'workspace_path'>>,
+) {
   const res = await request(`/projects/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(data),
@@ -502,6 +515,13 @@ export async function createProjectConversation(projectId: string, title?: strin
   const res = await request(`/projects/${projectId}/conversations`, {
     method: 'POST',
     body: JSON.stringify({ title, model }),
+  });
+  return res.json();
+}
+
+export async function deriveProjectWorkspace(projectId: string): Promise<ProjectDerivedWorkspaceResult> {
+  const res = await request(`/projects/${projectId}/derive-worktree`, {
+    method: 'POST',
   });
   return res.json();
 }
