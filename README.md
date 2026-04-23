@@ -19,10 +19,10 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `1.6.20` |
-| Windows 安装包 | `Claude-Desktop-CN-Setup-1.6.20.exe` |
+| 当前版本 | `1.6.21` |
+| Windows 安装包 | `Claude-Desktop-CN-Setup-1.6.21.exe` |
 | 下载页面 | [GitHub Releases](https://github.com/Qiao-920/claude-desktop-cn/releases) |
-| 本轮更新说明 | [Claude Desktop CN v1.6.20](https://github.com/Qiao-920/claude-desktop-cn/releases/tag/v1.6.20) |
+| 本轮更新说明 | [Claude Desktop CN v1.6.21](https://github.com/Qiao-920/claude-desktop-cn/releases/tag/v1.6.21) |
 | 产品任务清单 | [cc-haha 能力对照与 Claude Desktop CN 产品任务清单](docs/cc-haha-capability-map.md) |
 
 默认安装路径通常是：
@@ -142,6 +142,7 @@ http://127.0.0.1:30080/api/github/callback
 
 更新内容不再堆在 README 首页，版本日志统一放在 GitHub Releases 和 `docs/releases` 目录：
 
+- [v1.6.21 发布说明](docs/releases/v1.6.21-cn.md)
 - [v1.6.20 发布说明](docs/releases/v1.6.20-cn.md)
 - [v1.6.19 发布说明](docs/releases/v1.6.19-cn.md)
 - [全部 Releases](https://github.com/Qiao-920/claude-desktop-cn/releases)
