@@ -125,6 +125,12 @@ window.__claudePreviewError = function(error) {
     stack: error && error.stack ? error.stack : ''
   });
 };
+window.__claudePreviewIssue = function(payload) {
+  window.__claudePreviewPost(Object.assign({
+    type: 'issue',
+    severity: 'warning'
+  }, payload || {}));
+};
 (function() {
   var levels = ['log', 'info', 'warn', 'error'];
   levels.forEach(function(level) {
@@ -152,6 +158,45 @@ window.addEventListener('error', function(event) {
 window.addEventListener('unhandledrejection', function(event) {
   window.__claudePreviewError(event.reason || 'Unhandled promise rejection');
 });
+window.addEventListener('error', function(event) {
+  var target = event && event.target;
+  if (!target || target === window) return;
+  var tagName = target.tagName || 'resource';
+  var source = target.currentSrc || target.src || target.href || '';
+  window.__claudePreviewIssue({
+    message: 'Failed to load ' + tagName.toLowerCase() + (source ? ': ' + source : ''),
+    severity: tagName === 'SCRIPT' ? 'error' : 'warning',
+    source: source,
+    resourceType: tagName.toLowerCase()
+  });
+}, true);
+(function() {
+  if (typeof window.fetch !== 'function') return;
+  var originalFetch = window.fetch.bind(window);
+  window.fetch = function() {
+    var input = arguments[0];
+    var url = typeof input === 'string' ? input : (input && input.url) || '';
+    return originalFetch.apply(window, arguments).then(function(response) {
+      if (!response.ok) {
+        window.__claudePreviewIssue({
+          message: 'Request failed with ' + response.status + (url ? ': ' + url : ''),
+          severity: response.status >= 500 ? 'error' : 'warning',
+          source: url,
+          resourceType: 'fetch'
+        });
+      }
+      return response;
+    }).catch(function(error) {
+      window.__claudePreviewIssue({
+        message: error && error.message ? error.message : 'Fetch failed',
+        severity: 'error',
+        source: url,
+        resourceType: 'fetch'
+      });
+      throw error;
+    });
+  };
+})();
 window.addEventListener('load', function() {
   window.setTimeout(window.__claudePreviewReady, 80);
   window.setTimeout(function() {

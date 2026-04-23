@@ -134,6 +134,12 @@ const healthToneClass = (status?: string) => {
   return 'text-[#C6613F]';
 };
 
+const healthFixToneClass = (severity?: string) => {
+  if (severity === 'error') return 'border-[#C6613F]/40 bg-[#C6613F]/10 text-[#C6613F]';
+  if (severity === 'warning') return 'border-amber-500/40 bg-amber-500/10 text-amber-300';
+  return 'border-[#2E7CF6]/35 bg-[#2E7CF6]/10 text-[#6EA8FF]';
+};
+
 const getRelativePath = (root: string, target: string) => {
   if (!root || !target) return target || '';
   const normalizedRoot = root.replace(/[\\/]+$/, '');
@@ -293,6 +299,8 @@ const CodePage = () => {
   const [commandHistory, setCommandHistory] = useState<CodeCommandResult[]>([]);
   const [workspaceHealth, setWorkspaceHealth] = useState<CodeWorkspaceHealthResult | null>(null);
   const [commandAudit, setCommandAudit] = useState<CodeCommandAuditEntry[]>([]);
+  const [auditDecisionFilter, setAuditDecisionFilter] = useState<'all' | 'approval_required' | 'approved' | 'blocked' | 'denied' | 'executed' | 'completed' | 'failed'>('all');
+  const [auditRiskFilter, setAuditRiskFilter] = useState<'all' | 'low' | 'normal' | 'medium' | 'high'>('all');
   const [gitStatus, setGitStatus] = useState<CodeGitStatusResult | null>(null);
   const [selectedGitFile, setSelectedGitFile] = useState<CodeGitFile | null>(null);
   const [gitFileDiff, setGitFileDiff] = useState<CodeGitFileDiffResult | null>(null);
@@ -366,6 +374,23 @@ const CodePage = () => {
     ];
     return [...base, ...projectCommands];
   }, [isZh, workspaceHealth]);
+  const filteredCommandAudit = useMemo(() => {
+    return commandAudit.filter((entry) => {
+      if (auditDecisionFilter !== 'all') {
+        const normalizedDecision = entry.decision === 'completed' ? 'executed' : entry.decision;
+        if (auditDecisionFilter === 'completed') {
+          if (normalizedDecision !== 'executed') return false;
+        } else if (normalizedDecision !== auditDecisionFilter) {
+          return false;
+        }
+      }
+      if (auditRiskFilter !== 'all') {
+        const normalizedRisk = (entry.risk?.level || 'normal') === 'normal' ? 'low' : (entry.risk?.level || 'normal');
+        if (auditRiskFilter !== normalizedRisk && !(auditRiskFilter === 'normal' && normalizedRisk === 'low')) return false;
+      }
+      return true;
+    });
+  }, [auditDecisionFilter, auditRiskFilter, commandAudit]);
 
   const rememberWorkspacePath = useCallback((nextWorkspacePath: string) => {
     if (!nextWorkspacePath) return;
@@ -535,6 +560,20 @@ const CodePage = () => {
   const openWorkspaceFolder = () => {
     const api = (window as any).electronAPI;
     if (workspacePath && api?.openFolder) api.openFolder(workspacePath);
+  };
+
+  const exportCommandAudit = async () => {
+    if (!filteredCommandAudit.length) return;
+    const payload = {
+      workspacePath,
+      exportedAt: new Date().toISOString(),
+      filters: {
+        decision: auditDecisionFilter,
+        risk: auditRiskFilter,
+      },
+      entries: filteredCommandAudit,
+    };
+    await copyToClipboard(JSON.stringify(payload, null, 2));
   };
 
   const openEntry = async (entry: CodeWorkspaceEntry) => {
@@ -1515,6 +1554,50 @@ const CodePage = () => {
                         {isZh ? '这已经是 Code 模式的第二层：文件树、编辑保存、Git 状态和命令面板都集中在一个工作区里。' : 'This is the second Code layer: file tree, editing, Git status, and command output in one workspace.'}
                       </p>
                     </div>
+                    {workspaceHealth.fixes?.length ? (
+                      <div className="mt-3 border-t border-claude-border/70 pt-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <div className="text-[11px] font-medium text-claude-text">{isZh ? '修复建议' : 'Recommended fixes'}</div>
+                          <div className="text-[10px] text-claude-textSecondary">{workspaceHealth.fixes.length}</div>
+                        </div>
+                        <div className="space-y-2">
+                          {workspaceHealth.fixes.slice(0, 3).map((fix) => (
+                            <div key={fix.id} className="rounded-md border border-claude-border/70 bg-claude-bg/60 px-2.5 py-2">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className={`rounded border px-1.5 py-0.5 text-[10px] ${healthFixToneClass(fix.severity)}`}>
+                                      {fix.severity === 'error'
+                                        ? (isZh ? '阻塞' : 'Blocking')
+                                        : fix.severity === 'warning'
+                                          ? (isZh ? '建议处理' : 'Recommended')
+                                          : (isZh ? '可优化' : 'Nice to have')}
+                                    </span>
+                                    <span className="truncate text-[11px] font-medium text-claude-text">{fix.title}</span>
+                                  </div>
+                                  <div className="mt-1 text-[10px] leading-5 text-claude-textSecondary">{fix.detail}</div>
+                                  {fix.command ? (
+                                    <code className="mt-1 block truncate text-[10px] text-claude-textSecondary" title={fix.command}>
+                                      {fix.command}
+                                    </code>
+                                  ) : null}
+                                </div>
+                                {fix.command ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setCommand(fix.command || '')}
+                                    className="shrink-0 rounded-md border border-claude-border px-2 py-1 text-[10px] text-claude-textSecondary hover:bg-claude-hover"
+                                    title={isZh ? '填入命令框' : 'Fill command box'}
+                                  >
+                                    {isZh ? '填入' : 'Use'}
+                                  </button>
+                                ) : null}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 )}
               </div>
@@ -1558,7 +1641,7 @@ const CodePage = () => {
                       </div>
                     </div>
                     <div className="mt-2 space-y-1.5">
-                      {workspaceHealth.checks.slice(0, 4).map((check) => (
+                      {workspaceHealth.checks.slice(0, 6).map((check) => (
                         <div key={check.id} className="flex items-start gap-2 text-[11px] leading-5">
                           <span className={`mt-1.5 h-1.5 w-1.5 rounded-full shrink-0 ${check.status === 'ok' ? 'bg-emerald-400' : check.status === 'warning' ? 'bg-amber-300' : 'bg-[#C6613F]'}`} />
                           <div className="min-w-0">
@@ -1669,21 +1752,59 @@ const CodePage = () => {
                   <div className="mt-3 rounded-md border border-claude-border bg-claude-input px-3 py-2">
                     <div className="mb-2 flex items-center justify-between text-[11px] text-claude-textSecondary">
                       <span>{isZh ? '命令审计' : 'Command audit'}</span>
-                      <button type="button" onClick={() => refreshCommandAudit()} className="hover:text-claude-text">
-                        {isZh ? '刷新' : 'Refresh'}
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button type="button" onClick={exportCommandAudit} className="hover:text-claude-text disabled:opacity-50" disabled={!filteredCommandAudit.length}>
+                          {isZh ? '导出' : 'Export'}
+                        </button>
+                        <button type="button" onClick={() => refreshCommandAudit()} className="hover:text-claude-text">
+                          {isZh ? '刷新' : 'Refresh'}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mb-2 grid grid-cols-2 gap-2">
+                      <select
+                        value={auditDecisionFilter}
+                        onChange={(event) => setAuditDecisionFilter(event.target.value as typeof auditDecisionFilter)}
+                        className="h-8 rounded-md border border-claude-border bg-claude-bg px-2 text-[11px] text-claude-text outline-none"
+                      >
+                        <option value="all">{isZh ? '全部决策' : 'All decisions'}</option>
+                        <option value="approval_required">{isZh ? '待审批' : 'Approval required'}</option>
+                        <option value="approved">{isZh ? '已批准' : 'Approved'}</option>
+                        <option value="blocked">{isZh ? '已阻止' : 'Blocked'}</option>
+                        <option value="denied">{isZh ? '已拒绝' : 'Denied'}</option>
+                        <option value="completed">{isZh ? '已完成' : 'Completed'}</option>
+                        <option value="failed">{isZh ? '失败' : 'Failed'}</option>
+                      </select>
+                      <select
+                        value={auditRiskFilter}
+                        onChange={(event) => setAuditRiskFilter(event.target.value as typeof auditRiskFilter)}
+                        className="h-8 rounded-md border border-claude-border bg-claude-bg px-2 text-[11px] text-claude-text outline-none"
+                      >
+                        <option value="all">{isZh ? '全部风险' : 'All risks'}</option>
+                        <option value="low">{isZh ? '低风险' : 'Low risk'}</option>
+                        <option value="medium">{isZh ? '中风险' : 'Medium risk'}</option>
+                        <option value="high">{isZh ? '高风险' : 'High risk'}</option>
+                      </select>
                     </div>
                     <div className="space-y-1.5">
-                      {commandAudit.slice(0, 4).map((entry) => (
-                        <div key={entry.id} className="grid grid-cols-[74px_minmax(0,1fr)] items-center gap-2 text-[10px]">
+                      {filteredCommandAudit.slice(0, 8).map((entry) => (
+                        <div key={entry.id} className="grid grid-cols-[74px_64px_minmax(0,1fr)] items-center gap-2 text-[10px]">
                           <span className={`rounded border px-1.5 py-0.5 text-center ${riskToneClass(entry.risk?.level)}`}>
                             {entry.decision === 'approval_required' ? (isZh ? '待确认' : 'Approval') : entry.decision}
+                          </span>
+                          <span className="rounded border border-claude-border px-1.5 py-0.5 text-center text-claude-textSecondary">
+                            {entry.risk?.level || 'low'}
                           </span>
                           <span className="truncate font-mono text-claude-textSecondary" title={entry.command}>
                             {entry.command}
                           </span>
                         </div>
                       ))}
+                      {filteredCommandAudit.length === 0 ? (
+                        <div className="text-[10px] text-claude-textSecondary">
+                          {isZh ? '当前筛选条件下没有命令审计记录。' : 'No command audit entries match the current filters.'}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 )}

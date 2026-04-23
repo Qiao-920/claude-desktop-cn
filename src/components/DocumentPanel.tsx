@@ -15,12 +15,14 @@ const ArtifactPreview: React.FC<{ content: string; type: string; refreshKey: num
   const [previewState, setPreviewState] = React.useState<'loading' | 'ready' | 'empty' | 'error'>('loading');
   const [previewMessage, setPreviewMessage] = React.useState('');
   const [previewLogs, setPreviewLogs] = React.useState<Array<{ level: string; message: string }>>([]);
+  const [previewIssue, setPreviewIssue] = React.useState<{ severity: 'warning' | 'error'; message: string } | null>(null);
   const html = React.useMemo(() => buildArtifactHtml(content, type), [content, type, refreshKey]);
 
   React.useEffect(() => {
     setPreviewState('loading');
     setPreviewMessage('');
     setPreviewLogs([]);
+    setPreviewIssue(null);
     const timeout = window.setTimeout(() => {
       setPreviewState((current) => current === 'loading' ? 'empty' : current);
       setPreviewMessage((current) => current || '预览仍在加载，可能是外部 CDN、脚本错误或生成内容为空。');
@@ -49,6 +51,15 @@ const ArtifactPreview: React.FC<{ content: string; type: string; refreshKey: num
           { level: data.level || 'log', message: data.message || '' },
         ].slice(-8));
       }
+      if (data.type === 'issue') {
+        const severity = data.severity === 'error' ? 'error' : 'warning';
+        const issueMessage = data.message || 'Preview reported a recoverable issue.';
+        setPreviewIssue({ severity, message: issueMessage });
+        setPreviewLogs((current) => [
+          ...current,
+          { level: severity === 'error' ? 'error' : 'warn', message: issueMessage },
+        ].slice(-8));
+      }
     };
     window.addEventListener('message', handleMessage);
     return () => {
@@ -59,21 +70,33 @@ const ArtifactPreview: React.FC<{ content: string; type: string; refreshKey: num
 
   return (
     <div className="relative w-full h-full bg-white">
-      {previewState !== 'ready' && (
+      {(previewState !== 'ready' || previewIssue) && (
         <div className={`absolute left-3 top-3 z-10 max-w-[460px] rounded-md border px-3 py-2 text-[12px] shadow-lg ${
           previewState === 'error'
             ? 'border-[#C6613F]/50 bg-[#2b1812] text-[#ffb49d]'
+            : previewIssue?.severity === 'error'
+              ? 'border-[#C6613F]/50 bg-[#2b1812] text-[#ffb49d]'
             : previewState === 'empty'
               ? 'border-amber-500/50 bg-[#2b2413] text-amber-200'
+              : previewIssue
+                ? 'border-amber-500/50 bg-[#2b2413] text-amber-200'
               : 'border-claude-border bg-claude-input text-claude-textSecondary'
         }`}>
           <div className="flex items-start gap-2">
             <AlertTriangle size={14} className="mt-0.5 shrink-0" />
             <div>
               <div className="font-medium">
-                {previewState === 'loading' ? '正在加载预览' : previewState === 'error' ? '预览执行出错' : '预览可能为空'}
+                {previewState === 'loading'
+                  ? '正在加载预览'
+                  : previewState === 'error'
+                    ? '预览执行出错'
+                    : previewState === 'empty'
+                      ? '预览可能为空'
+                      : previewIssue?.severity === 'error'
+                        ? '预览资源加载失败'
+                        : '预览存在警告'}
               </div>
-              {previewMessage && <div className="mt-1 leading-5">{previewMessage}</div>}
+              {(previewMessage || previewIssue?.message) && <div className="mt-1 leading-5">{previewMessage || previewIssue?.message}</div>}
             </div>
           </div>
         </div>

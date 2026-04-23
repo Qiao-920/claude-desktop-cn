@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import {
   changePassword,
+  callMcpServerTool,
   CodeGitStatusResult,
   deleteSession,
   disconnectGithub,
@@ -51,6 +52,7 @@ import {
   logout,
   logoutOtherSessions,
   McpToolAuditEntry,
+  McpToolInfo,
   McpServerConfig,
   updateAgentConfig,
   createMcpServer,
@@ -59,6 +61,7 @@ import {
   testMcpServer,
   toggleSkill,
   updateMcpServer,
+  updateSkillMetadata,
   updateUserProfile,
   Project,
 } from '../api';
@@ -99,6 +102,10 @@ type SkillItem = {
   id: string;
   name: string;
   description?: string;
+  descriptionZh?: string;
+  instructionExcerptZh?: string;
+  projectBindings?: string[];
+  triggerExamples?: string[];
   enabled?: boolean;
   builtIn?: boolean;
   source?: string;
@@ -111,6 +118,7 @@ type SkillItem = {
 };
 
 type SkillDescriptionLanguage = 'zh-CN' | 'en';
+type McpServerFilter = 'all' | 'enabled' | 'healthy' | 'issues';
 
 const SKILL_DESCRIPTION_ZH: Record<string, string> = {
   'code-review': '代码审查助手。重点检查 bug、安全风险、性能问题、可维护性和缺少测试，适合在提交前做最后一轮质量把关。',
@@ -168,6 +176,173 @@ const getSkillDescription = (skill: SkillItem, language: SkillDescriptionLanguag
   if (fallback && /[\u4e00-\u9fff]/.test(fallback)) return fallback;
   if (fallback) return `英文原文：${fallback}`;
   return '这个 Skill 还没有中文说明。后续可以补充用途、触发方式和示例。';
+};
+
+const hasChineseText = (value?: string) => Boolean(value && /[\u4e00-\u9fff]/.test(value));
+
+const getSkillDescriptionLocalized = (skill: SkillItem, language: SkillDescriptionLanguage) => {
+  const fallback = skill.description?.trim();
+  if (language === 'en') {
+    return fallback || 'This skill has no English description yet.';
+  }
+  const translatedFromBackend = skill.descriptionZh?.trim();
+  if (translatedFromBackend) return translatedFromBackend;
+  const translated = getSkillKeyCandidates(skill).map((key) => SKILL_DESCRIPTION_ZH[key]).find(Boolean);
+  if (translated) return translated;
+  if (fallback && hasChineseText(fallback)) return fallback;
+  if (fallback) return `英文原文：${fallback}`;
+  return '这个 Skill 还没有中文说明，后面可以继续补用途、触发方式和示例。';
+};
+
+const getSkillTranslationState = (skill: SkillItem) => {
+  if (hasChineseText(skill.description)) return 'native';
+  if (skill.descriptionZh?.trim()) return 'generated';
+  return 'english';
+};
+
+const getSkillTranslationMeta = (skill: SkillItem, isZh: boolean) => {
+  const state = getSkillTranslationState(skill);
+  if (state === 'native') {
+    return {
+      state,
+      label: isZh ? '原生中文' : 'Native zh',
+      summary: isZh ? '该 Skill 自带中文说明。' : 'This skill already ships with Chinese copy.',
+      className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
+    };
+  }
+  if (state === 'generated') {
+    return {
+      state,
+      label: isZh ? '自动中文' : 'Auto zh',
+      summary: isZh ? '中文说明由客户端自动生成，可继续手动润色。' : 'Chinese copy was generated automatically and can still be refined.',
+      className: 'border-sky-500/30 bg-sky-500/10 text-sky-300',
+    };
+  }
+  return {
+    state,
+    label: isZh ? '仅英文' : 'English only',
+    summary: isZh ? '还没有中文说明，当前展示英文原文。' : 'No Chinese copy yet; showing the original English.',
+    className: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+  };
+};
+
+const getMcpServerHealthState = (server: McpServerConfig) => {
+  if (!server.enabled) return 'disabled';
+  if (server.lastTestStatus === 'error' || server.lastToolScanStatus === 'error') return 'issues';
+  if (server.lastTestStatus === 'ok' || server.lastToolScanStatus === 'ok') return 'healthy';
+  return 'unknown';
+};
+
+const getMcpServerHealthMeta = (server: McpServerConfig, isZh: boolean) => {
+  const state = getMcpServerHealthState(server);
+  switch (state) {
+    case 'healthy':
+      return {
+        state,
+        label: isZh ? '健康' : 'Healthy',
+        summary: isZh ? '最近一次测试或工具发现成功。' : 'The latest test or tool discovery completed successfully.',
+        className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
+      };
+    case 'issues':
+      return {
+        state,
+        label: isZh ? '异常' : 'Issues',
+        summary: isZh ? '最近一次测试或工具发现报错，需要排查。' : 'The latest test or tool discovery reported an error.',
+        className: 'border-rose-500/30 bg-rose-500/10 text-rose-300',
+      };
+    case 'disabled':
+      return {
+        state,
+        label: isZh ? '已停用' : 'Disabled',
+        summary: isZh ? '服务当前已停用，不会参与工具调用。' : 'This server is currently disabled and will not participate in tool calls.',
+        className: 'border-slate-500/30 bg-slate-500/10 text-slate-300',
+      };
+    default:
+      return {
+        state,
+        label: isZh ? '待检查' : 'Pending',
+        summary: isZh ? '还没有完整测试记录，建议先跑一次连接测试。' : 'No complete checks yet. Run a connection test first.',
+        className: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+      };
+  }
+};
+
+const stringifyPrettyJson = (value: unknown) => {
+  try {
+    return JSON.stringify(value ?? {}, null, 2);
+  } catch {
+    return '{}';
+  }
+};
+
+const getMcpToolSchemaProperties = (tool?: McpToolInfo | null) => {
+  const schema = tool?.inputSchema;
+  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) return [] as Array<[string, Record<string, any>]>;
+  if ((schema as any).type !== 'object') return [] as Array<[string, Record<string, any>]>;
+  const properties = (schema as any).properties;
+  if (!properties || typeof properties !== 'object' || Array.isArray(properties)) return [] as Array<[string, Record<string, any>]>;
+  return Object.entries(properties).filter((entry): entry is [string, Record<string, any>] => Boolean(entry[0] && entry[1] && typeof entry[1] === 'object' && !Array.isArray(entry[1])));
+};
+
+const buildMcpToolFormDefaults = (tool?: McpToolInfo | null) => {
+  const defaults: Record<string, string> = {};
+  getMcpToolSchemaProperties(tool).forEach(([name, schema]) => {
+    if (schema.default === undefined || schema.default === null) {
+      defaults[name] = '';
+      return;
+    }
+    defaults[name] = typeof schema.default === 'string' ? schema.default : stringifyPrettyJson(schema.default);
+  });
+  return defaults;
+};
+
+const parseMcpToolValue = (raw: string, schema?: Record<string, any>) => {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  const schemaType = schema?.type;
+  if (schemaType === 'boolean') {
+    if (/^(true|1|yes)$/i.test(trimmed)) return true;
+    if (/^(false|0|no)$/i.test(trimmed)) return false;
+    throw new Error(`Invalid boolean: ${trimmed}`);
+  }
+  if (schemaType === 'number' || schemaType === 'integer') {
+    const next = Number(trimmed);
+    if (!Number.isFinite(next)) throw new Error(`Invalid number: ${trimmed}`);
+    return schemaType === 'integer' ? Math.trunc(next) : next;
+  }
+  if (schemaType === 'array' || schemaType === 'object') {
+    return JSON.parse(trimmed);
+  }
+  return trimmed;
+};
+
+const buildMcpToolArguments = (
+  tool: McpToolInfo | null,
+  formValues: Record<string, string>,
+  rawJson: string
+) => {
+  if (!tool) return {};
+  const properties = getMcpToolSchemaProperties(tool);
+  if (properties.length === 0) {
+    const trimmed = rawJson.trim();
+    if (!trimmed) return {};
+    const parsed = JSON.parse(trimmed);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Tool arguments must be a JSON object');
+    }
+    return parsed as Record<string, any>;
+  }
+  const required = new Set(Array.isArray(tool.inputSchema?.required) ? tool.inputSchema?.required : []);
+  const args: Record<string, any> = {};
+  for (const [name, schema] of properties) {
+    const value = formValues[name] ?? '';
+    if (!value.trim()) {
+      if (required.has(name)) throw new Error(`Missing required field: ${name}`);
+      continue;
+    }
+    args[name] = parseMcpToolValue(value, schema);
+  }
+  return args;
 };
 
 const parseEnvLines = (value: string) => {
@@ -438,19 +613,22 @@ const InlineActionButton = ({
   children,
   onClick,
   tone = 'default',
+  disabled = false,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   tone?: 'default' | 'danger';
+  disabled?: boolean;
 }) => (
   <button
     type="button"
     onClick={onClick}
+    disabled={disabled}
     className={`rounded-lg border px-3 py-1.5 text-[12px] transition-colors ${
       tone === 'danger'
         ? 'border-[#C6613F]/20 text-[#C6613F] hover:bg-[#C6613F]/6'
         : 'border-claude-border text-claude-text hover:bg-claude-hover'
-    }`}
+    } disabled:cursor-not-allowed disabled:opacity-45`}
   >
     {children}
   </button>
@@ -540,14 +718,23 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const [selectedSkillId, setSelectedSkillId] = useState('');
   const [selectedSkillDetail, setSelectedSkillDetail] = useState<SkillItem | null>(null);
   const [skillBusy, setSkillBusy] = useState('');
+  const [skillMetaBusy, setSkillMetaBusy] = useState('');
   const [skillSearch, setSkillSearch] = useState('');
   const [skillFilter, setSkillFilter] = useState<'all' | 'enabled' | 'custom'>('all');
+  const [skillTriggerDraft, setSkillTriggerDraft] = useState('');
   const [skillDescriptionLanguage, setSkillDescriptionLanguage] = useState<SkillDescriptionLanguage>(() => {
     const saved = localStorage.getItem('skills_description_language');
     return saved === 'en' || saved === 'zh-CN' ? saved : 'zh-CN';
   });
   const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([]);
   const [mcpToolAudit, setMcpToolAudit] = useState<McpToolAuditEntry[]>([]);
+  const [mcpSearch, setMcpSearch] = useState('');
+  const [mcpFilter, setMcpFilter] = useState<McpServerFilter>('all');
+  const [selectedMcpServerId, setSelectedMcpServerId] = useState('');
+  const [selectedMcpToolName, setSelectedMcpToolName] = useState('');
+  const [mcpToolFormValues, setMcpToolFormValues] = useState<Record<string, string>>({});
+  const [mcpToolRawArgs, setMcpToolRawArgs] = useState('{}');
+  const [mcpCallResult, setMcpCallResult] = useState<any>(null);
   const [mcpDraft, setMcpDraft] = useState({
     name: 'Local MCP',
     type: 'stdio' as McpServerConfig['type'],
@@ -588,6 +775,13 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     });
     setSelectedSkillId((prev) => (prev && all.some((item) => item.id === prev) ? prev : all[0]?.id || ''));
     return all;
+  };
+
+  const applyMcpServersPayload = (servers: McpServerConfig[]) => {
+    const list = Array.isArray(servers) ? servers : [];
+    setMcpServers(list);
+    setSelectedMcpServerId((prev) => (prev && list.some((item) => item.id === prev) ? prev : list[0]?.id || ''));
+    return list;
   };
 
   const [fullName, setFullName] = useState('');
@@ -721,9 +915,9 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
 
       try {
         const data = await getMcpServers();
-        setMcpServers(Array.isArray(data?.servers) ? data.servers : []);
+        applyMcpServersPayload(Array.isArray(data?.servers) ? data.servers : []);
       } catch {
-        setMcpServers([]);
+        applyMcpServersPayload([]);
       }
 
       try {
@@ -769,6 +963,26 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     };
   }, [selectedSkillId, skillsList]);
 
+  useEffect(() => {
+    setSkillTriggerDraft((selectedSkillDetail?.triggerExamples || []).join('\n'));
+  }, [selectedSkillDetail?.id, selectedSkillDetail?.triggerExamples]);
+
+  useEffect(() => {
+    const server =
+      mcpServers.find((item) => item.id === selectedMcpServerId) ||
+      mcpServers[0] ||
+      null;
+    const tools = Array.isArray(server?.tools) ? server.tools : [];
+    const nextTool =
+      tools.find((tool) => tool.name === selectedMcpToolName) ||
+      tools[0] ||
+      null;
+    setSelectedMcpToolName(nextTool?.name || '');
+    setMcpToolFormValues(buildMcpToolFormDefaults(nextTool));
+    setMcpToolRawArgs(stringifyPrettyJson(nextTool?.inputSchema?.default ?? {}));
+    setMcpCallResult(null);
+  }, [mcpServers, selectedMcpServerId, selectedMcpToolName]);
+
   const navItems = useMemo(() => {
     const items: Array<{ key: SettingsSection; label: string; badge?: string }> = [
       { key: 'general', label: '常规' },
@@ -805,6 +1019,10 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const initials = (displayName || fullName || profile?.nickname || 'U').slice(0, 1).toUpperCase();
   const archivedProjects = useMemo(
     () => projects.filter((project) => Number(project.is_archived) === 1),
+    [projects],
+  );
+  const activeProjects = useMemo(
+    () => projects.filter((project) => Number(project.is_archived) !== 1),
     [projects],
   );
   const linkedSourceCount = useMemo(
@@ -947,9 +1165,9 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const reloadMcpServers = async () => {
     try {
       const data = await getMcpServers();
-      setMcpServers(Array.isArray(data?.servers) ? data.servers : []);
+      applyMcpServersPayload(Array.isArray(data?.servers) ? data.servers : []);
     } catch {
-      setMcpServers([]);
+      applyMcpServersPayload([]);
     }
   };
 
@@ -1029,7 +1247,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     setMcpBusy(server.id);
     try {
       const data = await updateMcpServer(server.id, { enabled: !server.enabled });
-      setMcpServers(Array.isArray(data?.servers) ? data.servers : []);
+      applyMcpServersPayload(Array.isArray(data?.servers) ? data.servers : []);
     } finally {
       setMcpBusy('');
     }
@@ -1040,7 +1258,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     setMcpBusy(server.id);
     try {
       const data = await deleteMcpServer(server.id);
-      setMcpServers(Array.isArray(data?.servers) ? data.servers : []);
+      applyMcpServersPayload(Array.isArray(data?.servers) ? data.servers : []);
     } finally {
       setMcpBusy('');
     }
@@ -1050,7 +1268,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     setMcpBusy(`${server.id}:test`);
     try {
       const data = await testMcpServer(server.id);
-      setMcpServers(Array.isArray(data?.servers) ? data.servers : []);
+      applyMcpServersPayload(Array.isArray(data?.servers) ? data.servers : []);
     } finally {
       setMcpBusy('');
     }
@@ -1060,7 +1278,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     setMcpBusy(`${server.id}:tools`);
     try {
       const data = await discoverMcpServerTools(server.id);
-      setMcpServers(Array.isArray(data?.servers) ? data.servers : []);
+      applyMcpServersPayload(Array.isArray(data?.servers) ? data.servers : []);
       await reloadMcpToolAudit();
       const result = data?.result;
       if (result?.lastToolScanStatus === 'error' || result?.lastToolScanStatus === 'unsupported') {
@@ -1075,6 +1293,33 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     }
   };
 
+  const handleSelectMcpTool = (tool: McpToolInfo) => {
+    setSelectedMcpToolName(tool.name);
+    setMcpToolFormValues(buildMcpToolFormDefaults(tool));
+    setMcpToolRawArgs(stringifyPrettyJson(tool.inputSchema?.default ?? {}));
+    setMcpCallResult(null);
+  };
+
+  const handleInvokeMcpTool = async (server: McpServerConfig, tool: McpToolInfo | null) => {
+    if (!tool) return;
+    setMcpBusy(`${server.id}:call`);
+    try {
+      const args = buildMcpToolArguments(tool, mcpToolFormValues, mcpToolRawArgs);
+      const data = await callMcpServerTool(server.id, tool.name, args);
+      setMcpCallResult(data?.result || null);
+      await reloadMcpToolAudit();
+      if (data?.result?.ok === false) {
+        setSaveMsg(data.result.message || (isZh ? '工具调用失败' : 'Tool call failed'));
+        window.setTimeout(() => setSaveMsg(''), 2600);
+      }
+    } catch (error: any) {
+      setSaveMsg(error?.message || (isZh ? '调用 MCP 工具失败' : 'Failed to call MCP tool'));
+      window.setTimeout(() => setSaveMsg(''), 2600);
+    } finally {
+      setMcpBusy('');
+    }
+  };
+
   const startEditMcpEnv = (server: McpServerConfig) => {
     setMcpEditingEnvId(server.id);
     setMcpEditingEnv(formatEnvLines(server.env));
@@ -1084,7 +1329,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     setMcpBusy(`${server.id}:env`);
     try {
       const data = await updateMcpServer(server.id, { env: parseEnvLines(mcpEditingEnv) });
-      setMcpServers(Array.isArray(data?.servers) ? data.servers : []);
+      applyMcpServersPayload(Array.isArray(data?.servers) ? data.servers : []);
       setMcpEditingEnvId('');
       setMcpEditingEnv('');
     } catch (error: any) {
@@ -1092,6 +1337,48 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
       window.setTimeout(() => setSaveMsg(''), 2200);
     } finally {
       setMcpBusy('');
+    }
+  };
+
+  const updateSkillMetaLocally = (skillId: string, patch: Partial<Pick<SkillItem, 'projectBindings' | 'triggerExamples'>>) => {
+    setSkillsList((prev) => prev.map((item) => item.id === skillId ? { ...item, ...patch } : item));
+    setSelectedSkillDetail((prev) => prev && prev.id === skillId ? { ...prev, ...patch } : prev);
+  };
+
+  const handleToggleSkillProjectBinding = async (skill: SkillItem, projectId: string) => {
+    const currentBindings = Array.isArray(skill.projectBindings) ? skill.projectBindings : [];
+    const nextBindings = currentBindings.includes(projectId)
+      ? currentBindings.filter((id) => id !== projectId)
+      : [...currentBindings, projectId];
+    setSkillMetaBusy(`binding:${skill.id}:${projectId}`);
+    try {
+      await updateSkillMetadata(skill.id, { projectBindings: nextBindings });
+      updateSkillMetaLocally(skill.id, { projectBindings: nextBindings });
+    } catch (error: any) {
+      setSaveMsg(error?.message || (isZh ? '保存 Skill 项目绑定失败' : 'Failed to save skill project bindings'));
+      window.setTimeout(() => setSaveMsg(''), 2200);
+    } finally {
+      setSkillMetaBusy('');
+    }
+  };
+
+  const saveSkillTriggerExamples = async (skill: SkillItem) => {
+    const nextExamples = skillTriggerDraft
+      .split(/\r?\n/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .slice(0, 8);
+    setSkillMetaBusy(`examples:${skill.id}`);
+    try {
+      await updateSkillMetadata(skill.id, { triggerExamples: nextExamples });
+      updateSkillMetaLocally(skill.id, { triggerExamples: nextExamples });
+      setSaveMsg(isZh ? 'Skill 触发示例已保存' : 'Skill trigger examples saved');
+      window.setTimeout(() => setSaveMsg(''), 2000);
+    } catch (error: any) {
+      setSaveMsg(error?.message || (isZh ? '保存 Skill 触发示例失败' : 'Failed to save skill trigger examples'));
+      window.setTimeout(() => setSaveMsg(''), 2200);
+    } finally {
+      setSkillMetaBusy('');
     }
   };
 
@@ -1202,16 +1489,64 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
       skill.id,
       skill.source_dir,
       skill.description,
-      getSkillDescription(skill, skillDescriptionLanguage),
+      getSkillDescriptionLocalized(skill, skillDescriptionLanguage),
     ].filter(Boolean).join(' ').toLowerCase();
     return haystack.includes(normalizedSkillSearch);
   });
+  const normalizedMcpSearch = mcpSearch.trim().toLowerCase();
+  const filteredMcpServers = mcpServers.filter((server) => {
+    if (mcpFilter === 'enabled' && !server.enabled) return false;
+    if (mcpFilter === 'healthy' && getMcpServerHealthState(server) !== 'healthy') return false;
+    if (mcpFilter === 'issues' && getMcpServerHealthState(server) !== 'issues') return false;
+    if (!normalizedMcpSearch) return true;
+    const haystack = [
+      server.name,
+      server.id,
+      server.type,
+      server.command,
+      server.url,
+      ...(server.args || []),
+      ...(server.tools || []).map((tool) => `${tool.name} ${tool.description || ''}`),
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return haystack.includes(normalizedMcpSearch);
+  });
   const selectedSkill = selectedSkillDetail || skillsList.find((skill) => skill.id === selectedSkillId) || null;
   const selectedSkillFiles = getSkillFiles(selectedSkill);
-  const selectedSkillPrompt = selectedSkill?.content
-    ?.replace(/^---[\s\S]*?---/, '')
-    .trim()
-    .slice(0, 520);
+  const selectedSkillPromptSource =
+    skillDescriptionLanguage === 'zh-CN'
+      ? selectedSkill?.instructionExcerptZh || selectedSkill?.content
+      : selectedSkill?.content;
+  const selectedSkillPrompt = selectedSkillPromptSource?.replace(/^---[\s\S]*?---/, '').trim().slice(0, 520);
+  const selectedSkillEnglishOriginal =
+    skillDescriptionLanguage === 'zh-CN' && selectedSkill?.description && !hasChineseText(selectedSkill.description)
+      ? selectedSkill.description.trim()
+      : '';
+  const selectedSkillPromptEnglishOriginal =
+    skillDescriptionLanguage === 'zh-CN' && selectedSkill?.content
+      ? selectedSkill.content.replace(/^---[\s\S]*?---/, '').trim().slice(0, 520)
+      : '';
+  const selectedSkillTranslationMeta = selectedSkill ? getSkillTranslationMeta(selectedSkill, isZh) : null;
+  const selectedSkillProjectBindings = Array.isArray(selectedSkill?.projectBindings) ? selectedSkill.projectBindings : [];
+  const selectedSkillTriggerExamples = Array.isArray(selectedSkill?.triggerExamples) ? selectedSkill.triggerExamples : [];
+  const selectedMcpServer =
+    filteredMcpServers.find((server) => server.id === selectedMcpServerId) ||
+    mcpServers.find((server) => server.id === selectedMcpServerId) ||
+    filteredMcpServers[0] ||
+    mcpServers[0] ||
+    null;
+  const selectedMcpHealthMeta = selectedMcpServer ? getMcpServerHealthMeta(selectedMcpServer, isZh) : null;
+  const selectedMcpTool =
+    selectedMcpServer?.tools?.find((tool) => tool.name === selectedMcpToolName) ||
+    selectedMcpServer?.tools?.[0] ||
+    null;
+  const selectedMcpToolFields = getMcpToolSchemaProperties(selectedMcpTool);
+  const selectedMcpToolRequired = new Set(Array.isArray(selectedMcpTool?.inputSchema?.required) ? selectedMcpTool?.inputSchema?.required : []);
+  const selectedMcpAudit = selectedMcpServer
+    ? mcpToolAudit.filter((entry) => entry.serverId === selectedMcpServer.id)
+    : [];
 
   const currentSection = (() => {
     switch (section) {
@@ -1584,7 +1919,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                   )}
                 </div>
 
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                <div className="max-h-[720px] overflow-y-auto rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
                   <div className="mb-4 text-[14px] font-medium text-claude-text">新建风格</div>
                   <div className="grid grid-cols-2 gap-4">
                     <input
@@ -1840,146 +2175,387 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                 </div>
               </div>
 
-              <div className="mt-4 grid grid-cols-2 gap-4">
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="text-[14px] font-medium text-claude-text">{isZh ? 'GitHub 连接' : 'GitHub connection'}</div>
-                  <div className="mt-2 text-[12px] leading-6 text-claude-textSecondary">
-                    {githubConnected ? (isZh ? '当前已经可用，可以继续挂接仓库来源。' : 'The connection is ready. You can keep attaching repository sources.') : (isZh ? '连接后，仓库选择和项目来源会更顺手。' : 'Once connected, repository picking and project sources become smoother.')}
+              <div className="mt-4 grid grid-cols-[minmax(280px,0.74fr)_minmax(420px,1.26fr)] gap-4">
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                    <div className="text-[14px] font-medium text-claude-text">{isZh ? 'GitHub 连接' : 'GitHub connection'}</div>
+                    <div className="mt-2 text-[12px] leading-6 text-claude-textSecondary">
+                      {githubConnected ? (isZh ? '当前已经可用，可以继续挂接仓库来源。' : 'The connection is ready. You can keep attaching repository sources.') : (isZh ? '连接后，仓库选择和项目来源会更顺手。' : 'Once connected, repository picking and project sources become smoother.')}
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      {githubConnected ? (
+                        <InlineActionButton tone="danger" onClick={handleGithubDisconnect}>{isZh ? '断开 GitHub' : 'Disconnect GitHub'}</InlineActionButton>
+                      ) : (
+                        <InlineActionButton onClick={handleGithubConnect}>{isZh ? '连接 GitHub' : 'Connect GitHub'}</InlineActionButton>
+                      )}
+                      <InlineActionButton onClick={openProjectsPage}>{isZh ? '打开 Projects' : 'Open Projects'}</InlineActionButton>
+                      <InlineActionButton onClick={() => setSection('permissions')}>{isZh ? '查看权限设置' : 'Open permissions'}</InlineActionButton>
+                    </div>
                   </div>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {githubConnected ? (
-                      <InlineActionButton tone="danger" onClick={handleGithubDisconnect}>{isZh ? '断开 GitHub' : 'Disconnect GitHub'}</InlineActionButton>
-                    ) : (
-                      <InlineActionButton onClick={handleGithubConnect}>{isZh ? '连接 GitHub' : 'Connect GitHub'}</InlineActionButton>
-                    )}
-                    <InlineActionButton onClick={openProjectsPage}>{isZh ? '打开 Projects' : 'Open Projects'}</InlineActionButton>
-                    <InlineActionButton onClick={() => setSection('permissions')}>{isZh ? '查看权限设置' : 'Open permissions'}</InlineActionButton>
+
+                  <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div className="text-[14px] font-medium text-claude-text">{isZh ? '服务列表' : 'Servers'}</div>
+                      <InlineActionButton onClick={reloadMcpServers}>{isZh ? '刷新' : 'Refresh'}</InlineActionButton>
+                    </div>
+                    <input
+                      value={mcpSearch}
+                      onChange={(event) => setMcpSearch(event.target.value)}
+                      placeholder={isZh ? '搜索服务名、命令、地址或工具名' : 'Search server name, command, URL, or tool'}
+                      className="h-9 w-full rounded-lg border border-claude-border bg-claude-input px-3 text-[12px] text-claude-text outline-none"
+                    />
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {[
+                        { value: 'all' as const, label: isZh ? '全部' : 'All' },
+                        { value: 'enabled' as const, label: isZh ? '已启用' : 'Enabled' },
+                        { value: 'healthy' as const, label: isZh ? '健康' : 'Healthy' },
+                        { value: 'issues' as const, label: isZh ? '异常' : 'Issues' },
+                      ].map((item) => (
+                        <button
+                          key={item.value}
+                          type="button"
+                          onClick={() => setMcpFilter(item.value)}
+                          className={`h-8 rounded-lg border px-3 text-[11px] font-medium transition-colors ${
+                            mcpFilter === item.value
+                              ? 'border-[#2E7CF6]/35 bg-[#2E7CF6]/12 text-[#2E7CF6]'
+                              : 'border-claude-border text-claude-textSecondary hover:bg-claude-hover hover:text-claude-text'
+                          }`}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="mt-3 max-h-[620px] space-y-2 overflow-y-auto pr-1">
+                      {filteredMcpServers.length > 0 ? filteredMcpServers.map((server) => {
+                        const healthMeta = getMcpServerHealthMeta(server, isZh);
+                        return (
+                          <div
+                            key={server.id}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setSelectedMcpServerId(server.id)}
+                            onKeyDown={(event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                setSelectedMcpServerId(server.id);
+                              }
+                            }}
+                            className={`rounded-xl border px-3 py-3 transition-colors ${
+                              selectedMcpServerId === server.id
+                                ? 'border-[#2E7CF6]/45 bg-[#2E7CF6]/8'
+                                : 'border-claude-border bg-claude-input hover:border-claude-textSecondary/25'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <div className="truncate text-[13px] font-medium text-claude-text">{server.name}</div>
+                                  <span className={`rounded border px-1.5 py-0.5 text-[10px] ${healthMeta.className}`}>{healthMeta.label}</span>
+                                </div>
+                                <div className="mt-1 truncate font-mono text-[11px] text-claude-textSecondary">
+                                  {server.type === 'http' ? server.url : `${server.command || ''} ${(server.args || []).join(' ')}`.trim()}
+                                </div>
+                                <div className="mt-2 text-[11px] leading-5 text-claude-textSecondary">
+                                  {isZh ? '工具' : 'Tools'} {server.toolCount ?? server.tools?.length ?? 0} · {isZh ? '环境变量' : 'Env'} {Object.keys(server.env || {}).length}
+                                </div>
+                              </div>
+                              <ToggleSwitch
+                                checked={Boolean(server.enabled)}
+                                disabled={mcpBusy === server.id}
+                                label={server.enabled ? (isZh ? '禁用 MCP 服务' : 'Disable MCP server') : (isZh ? '启用 MCP 服务' : 'Enable MCP server')}
+                                onChange={() => handleToggleMcpServer(server)}
+                              />
+                            </div>
+                          </div>
+                        );
+                      }) : (
+                        <div className="rounded-lg border border-dashed border-claude-border px-3 py-4 text-[12px] leading-6 text-claude-textSecondary">
+                          {mcpServers.length > 0
+                            ? (isZh ? '没有匹配的 MCP 服务。' : 'No MCP servers match the current filters.')
+                            : (isZh ? '还没有配置 MCP 服务。你可以先添加一个 HTTP 或 stdio 服务。' : 'No MCP servers yet. Add an HTTP or stdio server to get started.')}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
                 <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                  <div className="mb-3 flex items-center justify-between">
-                    <div className="text-[14px] font-medium text-claude-text">{isZh ? '服务列表' : 'Servers'}</div>
-                    <InlineActionButton onClick={reloadMcpServers}>{isZh ? '刷新' : 'Refresh'}</InlineActionButton>
-                  </div>
-                  <div className="space-y-2">
-                    {mcpServers.length > 0 ? mcpServers.map((server) => (
-                      <div key={server.id} className="rounded-lg border border-claude-border bg-claude-input px-3 py-3">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <div className="truncate text-[13px] font-medium text-claude-text">{server.name}</div>
-                            <div className="mt-1 truncate font-mono text-[11px] text-claude-textSecondary">
-                              {server.type === 'http' ? server.url : `${server.command || ''} ${(server.args || []).join(' ')}`.trim()}
+                  {selectedMcpServer ? (
+                    <div className="space-y-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="truncate text-[16px] font-semibold text-claude-text">{selectedMcpServer.name}</div>
+                            {selectedMcpHealthMeta && (
+                              <span className={`rounded border px-1.5 py-0.5 text-[10px] ${selectedMcpHealthMeta.className}`}>
+                                {selectedMcpHealthMeta.label}
+                              </span>
+                            )}
+                            <span className="rounded border border-claude-border px-1.5 py-0.5 text-[10px] text-claude-textSecondary">
+                              {selectedMcpServer.type}
+                            </span>
+                          </div>
+                          <div className="mt-1 break-all font-mono text-[11px] text-claude-textSecondary">
+                            {selectedMcpServer.type === 'http'
+                              ? selectedMcpServer.url
+                              : `${selectedMcpServer.command || ''} ${(selectedMcpServer.args || []).join(' ')}`.trim()}
+                          </div>
+                          {selectedMcpHealthMeta && (
+                            <div className="mt-2 text-[12px] leading-6 text-claude-textSecondary">
+                              {selectedMcpHealthMeta.summary}
                             </div>
-                            <div className="mt-2 text-[11px] text-claude-textSecondary">
-                              {server.lastTestStatus && server.lastTestStatus !== 'unknown'
-                                ? `${server.lastTestStatus}: ${server.lastTestMessage || ''} · ${formatTime(server.lastTestAt)}`
-                                : (isZh ? '尚未测试' : 'Not tested yet')}
-                            </div>
-                            <div className="mt-1 text-[11px] text-claude-textSecondary">
-                              {isZh ? '环境变量' : 'Env vars'}: {Object.keys(server.env || {}).length}
-                            </div>
-                            <div className="mt-1 text-[11px] text-claude-textSecondary">
-                              {isZh ? '工具' : 'Tools'}: {server.toolCount ?? server.tools?.length ?? 0}
-                              {server.lastToolScanStatus && server.lastToolScanStatus !== 'unknown'
-                                ? ` · ${server.lastToolScanStatus}: ${server.lastToolScanMessage || ''}`
-                                : ''}
-                            </div>
-                            {Array.isArray(server.tools) && server.tools.length > 0 && (
-                              <div className="mt-2 flex flex-wrap gap-1.5">
-                                {server.tools.slice(0, 5).map((tool) => (
-                                  <span
-                                    key={`${server.id}:${tool.name}`}
-                                    title={tool.description || tool.name}
-                                    className="max-w-[150px] truncate rounded-md border border-claude-border bg-claude-bg px-2 py-1 font-mono text-[10px] text-claude-textSecondary"
-                                  >
-                                    {tool.name}
-                                  </span>
-                                ))}
-                                {server.tools.length > 5 && (
-                                  <span className="rounded-md border border-claude-border bg-claude-bg px-2 py-1 text-[10px] text-claude-textSecondary">
-                                    +{server.tools.length - 5}
-                                  </span>
-                                )}
+                          )}
+                        </div>
+                        <ToggleSwitch
+                          checked={Boolean(selectedMcpServer.enabled)}
+                          disabled={mcpBusy === selectedMcpServer.id}
+                          label={selectedMcpServer.enabled ? (isZh ? '禁用 MCP 服务' : 'Disable MCP server') : (isZh ? '启用 MCP 服务' : 'Enable MCP server')}
+                          onChange={() => handleToggleMcpServer(selectedMcpServer)}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-3">
+                        <InfoStat
+                          label={isZh ? '连接测试' : 'Connection test'}
+                          value={selectedMcpServer.lastTestStatus && selectedMcpServer.lastTestStatus !== 'unknown'
+                            ? selectedMcpServer.lastTestStatus
+                            : (isZh ? '未测试' : 'Not tested')}
+                          hint={selectedMcpServer.lastTestMessage || (isZh ? '建议先跑一次连接测试。' : 'Run a connection test first.')}
+                        />
+                        <InfoStat
+                          label={isZh ? '工具发现' : 'Tool discovery'}
+                          value={selectedMcpServer.lastToolScanStatus && selectedMcpServer.lastToolScanStatus !== 'unknown'
+                            ? `${selectedMcpServer.toolCount ?? selectedMcpServer.tools?.length ?? 0}`
+                            : '0'}
+                          hint={selectedMcpServer.lastToolScanMessage || (isZh ? '读取 tool schema 后才能继续做调用测试。' : 'Tool schemas are needed before invocation tests.')}
+                        />
+                        <InfoStat
+                          label={isZh ? '最近更新时间' : 'Last updated'}
+                          value={formatTime(selectedMcpServer.lastToolScanAt || selectedMcpServer.lastTestAt)}
+                          hint={isZh ? `环境变量 ${Object.keys(selectedMcpServer.env || {}).length} 个` : `${Object.keys(selectedMcpServer.env || {}).length} env vars`}
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap gap-2">
+                        <InlineActionButton onClick={() => handleTestMcpServer(selectedMcpServer)}>
+                          {mcpBusy === `${selectedMcpServer.id}:test` ? (isZh ? '测试中...' : 'Testing...') : (isZh ? '测试连接' : 'Test connection')}
+                        </InlineActionButton>
+                        <InlineActionButton onClick={() => handleDiscoverMcpTools(selectedMcpServer)}>
+                          {mcpBusy === `${selectedMcpServer.id}:tools` ? (isZh ? '发现中...' : 'Discovering...') : (isZh ? '刷新工具' : 'Refresh tools')}
+                        </InlineActionButton>
+                        <InlineActionButton onClick={() => startEditMcpEnv(selectedMcpServer)}>{isZh ? '编辑环境变量' : 'Edit env vars'}</InlineActionButton>
+                        <InlineActionButton tone="danger" onClick={() => handleDeleteMcpServer(selectedMcpServer)}>{isZh ? '删除服务' : 'Delete server'}</InlineActionButton>
+                      </div>
+
+                      {mcpEditingEnvId === selectedMcpServer.id && (
+                        <div className="rounded-lg border border-claude-border bg-claude-input px-3 py-3">
+                          <div className="mb-2 text-[12px] font-medium text-claude-text">{isZh ? '编辑环境变量' : 'Edit env vars'}</div>
+                          <textarea
+                            value={mcpEditingEnv}
+                            onChange={(event) => setMcpEditingEnv(event.target.value)}
+                            rows={4}
+                            className="w-full resize-none rounded-lg border border-claude-border bg-claude-bg px-3 py-2 font-mono text-[12px] leading-5 text-claude-text outline-none"
+                            placeholder="KEY=value"
+                          />
+                          <div className="mt-2 flex justify-end gap-2">
+                            <InlineActionButton onClick={() => { setMcpEditingEnvId(''); setMcpEditingEnv(''); }}>{isZh ? '取消' : 'Cancel'}</InlineActionButton>
+                            <InlineActionButton onClick={() => saveMcpEnv(selectedMcpServer)}>{mcpBusy === `${selectedMcpServer.id}:env` ? (isZh ? '保存中...' : 'Saving...') : (isZh ? '保存' : 'Save')}</InlineActionButton>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-[minmax(0,0.78fr)_minmax(320px,1.22fr)] gap-4">
+                        <div className="rounded-lg border border-claude-border bg-claude-input px-3 py-3">
+                          <div className="mb-2 flex items-center justify-between gap-3">
+                            <div className="text-[12px] font-medium text-claude-text">{isZh ? '工具列表' : 'Tools'}</div>
+                            <div className="text-[11px] text-claude-textSecondary">{selectedMcpServer.tools?.length || 0}</div>
+                          </div>
+                          <div className="max-h-[320px] space-y-2 overflow-y-auto pr-1">
+                            {selectedMcpServer.tools && selectedMcpServer.tools.length > 0 ? selectedMcpServer.tools.map((tool) => (
+                              <button
+                                key={`${selectedMcpServer.id}:${tool.name}`}
+                                type="button"
+                                onClick={() => handleSelectMcpTool(tool)}
+                                className={`w-full rounded-lg border px-3 py-2 text-left transition-colors ${
+                                  selectedMcpTool?.name === tool.name
+                                    ? 'border-[#2E7CF6]/40 bg-[#2E7CF6]/8'
+                                    : 'border-claude-border bg-claude-bg hover:border-claude-textSecondary/25'
+                                }`}
+                              >
+                                <div className="truncate font-mono text-[12px] text-claude-text">{tool.name}</div>
+                                <div className="mt-1 line-clamp-3 text-[11px] leading-5 text-claude-textSecondary">
+                                  {tool.description || (isZh ? '这个工具没有额外描述。' : 'No extra description for this tool.')}
+                                </div>
+                              </button>
+                            )) : (
+                              <div className="rounded-lg border border-dashed border-claude-border px-3 py-4 text-[12px] leading-6 text-claude-textSecondary">
+                                {isZh ? '先点击“刷新工具”读取可用 tool 列表。' : 'Use Refresh tools to load the available tool list first.'}
                               </div>
                             )}
                           </div>
-                          <ToggleSwitch
-                            checked={Boolean(server.enabled)}
-                            disabled={mcpBusy === server.id}
-                            label={server.enabled ? (isZh ? '禁用 MCP 服务' : 'Disable MCP server') : (isZh ? '启用 MCP 服务' : 'Enable MCP server')}
-                            onChange={() => handleToggleMcpServer(server)}
-                          />
                         </div>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <InlineActionButton onClick={() => handleTestMcpServer(server)}>
-                            {mcpBusy === `${server.id}:test` ? (isZh ? '测试中...' : 'Testing...') : (isZh ? '测试' : 'Test')}
-                          </InlineActionButton>
-                          <InlineActionButton onClick={() => handleDiscoverMcpTools(server)}>
-                            {mcpBusy === `${server.id}:tools` ? (isZh ? '发现中...' : 'Discovering...') : (isZh ? '发现工具' : 'Discover tools')}
-                          </InlineActionButton>
-                          <InlineActionButton onClick={() => startEditMcpEnv(server)}>{isZh ? '环境变量' : 'Env vars'}</InlineActionButton>
-                          <InlineActionButton tone="danger" onClick={() => handleDeleteMcpServer(server)}>{isZh ? '删除' : 'Delete'}</InlineActionButton>
-                        </div>
-                        {mcpEditingEnvId === server.id && (
-                          <div className="mt-3 rounded-lg border border-claude-border bg-claude-bg px-3 py-3">
-                            <div className="mb-2 text-[12px] font-medium text-claude-text">{isZh ? '编辑环境变量' : 'Edit env vars'}</div>
-                            <textarea
-                              value={mcpEditingEnv}
-                              onChange={(event) => setMcpEditingEnv(event.target.value)}
-                              rows={4}
-                              className="w-full resize-none rounded-lg border border-claude-border bg-claude-input px-3 py-2 font-mono text-[12px] leading-5 text-claude-text outline-none"
-                              placeholder="KEY=value"
-                            />
-                            <div className="mt-2 flex justify-end gap-2">
-                              <InlineActionButton onClick={() => { setMcpEditingEnvId(''); setMcpEditingEnv(''); }}>{isZh ? '取消' : 'Cancel'}</InlineActionButton>
-                              <InlineActionButton onClick={() => saveMcpEnv(server)}>{mcpBusy === `${server.id}:env` ? (isZh ? '保存中...' : 'Saving...') : (isZh ? '保存' : 'Save')}</InlineActionButton>
+
+                        <div className="rounded-lg border border-claude-border bg-claude-input px-3 py-3">
+                          <div className="mb-2 flex items-center justify-between gap-3">
+                            <div>
+                              <div className="text-[12px] font-medium text-claude-text">{isZh ? '工具调用测试' : 'Tool call test'}</div>
+                              <div className="mt-1 text-[11px] leading-5 text-claude-textSecondary">
+                                {selectedMcpTool
+                                  ? (selectedMcpTool.description || (isZh ? '按 schema 填参后可以直接做一次真实调用。' : 'Fill the schema fields and run a real invocation test.'))
+                                  : (isZh ? '先从左侧选择一个工具。' : 'Choose a tool from the left first.')}
+                              </div>
                             </div>
+                            {selectedMcpTool && (
+                              <span className="rounded border border-claude-border px-1.5 py-0.5 font-mono text-[10px] text-claude-textSecondary">
+                                {selectedMcpTool.name}
+                              </span>
+                            )}
+                          </div>
+
+                          {selectedMcpTool ? (
+                            <div className="space-y-3">
+                              {selectedMcpToolFields.length > 0 ? (
+                                <div className="grid grid-cols-2 gap-3">
+                                  {selectedMcpToolFields.map(([name, schema]) => (
+                                    <label key={name} className="rounded-lg border border-claude-border bg-claude-bg px-3 py-3">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-[12px] font-medium text-claude-text">{name}</span>
+                                        {selectedMcpToolRequired.has(name) && (
+                                          <span className="rounded border border-rose-500/30 bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-300">
+                                            {isZh ? '必填' : 'Required'}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="mt-1 text-[11px] leading-5 text-claude-textSecondary">
+                                        {schema.description || `${isZh ? '类型' : 'Type'}: ${schema.type || 'string'}`}
+                                      </div>
+                                      <input
+                                        value={mcpToolFormValues[name] ?? ''}
+                                        onChange={(event) => setMcpToolFormValues((prev) => ({ ...prev, [name]: event.target.value }))}
+                                        placeholder={schema.type === 'object' || schema.type === 'array' ? '{}' : (schema.default !== undefined ? String(schema.default) : '')}
+                                        className="mt-2 h-9 w-full rounded-lg border border-claude-border bg-claude-input px-3 text-[12px] text-claude-text outline-none"
+                                      />
+                                    </label>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div>
+                                  <div className="mb-2 text-[12px] font-medium text-claude-text">{isZh ? '参数 JSON' : 'Arguments JSON'}</div>
+                                  <textarea
+                                    value={mcpToolRawArgs}
+                                    onChange={(event) => setMcpToolRawArgs(event.target.value)}
+                                    rows={8}
+                                    className="w-full resize-none rounded-lg border border-claude-border bg-claude-bg px-3 py-2 font-mono text-[12px] leading-5 text-claude-text outline-none"
+                                    placeholder="{}"
+                                  />
+                                </div>
+                              )}
+
+                              <div className="flex flex-wrap gap-2">
+                                <InlineActionButton onClick={() => handleInvokeMcpTool(selectedMcpServer, selectedMcpTool)} disabled={mcpBusy === `${selectedMcpServer.id}:call`}>
+                                  {mcpBusy === `${selectedMcpServer.id}:call` ? (isZh ? '调用中...' : 'Calling...') : (isZh ? '调用工具' : 'Call tool')}
+                                </InlineActionButton>
+                                <InlineActionButton onClick={() => {
+                                  setMcpToolFormValues(buildMcpToolFormDefaults(selectedMcpTool));
+                                  setMcpToolRawArgs(stringifyPrettyJson(selectedMcpTool.inputSchema?.default ?? {}));
+                                  setMcpCallResult(null);
+                                }}>
+                                  {isZh ? '重置参数' : 'Reset args'}
+                                </InlineActionButton>
+                              </div>
+
+                              {mcpCallResult && (
+                                <div className="rounded-lg border border-claude-border bg-claude-bg px-3 py-3">
+                                  <div className="mb-2 flex items-center justify-between gap-3">
+                                    <div className="text-[12px] font-medium text-claude-text">{isZh ? '最近一次调用结果' : 'Latest call result'}</div>
+                                    <span className={`rounded border px-1.5 py-0.5 text-[10px] ${
+                                      mcpCallResult.ok === false ? 'border-rose-500/30 bg-rose-500/10 text-rose-300' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                                    }`}>
+                                      {mcpCallResult.ok === false ? (isZh ? '失败' : 'Failed') : (isZh ? '成功' : 'Succeeded')}
+                                    </span>
+                                  </div>
+                                  <div className="mb-2 text-[11px] leading-5 text-claude-textSecondary">
+                                    {mcpCallResult.message || (isZh ? '没有额外说明。' : 'No extra message.')}
+                                  </div>
+                                  <pre className="max-h-[260px] overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-claude-border bg-claude-input px-3 py-2 font-mono text-[11px] leading-5 text-claude-textSecondary">
+                                    {stringifyPrettyJson(mcpCallResult.result ?? mcpCallResult)}
+                                  </pre>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="rounded-lg border border-dashed border-claude-border px-3 py-6 text-[12px] leading-6 text-claude-textSecondary">
+                              {isZh ? '当前服务还没有可选工具。先跑一次“刷新工具”，或者切到已发现 tools 的服务。' : 'This server has no tools yet. Refresh tools first or switch to a server with discovered tools.'}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="rounded-lg border border-claude-border bg-claude-input px-3 py-3">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-[12px] font-medium text-claude-text">{isZh ? '调用与发现审计' : 'Discovery and call audit'}</div>
+                            <div className="mt-1 text-[11px] leading-5 text-claude-textSecondary">
+                              {isZh ? '这里会汇总当前服务最近的工具发现和真实调用结果。' : 'This collects the latest discovery and real tool-call results for the current server.'}
+                            </div>
+                          </div>
+                          <InlineActionButton onClick={reloadMcpToolAudit}>{isZh ? '刷新记录' : 'Refresh audit'}</InlineActionButton>
+                        </div>
+                        {selectedMcpAudit.length > 0 ? (
+                          <div className="max-h-[260px] space-y-2 overflow-y-auto pr-1">
+                            {selectedMcpAudit.slice(0, 10).map((entry) => (
+                              <div key={entry.id} className="rounded-lg border border-claude-border bg-claude-bg px-3 py-3">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="rounded border border-claude-border px-1.5 py-0.5 text-[10px] text-claude-textSecondary">
+                                    {entry.action === 'call_tool' ? (isZh ? '工具调用' : 'Tool call') : (isZh ? '工具发现' : 'Discovery')}
+                                  </span>
+                                  <span className={`rounded border px-1.5 py-0.5 text-[10px] ${
+                                    entry.decision === 'succeeded' || entry.decision === 'discovered'
+                                      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                                      : entry.decision === 'unsupported'
+                                        ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                                        : 'border-rose-500/30 bg-rose-500/10 text-rose-300'
+                                  }`}>
+                                    {entry.decision}
+                                  </span>
+                                  {entry.toolName && (
+                                    <span className="rounded border border-claude-border px-1.5 py-0.5 font-mono text-[10px] text-claude-textSecondary">
+                                      {entry.toolName}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="mt-2 text-[11px] leading-5 text-claude-textSecondary">
+                                  {entry.message || (isZh ? '没有额外信息。' : 'No extra message.')}
+                                </div>
+                                {entry.argumentsPreview && (
+                                  <pre className="mt-2 max-h-[100px] overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-claude-border bg-claude-input px-3 py-2 font-mono text-[10px] leading-5 text-claude-textSecondary">
+                                    {entry.argumentsPreview}
+                                  </pre>
+                                )}
+                                {entry.resultPreview && (
+                                  <pre className="mt-2 max-h-[120px] overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-claude-border bg-claude-input px-3 py-2 font-mono text-[10px] leading-5 text-claude-textSecondary">
+                                    {entry.resultPreview}
+                                  </pre>
+                                )}
+                                <div className="mt-2 text-[10px] text-claude-textSecondary">
+                                  {formatTime(entry.createdAt)}{entry.durationMs ? ` · ${entry.durationMs}ms` : ''}{entry.action === 'discover_tools' ? ` · ${entry.toolCount} tools` : ''}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="rounded-lg border border-dashed border-claude-border px-3 py-4 text-[12px] text-claude-textSecondary">
+                            {isZh ? '当前服务还没有审计记录。先测试连接、刷新工具或调用一次工具。' : 'There are no audit entries for this server yet. Test the connection, refresh tools, or call a tool first.'}
                           </div>
                         )}
                       </div>
-                    )) : (
-                      <div className="rounded-lg border border-dashed border-claude-border px-3 py-4 text-[12px] leading-6 text-claude-textSecondary">
-                        {isZh ? '还没有配置 MCP 服务。你可以先添加一个 HTTP 或 stdio 服务。' : 'No MCP servers yet. Add an HTTP or stdio server to get started.'}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <div className="mt-4 rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
-                <div className="mb-3 flex items-center justify-between">
-                  <div>
-                    <div className="text-[14px] font-medium text-claude-text">{isZh ? '最近工具发现记录' : 'Recent tool discovery'}</div>
-                    <div className="mt-1 text-[12px] text-claude-textSecondary">
-                      {isZh ? '记录 MCP 工具发现结果，后面会继续接到真实工具调用审计。' : 'Tracks MCP tool discovery results. Real tool-call audit will connect here next.'}
                     </div>
-                  </div>
-                  <InlineActionButton onClick={reloadMcpToolAudit}>{isZh ? '刷新记录' : 'Refresh audit'}</InlineActionButton>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-claude-border px-3 py-6 text-[13px] leading-6 text-claude-textSecondary">
+                      {isZh ? '从左侧选择一个 MCP 服务查看详情。' : 'Select an MCP server from the left to inspect it.'}
+                    </div>
+                  )}
                 </div>
-                {mcpToolAudit.length > 0 ? (
-                  <div className="space-y-2">
-                    {mcpToolAudit.slice(0, 6).map((entry) => (
-                      <div key={entry.id} className="grid grid-cols-[1fr_auto] gap-3 rounded-lg border border-claude-border bg-claude-input px-3 py-2">
-                        <div className="min-w-0">
-                          <div className="truncate text-[12px] font-medium text-claude-text">
-                            {entry.serverName} · {entry.decision}
-                          </div>
-                          <div className="mt-1 truncate text-[11px] text-claude-textSecondary">
-                            {entry.message || (isZh ? '没有额外信息' : 'No extra message')}
-                          </div>
-                        </div>
-                        <div className="text-right text-[11px] text-claude-textSecondary">
-                          <div>{entry.toolCount} tools</div>
-                          <div>{formatTime(entry.createdAt)}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="rounded-lg border border-dashed border-claude-border px-3 py-4 text-[12px] text-claude-textSecondary">
-                    {isZh ? '还没有工具发现记录。先在服务列表里点“发现工具”。' : 'No discovery records yet. Use Discover tools on a server first.'}
-                  </div>
-                )}
               </div>
             </SectionCard>
           </div>
@@ -2048,7 +2624,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                 <InlineActionButton onClick={openCustomizeSkills}>{isZh ? '创建 / 导入' : 'Create / import'}</InlineActionButton>
               </div>
 
-              <div className="grid grid-cols-[minmax(0,0.9fr)_minmax(320px,0.8fr)] gap-4">
+              <div className="grid grid-cols-[minmax(0,0.92fr)_minmax(360px,0.88fr)] gap-4">
                 <div className="max-h-[620px] space-y-2 overflow-y-auto pr-1">
                   {filteredSkillsList.length > 0 ? filteredSkillsList.map((skill) => (
                     <div
@@ -2069,17 +2645,23 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                       }`}
                     >
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <div className="truncate text-[14px] font-medium text-claude-text">{skill.name || skill.id}</div>
                           <span className="shrink-0 rounded border border-claude-border px-1.5 py-0.5 text-[10px] text-claude-textSecondary">
                             {skill.builtIn ? (isZh ? '内置' : 'Built-in') : (isZh ? '自定义' : 'Custom')}
                           </span>
+                          <span
+                            className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] ${getSkillTranslationMeta(skill, isZh).className}`}
+                            title={getSkillTranslationMeta(skill, isZh).summary}
+                          >
+                            {getSkillTranslationMeta(skill, isZh).label}
+                          </span>
                         </div>
-                        <div className="mt-1 line-clamp-2 text-[12px] leading-5 text-claude-textSecondary">
-                          {getSkillDescription(skill, skillDescriptionLanguage)}
+                        <div className="mt-1 line-clamp-3 break-words pr-2 text-[12px] leading-5 text-claude-textSecondary">
+                          {getSkillDescriptionLocalized(skill, skillDescriptionLanguage)}
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
+                      <div className="flex shrink-0 items-center gap-3">
                         <span className={`w-10 text-right text-[11px] ${skill.enabled ? 'text-[#2E7CF6]' : 'text-claude-textSecondary'}`}>
                           {skill.enabled ? (isZh ? '启用' : 'On') : (isZh ? '停用' : 'Off')}
                         </span>
@@ -2104,11 +2686,16 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                     <div className="space-y-4">
                       <div className="flex items-start justify-between gap-4">
                         <div className="min-w-0">
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <div className="truncate text-[16px] font-semibold text-claude-text">{selectedSkill.name || selectedSkill.id}</div>
                             <span className="rounded border border-claude-border px-1.5 py-0.5 text-[10px] text-claude-textSecondary">
                               {selectedSkill.builtIn ? (isZh ? '内置' : 'Built-in') : (isZh ? '自定义' : 'Custom')}
                             </span>
+                            {selectedSkillTranslationMeta && (
+                              <span className={`rounded border px-1.5 py-0.5 text-[10px] ${selectedSkillTranslationMeta.className}`}>
+                                {selectedSkillTranslationMeta.label}
+                              </span>
+                            )}
                           </div>
                           <div className="mt-1 break-all font-mono text-[11px] text-claude-textSecondary">{selectedSkill.id}</div>
                         </div>
@@ -2121,8 +2708,8 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
 
                       <div className="rounded-lg border border-claude-border bg-claude-input px-3 py-3">
                         <div className="text-[12px] font-medium text-claude-text">{isZh ? '用途说明' : 'Purpose'}</div>
-                        <div className="mt-1 text-[12px] leading-6 text-claude-textSecondary">
-                          {getSkillDescription(selectedSkill, skillDescriptionLanguage)}
+                        <div className="mt-1 break-words text-[12px] leading-6 text-claude-textSecondary">
+                          {getSkillDescriptionLocalized(selectedSkill, skillDescriptionLanguage)}
                         </div>
                       </div>
 
@@ -2139,10 +2726,82 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                         />
                       </div>
 
+                      <div className="rounded-lg border border-claude-border bg-claude-input px-3 py-3">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-[12px] font-medium text-claude-text">{isZh ? '项目绑定' : 'Project bindings'}</div>
+                            <div className="mt-1 text-[11px] leading-5 text-claude-textSecondary">
+                              {isZh ? '绑定后，聊天页在对应项目下会优先推荐这个 Skill。' : 'Bound skills are prioritized in Chat when that project is active.'}
+                            </div>
+                          </div>
+                          <span className="rounded border border-claude-border px-1.5 py-0.5 text-[10px] text-claude-textSecondary">
+                            {selectedSkillProjectBindings.length}
+                          </span>
+                        </div>
+                        {activeProjects.length > 0 ? (
+                          <div className="flex flex-wrap gap-2">
+                            {activeProjects.slice(0, 12).map((project) => {
+                              const bound = selectedSkillProjectBindings.includes(project.id);
+                              return (
+                                <button
+                                  key={`${selectedSkill.id}:${project.id}`}
+                                  type="button"
+                                  onClick={() => handleToggleSkillProjectBinding(selectedSkill, project.id)}
+                                  disabled={skillMetaBusy === `binding:${selectedSkill.id}:${project.id}`}
+                                  className={`rounded-lg border px-3 py-1.5 text-[12px] transition-colors disabled:opacity-45 ${
+                                    bound
+                                      ? 'border-[#2E7CF6]/35 bg-[#2E7CF6]/12 text-[#2E7CF6]'
+                                      : 'border-claude-border text-claude-textSecondary hover:bg-claude-bg hover:text-claude-text'
+                                  }`}
+                                >
+                                  {project.name}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="rounded-lg border border-dashed border-claude-border px-3 py-4 text-[12px] leading-6 text-claude-textSecondary">
+                            {isZh ? '还没有可绑定的项目。先在聊天页或 Projects 创建一个项目。' : 'There are no projects to bind yet. Create one from Chat or Projects first.'}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="rounded-lg border border-claude-border bg-claude-input px-3 py-3">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-[12px] font-medium text-claude-text">{isZh ? '触发示例' : 'Trigger examples'}</div>
+                            <div className="mt-1 text-[11px] leading-5 text-claude-textSecondary">
+                              {isZh ? '每行一条，聊天页会在对应项目下优先展示这些示例。' : 'One per line. Chat surfaces these examples first for bound projects.'}
+                            </div>
+                          </div>
+                          <InlineActionButton onClick={() => saveSkillTriggerExamples(selectedSkill)} disabled={skillMetaBusy === `examples:${selectedSkill.id}`}>
+                            {skillMetaBusy === `examples:${selectedSkill.id}` ? (isZh ? '保存中...' : 'Saving...') : (isZh ? '保存示例' : 'Save examples')}
+                          </InlineActionButton>
+                        </div>
+                        <textarea
+                          value={skillTriggerDraft}
+                          onChange={(event) => setSkillTriggerDraft(event.target.value)}
+                          rows={4}
+                          className="w-full resize-none rounded-lg border border-claude-border bg-claude-bg px-3 py-2 text-[12px] leading-6 text-claude-text outline-none"
+                          placeholder={isZh ? '/code-review 检查这次提交是否有回归风险\n/frontend-design 帮我把当前页面改成更沉稳的风格' : '/code-review Check this change for regressions\n/frontend-design Refine the current page into a calmer visual style'}
+                        />
+                        {selectedSkillTriggerExamples.length > 0 && skillTriggerDraft.trim() === selectedSkillTriggerExamples.join('\n').trim() && (
+                          <div className="mt-2 text-[11px] leading-5 text-claude-textSecondary">
+                            {isZh ? `当前已保存 ${selectedSkillTriggerExamples.length} 条示例。` : `${selectedSkillTriggerExamples.length} examples saved.`}
+                          </div>
+                        )}
+                      </div>
+
                       {selectedSkillPrompt && (
                         <div className="rounded-lg border border-claude-border bg-claude-input px-3 py-3">
                           <div className="mb-2 text-[12px] font-medium text-claude-text">{isZh ? '触发说明摘录' : 'Instruction excerpt'}</div>
-                          <pre className="max-h-[150px] whitespace-pre-wrap text-[11px] leading-5 text-claude-textSecondary">{selectedSkillPrompt}</pre>
+                          <pre className="max-h-[220px] overflow-y-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-claude-textSecondary">{selectedSkillPrompt}</pre>
+                          {selectedSkillPromptEnglishOriginal && selectedSkillPromptEnglishOriginal !== selectedSkillPrompt && (
+                            <div className="mt-3 rounded-lg border border-claude-border/70 bg-claude-bg px-3 py-2">
+                              <div className="text-[11px] font-medium text-claude-textSecondary">{isZh ? '英文原文摘录' : 'Original excerpt'}</div>
+                              <pre className="mt-1 max-h-[160px] overflow-y-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-claude-textSecondary">{selectedSkillPromptEnglishOriginal}</pre>
+                            </div>
+                          )}
                         </div>
                       )}
 

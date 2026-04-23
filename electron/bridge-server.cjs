@@ -2341,6 +2341,8 @@ function initServer(mainWindow) {
     const localSkillsDir = path.join(homeDir, '.agents', 'skills');
     const userSkillsDir = path.join(homeDir, '.claude', 'skills');
     const skillPrefsPath = path.join(userDataPath, 'skill-preferences.json');
+    const skillMetaPath = path.join(userDataPath, 'skill-metadata.json');
+    const skillTranslationCachePath = path.join(userDataPath, 'skill-translations.json');
 
     if (!fs.existsSync(userSkillsDir)) {
         fs.mkdirSync(userSkillsDir, { recursive: true });
@@ -2381,6 +2383,200 @@ function initServer(mainWindow) {
     }
     function saveSkillPrefs(prefs) {
         fs.writeFileSync(skillPrefsPath, JSON.stringify(prefs, null, 2));
+    }
+
+    function loadSkillMeta() {
+        if (fs.existsSync(skillMetaPath)) {
+            try { return JSON.parse(fs.readFileSync(skillMetaPath, 'utf8')); } catch (_) { }
+        }
+        return {};
+    }
+    const skillMetaStore = loadSkillMeta();
+    function saveSkillMeta() {
+        fs.writeFileSync(skillMetaPath, JSON.stringify(skillMetaStore, null, 2));
+    }
+
+    function normalizeSkillMeta(entry) {
+        const projectBindings = Array.isArray(entry && entry.projectBindings)
+            ? Array.from(new Set(entry.projectBindings.map((item) => String(item || '').trim()).filter(Boolean))).slice(0, 24)
+            : [];
+        const triggerExamples = Array.isArray(entry && entry.triggerExamples)
+            ? entry.triggerExamples
+                .map((item) => String(item || '').trim())
+                .filter(Boolean)
+                .slice(0, 8)
+            : [];
+        return { projectBindings, triggerExamples };
+    }
+
+    function attachSkillMeta(skill) {
+        const meta = normalizeSkillMeta(skillMetaStore[skill.id] || {});
+        return {
+            ...skill,
+            projectBindings: meta.projectBindings,
+            triggerExamples: meta.triggerExamples,
+        };
+    }
+
+    function updateSkillMeta(id, patch) {
+        const prev = normalizeSkillMeta(skillMetaStore[id] || {});
+        const next = normalizeSkillMeta({
+            ...prev,
+            ...(patch && typeof patch === 'object' ? patch : {}),
+        });
+        skillMetaStore[id] = next;
+        saveSkillMeta();
+        return next;
+    }
+
+    function loadSkillTranslationCache() {
+        if (fs.existsSync(skillTranslationCachePath)) {
+            try { return JSON.parse(fs.readFileSync(skillTranslationCachePath, 'utf8')); } catch (_) { }
+        }
+        return {};
+    }
+    const skillTranslationCache = loadSkillTranslationCache();
+    function saveSkillTranslationCache() {
+        fs.writeFileSync(skillTranslationCachePath, JSON.stringify(skillTranslationCache, null, 2));
+    }
+
+    function containsChinese(value) {
+        return /[\u4e00-\u9fff]/.test(String(value || ''));
+    }
+
+    function normalizeSkillKey(value) {
+        return String(value || '')
+            .trim()
+            .replace(/^\/+/, '')
+            .toLowerCase()
+            .replace(/\s+/g, '-')
+            .replace(/[^a-z0-9\u4e00-\u9fff_-]+/g, '-')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, '');
+    }
+
+    const skillDescriptionZhMap = {
+        'code-review': '代码评审助手。适合检查 bug、安全风险、性能问题和实现质量。',
+        'create-project': '项目脚手架助手。适合从零搭建应用、工具、脚本或页面骨架。',
+        'doc-writer': '文档写作助手。适合生成 README、接口文档、使用说明和交付文档。',
+        'frontend-design': '前端设计助手。适合页面布局、组件视觉、交互细节和界面优化。',
+        'skill-creator': 'Skill 创建助手。适合新建、改写和优化 Skill 说明与触发规则。',
+        'find-skills': 'Skill 检索助手。适合查找现有 Skill、判断用途并给出安装建议。',
+        'ui-ux-pro-max': '高阶 UI/UX 设计助手。适合视觉风格、配色、版式和产品界面打磨。',
+        'web-design-guidelines': '网页设计规范助手。适合检查可访问性、排版、交互状态和整体体验。',
+        'vercel-react-best-practices': 'React/Next 最佳实践助手。适合性能优化、数据获取和工程规范检查。',
+        'generate-import-html': '导入 HTML 生成助手。适合把结构化内容整理成可导入的 HTML。',
+        'brand-guidelines': '品牌规范助手。适合品牌颜色、字体、版式和视觉一致性任务。',
+        'brainstorming': '头脑风暴助手。适合创意发散、方案构思和方向探索。',
+        'canvas-design': '画布设计助手。适合画板布局、视觉编排和创意草图任务。',
+        'algorithmic-art': '算法艺术助手。适合生成式图形、参数化视觉和创意编程实验。',
+    };
+
+    function hashSkillTranslationInput(skill) {
+        const crypto = require('crypto');
+        return crypto
+            .createHash('sha1')
+            .update(JSON.stringify({
+                name: skill.name || '',
+                description: skill.description || '',
+                content: skill.content || '',
+                source: skill.source || '',
+                source_dir: skill.source_dir || '',
+            }))
+            .digest('hex');
+    }
+
+    function buildSkillDescriptionZh(skill) {
+        const fallbackDescription = String(skill.description || '').trim();
+        if (containsChinese(fallbackDescription)) return fallbackDescription;
+
+        const keyCandidates = [
+            normalizeSkillKey(skill.name),
+            normalizeSkillKey(skill.source_dir),
+            normalizeSkillKey(skill.id),
+        ].filter(Boolean);
+        for (const key of keyCandidates) {
+            if (skillDescriptionZhMap[key]) return skillDescriptionZhMap[key];
+        }
+
+        const text = `${skill.name || ''}\n${fallbackDescription}\n${skill.content || ''}`.toLowerCase();
+        const capabilities = [];
+        const pushCapability = (value) => {
+            if (value && !capabilities.includes(value)) capabilities.push(value);
+        };
+
+        if (/(brand|visual identity|typography|color palette|style guide)/.test(text)) pushCapability('品牌规范、颜色和排版统一');
+        if (/(ui|ux|design system|layout|component|figma|wireframe)/.test(text)) pushCapability('界面设计、布局和组件规范');
+        if (/(react|next|vue|svelte|frontend|css|tailwind|html)/.test(text)) pushCapability('前端页面和组件实现');
+        if (/(review|audit|lint|bug|security|performance)/.test(text)) pushCapability('代码评审、质量检查和风险排查');
+        if (/(readme|docs|documentation|guide|manual|api)/.test(text)) pushCapability('文档撰写和说明整理');
+        if (/(skill|prompt|workflow|trigger)/.test(text)) pushCapability('Skill 设计、触发规则和工作流整理');
+        if (/(github|pull request|issue|ci|workflow run|actions)/.test(text)) pushCapability('GitHub、PR 和 CI 流程处理');
+        if (/(dataset|evaluation|model|training|hugging face|inference|llm)/.test(text)) pushCapability('模型、数据集和评测相关任务');
+        if (/(image|illustration|art|canvas|poster|visual)/.test(text)) pushCapability('图像、海报和创意视觉任务');
+        if (/(excel|spreadsheet|csv|table)/.test(text)) pushCapability('表格、CSV 和结构化数据处理');
+        if (/(powerpoint|ppt|slides|presentation)/.test(text)) pushCapability('演示稿和幻灯片制作');
+        if (/(mcp|server|tool calling|stdio|http)/.test(text)) pushCapability('MCP 服务、工具连接和集成调试');
+
+        const displayName = String(skill.name || skill.source_dir || skill.id || '这个 Skill').replace(/[-_]/g, ' ');
+        if (capabilities.length > 0) {
+            return `${displayName}。适合处理${capabilities.slice(0, 3).join('、')}相关任务。`;
+        }
+        return `${displayName}。适合处理专项任务；如果需要更细的规则，可以继续查看原始 SKILL.md。`;
+    }
+
+    function buildSkillInstructionExcerptZh(skill, descriptionZh) {
+        const lines = String(skill.content || '')
+            .replace(/\r\n/g, '\n')
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean);
+
+        const headingLines = lines
+            .filter((line) => /^(#{1,4}\s+|[-*]\s+|\d+\.\s+)/.test(line))
+            .slice(0, 4)
+            .map((line) => line.replace(/^#{1,4}\s+/, '').replace(/^[-*]\s+/, '').replace(/^\d+\.\s+/, '').trim())
+            .filter(Boolean);
+
+        const excerptParts = [];
+        if (descriptionZh) excerptParts.push(descriptionZh);
+        if (headingLines.length > 0) {
+            excerptParts.push(`重点目录：${headingLines.join(' / ')}`);
+        }
+        excerptParts.push('建议优先阅读 SKILL.md 中的使用步骤、输入约束和输出要求。');
+        return excerptParts.join('\n');
+    }
+
+    function attachSkillTranslation(skill) {
+        const cacheKey = `${skill.source || 'unknown'}:${skill.source_dir || skill.name || skill.id || 'skill'}`;
+        const contentHash = hashSkillTranslationInput(skill);
+        const cached = skillTranslationCache[cacheKey];
+        if (cached && cached.hash === contentHash) {
+            return {
+                ...skill,
+                descriptionZh: cached.descriptionZh || '',
+                instructionExcerptZh: cached.instructionExcerptZh || '',
+            };
+        }
+
+        const descriptionZh = buildSkillDescriptionZh(skill);
+        const instructionExcerptZh = buildSkillInstructionExcerptZh(skill, descriptionZh);
+        skillTranslationCache[cacheKey] = {
+            hash: contentHash,
+            descriptionZh,
+            instructionExcerptZh,
+            updatedAt: new Date().toISOString(),
+        };
+        saveSkillTranslationCache();
+        return {
+            ...skill,
+            descriptionZh,
+            instructionExcerptZh,
+        };
+    }
+
+    function decorateSkill(skill) {
+        return attachSkillMeta(attachSkillTranslation(skill));
     }
 
     // Parse SKILL.md frontmatter
@@ -2439,7 +2635,7 @@ function initServer(mainWindow) {
                     const raw = fs.readFileSync(mdPath, 'utf8');
                     const parsed = parseSkillMd(raw);
                     if (!parsed) continue;
-                    skills.push({
+                    skills.push(decorateSkill({
                         id: `${source}:${entry.name}`,
                         name: parsed.name || entry.name,
                         description: parsed.description,
@@ -2449,7 +2645,7 @@ function initServer(mainWindow) {
                         source: source,
                         user_id: null,
                         created_at: null
-                    });
+                    }));
                 } catch (e) { /* skip unreadable */ }
             }
         } catch (e) { /* dir not readable */ }
@@ -2515,7 +2711,12 @@ function initServer(mainWindow) {
             const baseDir = example.source === 'bundled' ? bundledSkillsDir : localSkillsDir;
             const skillDir = path.join(baseDir, example.source_dir);
             const files = scanSkillFiles(skillDir);
-            return res.json({ ...example, enabled: prefs[id] !== undefined ? prefs[id] : true, files, dir_path: skillDir });
+            return res.json(decorateSkill({
+                ...example,
+                enabled: prefs[id] !== undefined ? prefs[id] : true,
+                files,
+                dir_path: skillDir,
+            }));
         }
 
         // Check user skills (~/.claude/skills/)
@@ -2524,7 +2725,12 @@ function initServer(mainWindow) {
         if (userSkill) {
             const skillDir = path.join(userSkillsDir, userSkill.source_dir);
             const files = scanSkillFiles(skillDir);
-            return res.json({ ...userSkill, enabled: prefs[id] !== undefined ? prefs[id] : true, files, dir_path: skillDir });
+            return res.json(decorateSkill({
+                ...userSkill,
+                enabled: prefs[id] !== undefined ? prefs[id] : true,
+                files,
+                dir_path: skillDir,
+            }));
         }
 
         res.status(404).json({ error: 'Skill not found' });
@@ -2582,7 +2788,7 @@ function initServer(mainWindow) {
         prefs[id] = true;
         saveSkillPrefs(prefs);
 
-        res.json({ id, name, description: description || '', content: content || '', is_example: false, source_dir: slug, source: 'user', enabled: true });
+        res.json(decorateSkill({ id, name, description: description || '', content: content || '', is_example: false, source_dir: slug, source: 'user', enabled: true }));
     });
 
     // POST /api/skills/import — upload a .zip or .md file to create a user skill
@@ -2638,7 +2844,7 @@ function initServer(mainWindow) {
                 const prefs = loadSkillPrefs();
                 prefs[id] = true;
                 saveSkillPrefs(prefs);
-                return res.json({ id, name, source_dir: slug, source: 'user', enabled: true });
+                return res.json(decorateSkill({ id, name, description: '', content: mdContent, source_dir: slug, source: 'user', enabled: true }));
             }
 
             if (ext === '.md') {
@@ -2659,7 +2865,7 @@ function initServer(mainWindow) {
                 const prefs = loadSkillPrefs();
                 prefs[id] = true;
                 saveSkillPrefs(prefs);
-                return res.json({ id, name, source_dir: slug, source: 'user', enabled: true });
+                return res.json(decorateSkill({ id, name, description: '', content, source_dir: slug, source: 'user', enabled: true }));
             }
 
             try { fs.unlinkSync(req.file.path); } catch (_) {}
@@ -2687,10 +2893,37 @@ function initServer(mainWindow) {
             fs.writeFileSync(path.join(userSkillsDir, skill.source_dir, 'SKILL.md'), frontmatter);
 
             const prefs = loadSkillPrefs();
-            res.json({ ...skill, name, description, content, enabled: prefs[id] !== undefined ? prefs[id] : true });
+            const metadataPatch = {};
+            if (req.body.projectBindings !== undefined) metadataPatch.projectBindings = req.body.projectBindings;
+            if (req.body.triggerExamples !== undefined) metadataPatch.triggerExamples = req.body.triggerExamples;
+            if (Object.keys(metadataPatch).length > 0) {
+                updateSkillMeta(id, metadataPatch);
+            }
+            res.json(decorateSkill({ ...skill, name, description, content, enabled: prefs[id] !== undefined ? prefs[id] : true }));
         } catch (e) {
             res.status(500).json({ error: e.message });
         }
+    });
+
+    server.patch('/api/skills/:id/meta', (req, res) => {
+        const { id } = req.params;
+        const allSkills = [
+            ...scanSkillsDir(bundledSkillsDir, 'bundled'),
+            ...scanSkillsDir(localSkillsDir, 'local'),
+            ...loadUserSkills(),
+        ];
+        const skill = allSkills.find((item) => item.id === id);
+        if (!skill) return res.status(404).json({ error: 'Skill not found' });
+
+        const nextMeta = updateSkillMeta(id, {
+            projectBindings: req.body && req.body.projectBindings,
+            triggerExamples: req.body && req.body.triggerExamples,
+        });
+        res.json({
+            ok: true,
+            metadata: nextMeta,
+            skill: decorateSkill(skill),
+        });
     });
 
     // DELETE /api/skills/:id 鈥?delete user skill (removes directory)
@@ -2749,11 +2982,32 @@ function initServer(mainWindow) {
         return servers;
     }
 
+    function simplifyMcpSchema(value, depth = 0) {
+        if (value === null || value === undefined) return null;
+        if (typeof value !== 'object') return value;
+        if (depth > 5) return undefined;
+        if (Array.isArray(value)) {
+            return value.slice(0, 20).map((item) => simplifyMcpSchema(item, depth + 1)).filter((item) => item !== undefined);
+        }
+        const allowedKeys = ['type', 'title', 'description', 'properties', 'required', 'items', 'enum', 'default', 'additionalProperties', 'oneOf', 'anyOf'];
+        const next = {};
+        for (const key of allowedKeys) {
+            if (!(key in value)) continue;
+            const simplified = simplifyMcpSchema(value[key], depth + 1);
+            if (simplified !== undefined) {
+                next[key] = simplified;
+            }
+        }
+        return Object.keys(next).length > 0 ? next : null;
+    }
+
     function normalizeMcpTools(tools) {
         if (!Array.isArray(tools)) return [];
         return tools.map((tool) => ({
             name: String(tool && tool.name || '').trim(),
+            title: typeof (tool && tool.title) === 'string' ? tool.title.trim() : '',
             description: typeof (tool && tool.description) === 'string' ? tool.description.trim() : '',
+            inputSchema: simplifyMcpSchema(tool && (tool.inputSchema || tool.input_schema || tool.parameters || null)),
         })).filter((tool) => tool.name).slice(0, 80);
     }
 
@@ -2763,25 +3017,197 @@ function initServer(mainWindow) {
         return raw;
     }
 
-    function appendMcpToolAudit(serverConfig, result) {
+    function summarizeMcpValue(value, maxLength = 700) {
+        if (value === null || value === undefined) return '';
+        let text = '';
+        if (typeof value === 'string') text = value;
+        else {
+            try {
+                text = JSON.stringify(value, null, 2);
+            } catch (_) {
+                text = String(value);
+            }
+        }
+        return text.length > maxLength ? `${text.slice(0, maxLength)}…` : text;
+    }
+
+    function summarizeMcpResult(result) {
+        if (!result) return '';
+        if (Array.isArray(result.content)) {
+            const parts = result.content.map((item) => {
+                if (!item || typeof item !== 'object') return '';
+                if (typeof item.text === 'string') return item.text;
+                if (item.type === 'image' || item.type === 'image_url') return '[image]';
+                return summarizeMcpValue(item);
+            }).filter(Boolean);
+            if (parts.length > 0) return summarizeMcpValue(parts.join('\n'));
+        }
+        if (result.structuredContent !== undefined) return summarizeMcpValue(result.structuredContent);
+        if (result.content !== undefined) return summarizeMcpValue(result.content);
+        return summarizeMcpValue(result);
+    }
+
+    function appendMcpToolAudit(serverConfig, payload) {
         const entry = {
             id: makeLocalId('mcp_tool_audit'),
             createdAt: new Date().toISOString(),
             serverId: serverConfig.id,
             serverName: serverConfig.name,
             serverType: serverConfig.type,
-            action: 'discover_tools',
-            decision: result.lastToolScanStatus === 'ok'
-                ? 'discovered'
-                : result.lastToolScanStatus === 'unsupported'
-                    ? 'unsupported'
-                    : 'failed',
-            toolCount: result.toolCount || 0,
-            message: result.lastToolScanMessage || '',
+            action: payload.action || 'discover_tools',
+            decision: payload.decision || 'failed',
+            toolCount: Number(payload.toolCount || 0),
+            toolName: payload.toolName || '',
+            argumentsPreview: payload.argumentsPreview || '',
+            resultPreview: payload.resultPreview || '',
+            durationMs: Number(payload.durationMs || 0),
+            message: payload.message || '',
         };
         const next = [entry, ...readMcpToolAudit()].slice(0, 200);
         writeJsonFile(mcpToolAuditPath, next);
         return entry;
+    }
+
+    async function runStdioMcpRequest(serverConfig, requestPayload, options = {}) {
+        const timeoutMs = Number(options.timeoutMs || 12000);
+        const startedAt = Date.now();
+        if (!serverConfig.command) {
+            return {
+                ok: false,
+                durationMs: 0,
+                errorMessage: 'Missing command',
+            };
+        }
+
+        const { spawn } = require('child_process');
+        return new Promise((resolve) => {
+            let stdout = '';
+            let stderr = '';
+            let pending = '';
+            let finished = false;
+            let initialized = false;
+            let child = null;
+
+            const finish = (result) => {
+                if (finished) return;
+                finished = true;
+                clearTimeout(timer);
+                try {
+                    if (child && child.stdin && !child.stdin.destroyed) child.stdin.end();
+                } catch (_) {}
+                try {
+                    if (child && !child.killed) child.kill();
+                } catch (_) {}
+                resolve({
+                    stdout,
+                    stderr,
+                    durationMs: Date.now() - startedAt,
+                    ...result,
+                });
+            };
+
+            const send = (payload) => {
+                try {
+                    child.stdin.write(JSON.stringify(payload) + '\n');
+                } catch (_) {}
+            };
+
+            const handlePayload = (payload) => {
+                if (!payload || typeof payload !== 'object') return;
+                if (payload.id === 1 && !initialized) {
+                    initialized = true;
+                    if (payload.error) {
+                        finish({
+                            ok: false,
+                            errorMessage: payload.error.message || 'initialize failed',
+                            payload,
+                        });
+                        return;
+                    }
+                    send({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
+                    send(requestPayload);
+                    return;
+                }
+                if (payload.id === requestPayload.id) {
+                    if (payload.error) {
+                        finish({
+                            ok: false,
+                            errorMessage: payload.error.message || `${requestPayload.method} failed`,
+                            payload,
+                        });
+                        return;
+                    }
+                    finish({ ok: true, payload });
+                }
+            };
+
+            const inspectBuffer = (chunk) => {
+                pending += chunk;
+                const lines = pending.split(/\r?\n/);
+                pending = lines.pop() || '';
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    try {
+                        handlePayload(JSON.parse(line));
+                    } catch (_) {}
+                }
+            };
+
+            const timer = setTimeout(() => {
+                finish({
+                    ok: false,
+                    errorMessage: `Timed out while waiting for ${requestPayload.method}`,
+                });
+            }, timeoutMs);
+
+            try {
+                child = spawn(serverConfig.command, Array.isArray(serverConfig.args) ? serverConfig.args : [], {
+                    cwd: app.getPath('home'),
+                    env: { ...process.env, ...(serverConfig.env || {}) },
+                    windowsHide: true,
+                    stdio: ['pipe', 'pipe', 'pipe'],
+                });
+            } catch (error) {
+                finish({
+                    ok: false,
+                    errorMessage: error.message || 'Failed to start MCP server',
+                });
+                return;
+            }
+
+            child.stdout.on('data', (chunk) => {
+                const text = chunk.toString('utf8');
+                stdout += text;
+                inspectBuffer(text);
+            });
+            child.stderr.on('data', (chunk) => {
+                stderr += chunk.toString('utf8');
+            });
+            child.on('error', (error) => {
+                finish({
+                    ok: false,
+                    errorMessage: error.message || 'MCP server failed to start',
+                });
+            });
+            child.on('exit', () => {
+                if (pending.trim()) inspectBuffer('\n');
+                finish({
+                    ok: false,
+                    errorMessage: (stderr || stdout || 'MCP server exited before returning a response').slice(0, 300),
+                });
+            });
+
+            send({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'initialize',
+                params: {
+                    protocolVersion: '2024-11-05',
+                    capabilities: {},
+                    clientInfo: { name: 'Claude Desktop CN', version: 'local' },
+                },
+            });
+        });
     }
 
     async function testMcpServer(serverConfig) {
@@ -2845,131 +3271,94 @@ function initServer(mainWindow) {
                 lastToolScanMessage: 'Missing command',
             };
         }
-
-        const { spawn } = require('child_process');
-        return new Promise((resolve) => {
-            let stdout = '';
-            let stderr = '';
-            let finished = false;
-            let child = null;
-            const finish = (result) => {
-                if (finished) return;
-                finished = true;
-                clearTimeout(timer);
-                try {
-                    if (child && !child.killed) child.kill();
-                } catch (_) {}
-                resolve(result);
+        const response = await runStdioMcpRequest(serverConfig, {
+            jsonrpc: '2.0',
+            id: 2,
+            method: 'tools/list',
+            params: {},
+        }, { timeoutMs: 10000 });
+        if (!response.ok) {
+            return {
+                ok: false,
+                tools: [],
+                toolCount: 0,
+                lastToolScanAt: now,
+                lastToolScanStatus: 'error',
+                lastToolScanMessage: response.errorMessage || 'tools/list failed',
             };
-            const timer = setTimeout(() => {
-                finish({
-                    ok: false,
-                    tools: [],
-                    toolCount: 0,
-                    lastToolScanAt: now,
-                    lastToolScanStatus: 'error',
-                    lastToolScanMessage: 'Timed out while asking the MCP server for tools',
-                });
-            }, 8000);
+        }
+        const tools = normalizeMcpTools(response.payload && response.payload.result && response.payload.result.tools);
+        return {
+            ok: true,
+            tools,
+            toolCount: tools.length,
+            lastToolScanAt: now,
+            lastToolScanStatus: 'ok',
+            lastToolScanMessage: `${tools.length} tools discovered`,
+        };
+    }
 
-            try {
-                child = spawn(serverConfig.command, Array.isArray(serverConfig.args) ? serverConfig.args : [], {
-                    cwd: app.getPath('home'),
-                    env: { ...process.env, ...(serverConfig.env || {}) },
-                    windowsHide: true,
-                    stdio: ['pipe', 'pipe', 'pipe'],
-                });
-            } catch (error) {
-                finish({
-                    ok: false,
-                    tools: [],
-                    toolCount: 0,
-                    lastToolScanAt: now,
-                    lastToolScanStatus: 'error',
-                    lastToolScanMessage: error.message || 'Failed to start MCP server',
-                });
-                return;
-            }
-
-            const inspectBuffer = () => {
-                const lines = String(stdout || '').split(/\r?\n/).filter(Boolean);
-                for (const line of lines) {
-                    try {
-                        const payload = JSON.parse(line);
-                        if (payload && payload.id === 2) {
-                            if (payload.error) {
-                                finish({
-                                    ok: false,
-                                    tools: [],
-                                    toolCount: 0,
-                                    lastToolScanAt: now,
-                                    lastToolScanStatus: 'error',
-                                    lastToolScanMessage: payload.error.message || 'tools/list failed',
-                                });
-                                return;
-                            }
-                            const tools = normalizeMcpTools(payload.result && payload.result.tools);
-                            finish({
-                                ok: true,
-                                tools,
-                                toolCount: tools.length,
-                                lastToolScanAt: now,
-                                lastToolScanStatus: 'ok',
-                                lastToolScanMessage: `${tools.length} tools discovered`,
-                            });
-                            return;
-                        }
-                    } catch (_) {}
-                }
+    async function callMcpServerTool(serverConfig, toolName, toolArguments) {
+        if (serverConfig.type === 'http') {
+            return {
+                ok: false,
+                supported: false,
+                message: 'HTTP MCP tool calls are not wired yet in this build. Use stdio servers for now.',
+                toolName,
+                arguments: toolArguments || {},
+                result: null,
+                resultPreview: '',
+                durationMs: 0,
             };
-
-            child.stdout.on('data', (chunk) => {
-                stdout += chunk.toString('utf8');
-                inspectBuffer();
-            });
-            child.stderr.on('data', (chunk) => {
-                stderr += chunk.toString('utf8');
-            });
-            child.on('error', (error) => {
-                finish({
-                    ok: false,
-                    tools: [],
-                    toolCount: 0,
-                    lastToolScanAt: now,
-                    lastToolScanStatus: 'error',
-                    lastToolScanMessage: error.message || 'MCP server failed to start',
-                });
-            });
-            child.on('exit', () => {
-                inspectBuffer();
-                finish({
-                    ok: false,
-                    tools: [],
-                    toolCount: 0,
-                    lastToolScanAt: now,
-                    lastToolScanStatus: 'error',
-                    lastToolScanMessage: (stderr || stdout || 'MCP server exited before returning tools').slice(0, 300),
-                });
-            });
-
-            const send = (payload) => {
-                try {
-                    child.stdin.write(JSON.stringify(payload) + '\n');
-                } catch (_) {}
+        }
+        if (!serverConfig.command) {
+            return {
+                ok: false,
+                supported: true,
+                message: 'Missing command',
+                toolName,
+                arguments: toolArguments || {},
+                result: null,
+                resultPreview: '',
+                durationMs: 0,
             };
-            send({
-                jsonrpc: '2.0',
-                id: 1,
-                method: 'initialize',
-                params: {
-                    protocolVersion: '2024-11-05',
-                    capabilities: {},
-                    clientInfo: { name: 'Claude Desktop CN', version: 'local' },
-                },
-            });
-            send({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
-            send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
-        });
+        }
+        const normalizedArgs = toolArguments && typeof toolArguments === 'object' && !Array.isArray(toolArguments)
+            ? toolArguments
+            : {};
+        const response = await runStdioMcpRequest(serverConfig, {
+            jsonrpc: '2.0',
+            id: 3,
+            method: 'tools/call',
+            params: {
+                name: toolName,
+                arguments: normalizedArgs,
+            },
+        }, { timeoutMs: 15000 });
+        if (!response.ok) {
+            return {
+                ok: false,
+                supported: true,
+                message: response.errorMessage || 'tools/call failed',
+                toolName,
+                arguments: normalizedArgs,
+                result: null,
+                resultPreview: '',
+                durationMs: response.durationMs || 0,
+            };
+        }
+        const toolResult = response.payload && response.payload.result ? response.payload.result : {};
+        const isError = !!toolResult.isError;
+        return {
+            ok: !isError,
+            supported: true,
+            message: isError ? (summarizeMcpResult(toolResult) || 'Tool returned an error') : 'Tool call completed',
+            toolName,
+            arguments: normalizedArgs,
+            result: toolResult,
+            resultPreview: summarizeMcpResult(toolResult),
+            durationMs: response.durationMs || 0,
+        };
     }
 
     server.get('/api/mcp/servers', (_req, res) => {
@@ -3060,9 +3449,39 @@ function initServer(mainWindow) {
             lastToolScanStatus: result.lastToolScanStatus,
             lastToolScanMessage: result.lastToolScanMessage,
         };
-        appendMcpToolAudit(servers[index], result);
+        appendMcpToolAudit(servers[index], {
+            action: 'discover_tools',
+            decision: result.lastToolScanStatus === 'ok'
+                ? 'discovered'
+                : result.lastToolScanStatus === 'unsupported'
+                    ? 'unsupported'
+                    : 'failed',
+            toolCount: result.toolCount || 0,
+            message: result.lastToolScanMessage || '',
+        });
         saveMcpServers(servers);
         res.json({ server: servers[index], result, servers });
+    });
+
+    server.post('/api/mcp/servers/:id/call', async (req, res) => {
+        const { id } = req.params;
+        const { toolName, arguments: toolArguments } = req.body || {};
+        if (!toolName) return res.status(400).json({ error: 'toolName is required' });
+        const servers = readMcpServers();
+        const index = servers.findIndex(item => item.id === id);
+        if (index < 0) return res.status(404).json({ error: 'MCP server not found' });
+        const result = await callMcpServerTool(servers[index], String(toolName), toolArguments);
+        appendMcpToolAudit(servers[index], {
+            action: 'call_tool',
+            decision: result.ok ? 'succeeded' : result.supported === false ? 'unsupported' : 'failed',
+            toolCount: 1,
+            toolName: result.toolName,
+            argumentsPreview: summarizeMcpValue(result.arguments),
+            resultPreview: result.resultPreview || '',
+            durationMs: result.durationMs || 0,
+            message: result.message || '',
+        });
+        res.json({ server: servers[index], result });
     });
 
     // Get all enabled skills with full content (for UseSkill tool)
@@ -3716,6 +4135,32 @@ You have the following skills available. When a user's request matches a skill's
         return fs.existsSync(path.join(workspaceRoot, 'package.json')) ? 'npm' : '';
     }
 
+    function buildScriptRunCommand(packageManager, scriptName) {
+        if (!scriptName) return '';
+        if (packageManager === 'npm' || !packageManager) return `npm run ${scriptName}`;
+        if (packageManager === 'bun') return `bun run ${scriptName}`;
+        return `${packageManager} ${scriptName}`;
+    }
+
+    function buildInstallCommand(packageManager) {
+        if (packageManager === 'yarn') return 'yarn install';
+        if (packageManager === 'pnpm') return 'pnpm install';
+        if (packageManager === 'bun') return 'bun install';
+        return 'npm install';
+    }
+
+    function uniqueHealthCommands(items) {
+        const seen = new Set();
+        return (Array.isArray(items) ? items : [])
+            .filter(item => item && typeof item.command === 'string' && item.command.trim())
+            .filter(item => {
+                const key = item.command.trim().toLowerCase();
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+    }
+
     async function buildCodeWorkspaceHealth(workspaceRoot) {
         const packageJson = readPackageJsonSafe(workspaceRoot);
         const packageManager = detectPackageManager(workspaceRoot);
@@ -3761,24 +4206,207 @@ You have the following skills available. When a user's request matches a skill's
         });
 
         const scripts = packageJson?.scripts && typeof packageJson.scripts === 'object' ? packageJson.scripts : {};
+        const scriptNames = Object.keys(scripts);
         checks.push({
             id: 'scripts',
             label: 'Runnable scripts',
-            status: Object.keys(scripts).length ? 'ok' : 'warning',
-            detail: Object.keys(scripts).length ? Object.keys(scripts).slice(0, 8).join(', ') : 'No npm scripts detected',
+            status: scriptNames.length ? 'ok' : 'warning',
+            detail: scriptNames.length ? scriptNames.slice(0, 8).join(', ') : 'No npm scripts detected',
         });
 
-        const suggestedCommands = [
+        const lockfiles = [
+            { name: 'pnpm-lock.yaml', manager: 'pnpm' },
+            { name: 'yarn.lock', manager: 'yarn' },
+            { name: 'bun.lockb', manager: 'bun' },
+            { name: 'package-lock.json', manager: 'npm' },
+        ].filter(item => fs.existsSync(path.join(workspaceRoot, item.name)));
+        const lockfileNames = lockfiles.map(item => item.name);
+        const hasNodeModules = fs.existsSync(path.join(workspaceRoot, 'node_modules'));
+        const hasDependencies = !!(packageJson && (
+            (packageJson.dependencies && Object.keys(packageJson.dependencies).length) ||
+            (packageJson.devDependencies && Object.keys(packageJson.devDependencies).length)
+        ));
+        const packageManagerField = typeof packageJson?.packageManager === 'string' ? packageJson.packageManager.trim() : '';
+        const packageManagerHint = packageManagerField.split('@')[0] || '';
+        const expectedScripts = [];
+        if (packageJson) {
+            expectedScripts.push('build');
+            if (hasVite || hasElectron) expectedScripts.push('dev');
+            if (hasTsConfig) expectedScripts.push('typecheck');
+            expectedScripts.push('test');
+        }
+        const missingExpectedScripts = expectedScripts.filter(name => !scripts[name]);
+        const envTemplate = ['.env.example', '.env.sample', '.env.local.example', '.env.development.example']
+            .find(name => fs.existsSync(path.join(workspaceRoot, name))) || '';
+        const hasEnvFile = ['.env', '.env.local', '.env.development']
+            .some(name => fs.existsSync(path.join(workspaceRoot, name)));
+        const changedFilesCount = Array.isArray(gitStatus?.files) ? gitStatus.files.length : 0;
+
+        checks.push({
+            id: 'dependencies',
+            label: 'Installed dependencies',
+            status: !packageJson || !hasDependencies
+                ? 'ok'
+                : hasNodeModules
+                    ? 'ok'
+                    : 'warning',
+            detail: !packageJson
+                ? 'No package manifest to install'
+                : !hasDependencies
+                    ? 'No package dependencies declared'
+                    : hasNodeModules
+                        ? 'node_modules detected'
+                        : 'package.json exists but node_modules is missing',
+        });
+
+        checks.push({
+            id: 'lockfile',
+            label: 'Lockfile',
+            status: !packageJson
+                ? 'ok'
+                : lockfiles.length === 1
+                    ? 'ok'
+                    : lockfiles.length > 1
+                        ? 'warning'
+                        : 'warning',
+            detail: !packageJson
+                ? 'Not required for this workspace'
+                : lockfiles.length === 1
+                    ? `${lockfiles[0].name} detected`
+                    : lockfiles.length > 1
+                        ? `Multiple lockfiles detected: ${lockfileNames.join(', ')}`
+                        : 'No lockfile detected in workspace root',
+        });
+
+        checks.push({
+            id: 'package-manager',
+            label: 'Package manager consistency',
+            status: !packageManagerField || !packageManager || packageManagerHint === packageManager ? 'ok' : 'warning',
+            detail: !packageManagerField
+                ? `Detected from files: ${packageManager || 'unknown'}`
+                : !packageManager
+                    ? `package.json declares ${packageManagerField}`
+                    : packageManagerHint === packageManager
+                        ? `${packageManagerField} matches ${packageManager}`
+                        : `package.json declares ${packageManagerField}, but lockfile suggests ${packageManager}`,
+        });
+
+        checks.push({
+            id: 'script-coverage',
+            label: 'Script coverage',
+            status: !packageJson || missingExpectedScripts.length === 0 ? 'ok' : 'warning',
+            detail: !packageJson
+                ? 'No package scripts expected'
+                : missingExpectedScripts.length
+                    ? `Missing common scripts: ${missingExpectedScripts.slice(0, 4).join(', ')}`
+                    : 'Common project scripts are present',
+        });
+
+        checks.push({
+            id: 'env-template',
+            label: 'Environment template',
+            status: !envTemplate || hasEnvFile ? 'ok' : 'warning',
+            detail: !envTemplate
+                ? 'No env template found'
+                : hasEnvFile
+                    ? `${envTemplate} template is paired with a local env file`
+                    : `${envTemplate} exists but no .env file was found`,
+        });
+
+        checks.push({
+            id: 'git-working-tree',
+            label: 'Working tree',
+            status: !gitStatus?.isRepo || gitStatus.clean ? 'ok' : changedFilesCount > 30 ? 'warning' : 'ok',
+            detail: !gitStatus?.isRepo
+                ? 'Git audit disabled outside repositories'
+                : gitStatus.clean
+                    ? 'Working tree clean'
+                    : `${changedFilesCount} file${changedFilesCount === 1 ? '' : 's'} pending review`,
+        });
+
+        const fixes = [];
+        if (packageJson && hasDependencies && !hasNodeModules) {
+            fixes.push({
+                id: 'install-dependencies',
+                severity: 'warning',
+                title: 'Install project dependencies',
+                detail: 'node_modules is missing, so scripts and type checks may fail until dependencies are installed.',
+                command: buildInstallCommand(packageManager),
+            });
+        }
+        if (packageJson && lockfiles.length === 0) {
+            fixes.push({
+                id: 'generate-lockfile',
+                severity: 'warning',
+                title: 'Create a lockfile',
+                detail: 'A lockfile keeps local installs reproducible and makes build failures easier to debug.',
+                command: buildInstallCommand(packageManager),
+            });
+        }
+        if (lockfiles.length > 1) {
+            fixes.push({
+                id: 'clean-lockfiles',
+                severity: 'warning',
+                title: 'Keep only one package manager lockfile',
+                detail: `Multiple lockfiles were found: ${lockfileNames.join(', ')}. Clean up stale lockfiles before the next install.`,
+            });
+        }
+        if (packageManagerField && packageManager && packageManagerHint && packageManagerHint !== packageManager) {
+            fixes.push({
+                id: 'align-package-manager',
+                severity: 'warning',
+                title: 'Align package manager declaration',
+                detail: `package.json declares ${packageManagerField}, but the workspace lockfile points to ${packageManager}.`,
+            });
+        }
+        if (missingExpectedScripts.length > 0) {
+            fixes.push({
+                id: 'cover-common-scripts',
+                severity: 'info',
+                title: 'Fill in common project scripts',
+                detail: `Missing common scripts: ${missingExpectedScripts.slice(0, 4).join(', ')}.`,
+            });
+        }
+        if (envTemplate && !hasEnvFile) {
+            fixes.push({
+                id: 'copy-env-template',
+                severity: 'warning',
+                title: 'Create a local env file',
+                detail: `${envTemplate} exists, but no local .env file was detected.`,
+                command: process.platform === 'win32'
+                    ? `Copy-Item ${envTemplate} .env`
+                    : `cp ${envTemplate} .env`,
+            });
+        }
+        if (gitStatus?.isRepo && !gitStatus.clean) {
+            fixes.push({
+                id: 'review-working-tree',
+                severity: changedFilesCount > 30 ? 'warning' : 'info',
+                title: 'Review workspace changes before running destructive commands',
+                detail: gitStatus.diffStat || gitStatus.summary || 'The repository has local changes pending review.',
+                command: 'git status --short --branch',
+            });
+        }
+
+        const suggestedCommands = uniqueHealthCommands([
             { label: 'List files', command: process.platform === 'win32' ? 'dir' : 'ls -la' },
             { label: 'Git status', command: 'git status --short --branch' },
-            ...Object.keys(scripts).slice(0, 6).map(name => ({
-                label: `npm ${name}`,
-                command: `${packageManager || 'npm'} ${packageManager === 'npm' ? 'run ' : ''}${name}`.trim(),
+            ...fixes.filter(item => item.command).map(item => ({
+                label: item.title,
+                command: item.command,
             })),
-        ];
+            ...scriptNames.slice(0, 6).map(name => ({
+                label: `npm ${name}`,
+                command: buildScriptRunCommand(packageManager, name),
+            })),
+        ]).slice(0, 8);
 
         const warnings = checks.filter(item => item.status !== 'ok').map(item => item.detail);
-        const score = Math.max(25, Math.round((checks.filter(item => item.status === 'ok').length / checks.length) * 100));
+        const okCount = checks.filter(item => item.status === 'ok').length;
+        const warningCount = checks.filter(item => item.status === 'warning').length;
+        const errorCount = checks.filter(item => item.status === 'error').length;
+        const rawScore = ((okCount * 1) + (warningCount * 0.45)) / Math.max(checks.length, 1);
+        const score = Math.max(20, Math.round(rawScore * 100) - (errorCount * 8));
         return {
             workspacePath: workspaceRoot,
             checkedAt: new Date().toISOString(),
@@ -3786,8 +4414,9 @@ You have the following skills available. When a user's request matches a skill's
             packageManager,
             score,
             checks,
-            scripts: Object.keys(scripts).map(name => ({ name, command: scripts[name] })),
+            scripts: scriptNames.map(name => ({ name, command: scripts[name] })),
             suggestedCommands,
+            fixes,
             warnings,
         };
     }

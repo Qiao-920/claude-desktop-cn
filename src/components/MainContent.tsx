@@ -82,16 +82,26 @@ function getStoredSkillDescriptionLanguage(): SkillDescriptionLanguage {
   return getStoredUiLanguage() === 'zh-CN' ? 'zh-CN' : 'en';
 }
 
-function getSkillMenuDescription(skill: { name?: string; description?: string }, language: SkillDescriptionLanguage) {
-  if (language === 'zh-CN') return getSkillSummaryZh(skill.name, skill.description);
+function getSkillMenuDescription(skill: { name?: string; description?: string; descriptionZh?: string }, language: SkillDescriptionLanguage) {
+  if (language === 'zh-CN') return skill.descriptionZh || getSkillSummaryZh(skill.name, skill.description);
   return skill.description || 'Specialized skill';
 }
 
+function getSkillMenuProjectExample(
+  skill: { projectBindings?: string[]; triggerExamples?: string[] },
+  projectId: string | null
+) {
+  if (!projectId) return '';
+  if (!Array.isArray(skill.projectBindings) || !skill.projectBindings.includes(projectId)) return '';
+  if (!Array.isArray(skill.triggerExamples) || skill.triggerExamples.length === 0) return '';
+  return skill.triggerExamples[0] || '';
+}
+
 // Blue skill tag shown in chat messages (hover shows tooltip)
-const SkillTag: React.FC<{ slug: string; description?: string }> = ({ slug, description }) => {
+const SkillTag: React.FC<{ slug: string; description?: string; descriptionZh?: string }> = ({ slug, description, descriptionZh }) => {
   const [hover, setHover] = useState(false);
   const isZh = getStoredUiLanguage() === 'zh-CN';
-  const summary = isZh ? getSkillSummaryZh(slug, description) : (description || 'A specialized skill for focused tasks.');
+  const summary = isZh ? (descriptionZh || getSkillSummaryZh(slug, description)) : (description || 'A specialized skill for focused tasks.');
   return (
     <span className="relative inline" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
       <span className={`text-[#4B9EFA] font-medium cursor-default transition-colors ${hover ? 'bg-[#4B9EFA]/10 rounded px-0.5 -mx-0.5' : ''}`}>
@@ -1549,7 +1559,14 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
     return () => clearTimeout(t);
   }, [webSearchToast]);
   const [showSkillsSubmenu, setShowSkillsSubmenu] = useState(false);
-  const [enabledSkills, setEnabledSkills] = useState<Array<{ id: string; name: string; description?: string }>>([]);
+  const [enabledSkills, setEnabledSkills] = useState<Array<{
+    id: string;
+    name: string;
+    description?: string;
+    descriptionZh?: string;
+    projectBindings?: string[];
+    triggerExamples?: string[];
+  }>>([]);
   const [selectedSkill, setSelectedSkill] = useState<{ name: string; slug: string; description?: string } | null>(null);
   const [skillDescriptionLanguage, setSkillDescriptionLanguage] = useState<SkillDescriptionLanguage>(() => getStoredSkillDescriptionLanguage());
   const plusMenuRef = useRef<HTMLDivElement>(null);
@@ -1569,6 +1586,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
   const [showGithubModal, setShowGithubModal] = useState(false);
   const [hasSubscription, setHasSubscription] = useState<boolean | null>(null); // null = loading
   const [contextInfo, setContextInfo] = useState<{ tokens: number; limit: number } | null>(null);
+  const effectiveSkillProjectId = currentProjectId || pendingProjectId || null;
 
   // AskUserQuestion state
   const [askUserDialog, setAskUserDialog] = useState<{
@@ -1662,12 +1680,29 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
     if (!showPlusMenu) { setShowSkillsSubmenu(false); setShowProjectsSubmenu(false); return; }
     getSkills().then((data: any) => {
       const all = [...(data.examples || []), ...(data.my_skills || [])];
-      setEnabledSkills(all.filter((s: any) => s.enabled).map((s: any) => ({ id: s.id, name: s.name, description: s.description })));
+      setEnabledSkills(all.filter((s: any) => s.enabled).map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        description: s.description,
+        descriptionZh: s.descriptionZh,
+        projectBindings: Array.isArray(s.projectBindings) ? s.projectBindings : [],
+        triggerExamples: Array.isArray(s.triggerExamples) ? s.triggerExamples : [],
+      })));
     }).catch(() => {});
     getProjects().then((data: Project[]) => {
       setProjectList((data || []).filter(p => !p.is_archived));
     }).catch(() => {});
   }, [showPlusMenu]);
+
+  const orderedEnabledSkills = useMemo(() => {
+    const projectId = effectiveSkillProjectId;
+    return [...enabledSkills].sort((a, b) => {
+      const aBound = !!(projectId && Array.isArray(a.projectBindings) && a.projectBindings.includes(projectId));
+      const bBound = !!(projectId && Array.isArray(b.projectBindings) && b.projectBindings.includes(projectId));
+      if (aBound !== bBound) return aBound ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+  }, [effectiveSkillProjectId, enabledSkills]);
 
   useEffect(() => {
     const syncSkillDescriptionLanguage = () => {
@@ -2467,6 +2502,26 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
       setProjectAddToast(`Will add to ${project.name} on send`);
       setTimeout(() => setProjectAddToast(null), 2500);
     }
+  };
+
+  const handleInsertSkillFromMenu = (skill: {
+    id: string;
+    name: string;
+    description?: string;
+    descriptionZh?: string;
+    projectBindings?: string[];
+    triggerExamples?: string[];
+  }) => {
+    setShowPlusMenu(false);
+    setShowSkillsSubmenu(false);
+    const slug = skill.name.toLowerCase().replace(/\s+/g, '-');
+    const example = getSkillMenuProjectExample(skill, effectiveSkillProjectId);
+    setSelectedSkill({ name: skill.name, slug, description: skill.descriptionZh || skill.description });
+    setInputText((prev) => {
+      if (prev) return `/${slug} ${prev}`;
+      return example ? `/${slug} ${example}` : `/${slug} `;
+    });
+    inputRef.current?.focus();
   };
 
   const handleCreateProjectFromMenu = async () => {
@@ -4022,25 +4077,34 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                         </button>
                         {showSkillsSubmenu && (
                           <div className="absolute left-full bottom-0 w-[220px] bg-claude-input border border-claude-border rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.12)] py-1.5 z-50 max-h-[30vh] overflow-y-auto">
-                            {enabledSkills.length > 0 ? enabledSkills.map(skill => (
+                            {orderedEnabledSkills.length > 0 ? orderedEnabledSkills.map(skill => {
+                              const boundToProject = !!(effectiveSkillProjectId && Array.isArray(skill.projectBindings) && skill.projectBindings.includes(effectiveSkillProjectId));
+                              const projectExample = getSkillMenuProjectExample(skill, effectiveSkillProjectId);
+                              return (
                               <button
                                 key={skill.id}
-                                onClick={() => {
-                                  setShowPlusMenu(false); setShowSkillsSubmenu(false);
-                                  const slug = skill.name.toLowerCase().replace(/\s+/g, '-');
-                                  setSelectedSkill({ name: skill.name, slug, description: skill.description });
-                                  setInputText(prev => prev ? `/${slug} ${prev}` : `/${slug} `);
-                                  inputRef.current?.focus();
-                                }}
+                                onClick={() => handleInsertSkillFromMenu(skill)}
                                 title={getSkillMenuDescription(skill, skillDescriptionLanguage)}
                                 className="w-full text-left px-4 py-2.5 text-[13px] text-claude-text hover:bg-claude-hover transition-colors"
                               >
-                                <div className="font-medium truncate">{skill.name}</div>
+                                <div className="flex items-center gap-2">
+                                  <div className="font-medium truncate">{skill.name}</div>
+                                  {boundToProject && (
+                                    <span className="rounded border border-[#2E7CF6]/35 bg-[#2E7CF6]/12 px-1.5 py-0.5 text-[10px] text-[#2E7CF6]">
+                                      {uiLanguage === 'zh-CN' ? '当前项目' : 'This project'}
+                                    </span>
+                                  )}
+                                </div>
                                 <div className="mt-1 text-[11px] leading-4 text-claude-textSecondary whitespace-normal">
                                   {getSkillMenuDescription(skill, skillDescriptionLanguage)}
                                 </div>
+                                {projectExample && (
+                                  <div className="mt-1 line-clamp-2 text-[10px] leading-4 text-[#6EA8FF] whitespace-normal">
+                                    {uiLanguage === 'zh-CN' ? `示例：${projectExample}` : `Example: ${projectExample}`}
+                                  </div>
+                                )}
                               </button>
-                            )) : (
+                            )}) : (
                               <div className="px-4 py-2 text-[12px] text-claude-textSecondary italic">
                                 {uiLanguage === 'zh-CN' ? '暂无启用技能' : 'No skills enabled'}
                               </div>
@@ -4376,28 +4440,36 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                             </div>
                             <ChevronDown size={14} className="text-claude-textSecondary -rotate-90" />
                           </button>
-                          {showSkillsSubmenu && enabledSkills.length > 0 && (
+                          {showSkillsSubmenu && orderedEnabledSkills.length > 0 && (
                             <div className="absolute left-full bottom-0 w-[220px] bg-claude-input border border-claude-border rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.12)] py-1.5 z-50 max-h-[30vh] overflow-y-auto">
-                              {enabledSkills.map(skill => (
+                              {orderedEnabledSkills.map(skill => {
+                                const boundToProject = !!(effectiveSkillProjectId && Array.isArray(skill.projectBindings) && skill.projectBindings.includes(effectiveSkillProjectId));
+                                const projectExample = getSkillMenuProjectExample(skill, effectiveSkillProjectId);
+                                return (
                                 <button
                                   key={skill.id}
-                                  onClick={() => {
-                                    setShowPlusMenu(false);
-                                    setShowSkillsSubmenu(false);
-                                    const slug = skill.name.toLowerCase().replace(/\s+/g, '-');
-                                    setSelectedSkill({ name: skill.name, slug, description: skill.description });
-                                    setInputText(prev => prev ? `/${slug} ${prev}` : `/${slug} `);
-                                    inputRef.current?.focus();
-                                  }}
+                                  onClick={() => handleInsertSkillFromMenu(skill)}
                                   title={getSkillMenuDescription(skill, skillDescriptionLanguage)}
                                   className="w-full text-left px-4 py-2.5 text-[13px] text-claude-text hover:bg-claude-hover transition-colors"
                                 >
-                                  <div className="font-medium truncate">{skill.name}</div>
+                                  <div className="flex items-center gap-2">
+                                    <div className="font-medium truncate">{skill.name}</div>
+                                    {boundToProject && (
+                                      <span className="rounded border border-[#2E7CF6]/35 bg-[#2E7CF6]/12 px-1.5 py-0.5 text-[10px] text-[#2E7CF6]">
+                                        {uiLanguage === 'zh-CN' ? '当前项目' : 'This project'}
+                                      </span>
+                                    )}
+                                  </div>
                                   <div className="mt-1 text-[11px] leading-4 text-claude-textSecondary whitespace-normal">
                                     {getSkillMenuDescription(skill, skillDescriptionLanguage)}
                                   </div>
+                                  {projectExample && (
+                                    <div className="mt-1 line-clamp-2 text-[10px] leading-4 text-[#6EA8FF] whitespace-normal">
+                                      {uiLanguage === 'zh-CN' ? `示例：${projectExample}` : `Example: ${projectExample}`}
+                                    </div>
+                                  )}
                                 </button>
-                              ))}
+                              )})}
                               <div className="border-t border-claude-border mt-1 pt-1">
                                 <button
                                   onClick={() => {
@@ -4413,7 +4485,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                               </div>
                             </div>
                           )}
-                          {showSkillsSubmenu && enabledSkills.length === 0 && (
+                          {showSkillsSubmenu && orderedEnabledSkills.length === 0 && (
                             <div className="absolute left-full bottom-0 w-[220px] bg-claude-input border border-claude-border rounded-xl shadow-[0_4px_16px_rgba(0,0,0,0.12)] py-1.5 z-50">
                               <div className="px-4 py-2 text-[12px] text-claude-textSecondary italic">
                                 {uiLanguage === 'zh-CN' ? '暂无启用技能' : 'No skills enabled'}

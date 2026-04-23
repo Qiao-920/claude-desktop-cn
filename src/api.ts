@@ -581,6 +581,14 @@ export interface CodeWorkspaceHealthCheck {
   detail: string;
 }
 
+export interface CodeWorkspaceHealthFix {
+  id: string;
+  severity: 'info' | 'warning' | 'error';
+  title: string;
+  detail: string;
+  command?: string;
+}
+
 export interface CodeWorkspaceHealthResult {
   workspacePath: string;
   checkedAt: string;
@@ -590,6 +598,7 @@ export interface CodeWorkspaceHealthResult {
   checks: CodeWorkspaceHealthCheck[];
   scripts: Array<{ name: string; command: string }>;
   suggestedCommands: Array<{ label: string; command: string }>;
+  fixes: CodeWorkspaceHealthFix[];
   warnings: string[];
 }
 
@@ -1432,6 +1441,17 @@ export async function updateSkill(id: string, data: { name?: string; description
   return res.json();
 }
 
+export async function updateSkillMetadata(
+  id: string,
+  data: { projectBindings?: string[]; triggerExamples?: string[] }
+) {
+  const res = await request(`/skills/${id}/meta`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
 export async function deleteSkill(id: string) {
   const res = await request(`/skills/${id}`, { method: 'DELETE' });
   return res.json();
@@ -1468,7 +1488,9 @@ export interface McpServerConfig {
 
 export interface McpToolInfo {
   name: string;
+  title?: string;
   description?: string;
+  inputSchema?: Record<string, any> | null;
 }
 
 export interface McpToolAuditEntry {
@@ -1477,9 +1499,13 @@ export interface McpToolAuditEntry {
   serverId: string;
   serverName: string;
   serverType: McpServerConfig['type'];
-  action: 'discover_tools';
-  decision: 'discovered' | 'failed' | 'unsupported';
+  action: 'discover_tools' | 'call_tool';
+  decision: 'discovered' | 'failed' | 'unsupported' | 'succeeded';
   toolCount: number;
+  toolName?: string;
+  argumentsPreview?: string;
+  resultPreview?: string;
+  durationMs?: number;
   message?: string;
 }
 
@@ -1521,6 +1547,18 @@ export async function testMcpServer(id: string): Promise<{ server: McpServerConf
 export async function discoverMcpServerTools(id: string): Promise<{ server: McpServerConfig; result: any; servers: McpServerConfig[] }> {
   const res = await request(`/mcp/servers/${encodeURIComponent(id)}/tools`, {
     method: 'POST',
+  });
+  return res.json();
+}
+
+export async function callMcpServerTool(
+  id: string,
+  toolName: string,
+  args: Record<string, any>
+): Promise<{ server: McpServerConfig; result: any }> {
+  const res = await request(`/mcp/servers/${encodeURIComponent(id)}/call`, {
+    method: 'POST',
+    body: JSON.stringify({ toolName, arguments: args }),
   });
   return res.json();
 }
