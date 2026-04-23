@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { startTransition, useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation, useParams, useNavigate } from 'react-router-dom';
-import { FileText, ChevronDown, Trash, Pencil, Star, BellRing, Menu, Folder, ArrowLeft, ArrowRight, HelpCircle, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Settings } from 'lucide-react';
+import { FileText, ChevronDown, Trash, Pencil, Star, BellRing, Menu, Folder, ArrowLeft, ArrowRight, HelpCircle, MessageSquarePlus, MessageSquareText, PanelLeftClose, PanelLeftOpen, Plus, Settings, UsersRound, Code2, X } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 import MainContent from './components/MainContent';
 import { IconSidebarToggle } from './components/Icons';
@@ -69,6 +69,113 @@ class PageErrorBoundary extends React.Component<
     return this.props.children;
   }
 }
+
+type DesktopTabMode = 'chat' | 'cowork' | 'code';
+
+type DesktopWorkspaceTab = {
+  id: string;
+  mode: DesktopTabMode;
+  title: string;
+  customTitle?: string;
+  pinned?: boolean;
+  path: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+const DESKTOP_TABS_STORAGE_KEY = 'desktop_workspace_tabs_v1';
+const DESKTOP_ACTIVE_TAB_STORAGE_KEY = 'desktop_workspace_active_tab_v1';
+
+const makeDesktopTabId = () => `desk-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+
+const isDesktopWorkspacePath = (pathname: string) => pathname === '/' || pathname.startsWith('/chat/') || pathname === '/cowork' || pathname === '/code';
+
+const getDesktopTabModeFromPath = (pathname: string): DesktopTabMode => {
+  if (pathname === '/cowork') return 'cowork';
+  if (pathname === '/code') return 'code';
+  return 'chat';
+};
+
+const getDesktopDefaultPath = (mode: DesktopTabMode) => {
+  if (mode === 'cowork') return '/cowork';
+  if (mode === 'code') return '/code';
+  return '/';
+};
+
+const withDesktopTabQuery = (pathname: string, search: string, tabId: string) => {
+  const params = new URLSearchParams(search);
+  params.set('tab', tabId);
+  const nextSearch = params.toString();
+  return `${pathname}${nextSearch ? `?${nextSearch}` : ''}`;
+};
+
+const getDesktopTabTitle = (mode: DesktopTabMode, pathname: string, chatTitle?: string) => {
+  if (mode === 'cowork') return '协作';
+  if (mode === 'code') return '代码';
+  if (pathname.startsWith('/chat/')) return chatTitle?.trim() || '聊天会话';
+  return '新聊天';
+};
+
+const buildDesktopWorkspaceTab = (mode: DesktopTabMode, path: string, title?: string, tabId?: string): DesktopWorkspaceTab => {
+  const now = Date.now();
+  return {
+    id: tabId || makeDesktopTabId(),
+    mode,
+    title: title || getDesktopTabTitle(mode, getDesktopDefaultPath(mode)),
+    path,
+    createdAt: now,
+    updatedAt: now,
+  };
+};
+
+const readStoredDesktopTabs = (): DesktopWorkspaceTab[] => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DESKTOP_TABS_STORAGE_KEY) || '[]');
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((item): item is DesktopWorkspaceTab => {
+      return !!item && typeof item.id === 'string' && typeof item.mode === 'string' && typeof item.title === 'string' && typeof item.path === 'string';
+    });
+  } catch {
+    return [];
+  }
+};
+
+const getDesktopTabLabel = (tab: DesktopWorkspaceTab) => tab.customTitle?.trim() || tab.title;
+
+const sortDesktopTabsForDisplay = (tabs: DesktopWorkspaceTab[]) => {
+  const pinned = tabs.filter((tab) => !!tab.pinned);
+  const normal = tabs.filter((tab) => !tab.pinned);
+  return [...pinned, ...normal];
+};
+
+const reorderDesktopWorkspaceTabGroup = (
+  tabs: DesktopWorkspaceTab[],
+  sourceId: string,
+  targetId: string,
+) => {
+  const sourceTab = tabs.find((tab) => tab.id === sourceId);
+  const targetTab = tabs.find((tab) => tab.id === targetId);
+  if (!sourceTab || !targetTab || !!sourceTab.pinned !== !!targetTab.pinned) {
+    return tabs;
+  }
+  return reorderDesktopWorkspaceTabs(tabs, sourceId, targetId);
+};
+
+const reorderDesktopWorkspaceTabs = (
+  tabs: DesktopWorkspaceTab[],
+  sourceId: string,
+  targetId: string,
+) => {
+  if (sourceId === targetId) return tabs;
+  const sourceIndex = tabs.findIndex((tab) => tab.id === sourceId);
+  const targetIndex = tabs.findIndex((tab) => tab.id === targetId);
+  if (sourceIndex < 0 || targetIndex < 0) return tabs;
+
+  const nextTabs = [...tabs];
+  const [moved] = nextTabs.splice(sourceIndex, 1);
+  nextTabs.splice(targetIndex, 0, moved);
+  return nextTabs;
+};
 
 const ChatHeader = ({
   title,
@@ -373,13 +480,51 @@ const Layout = () => {
 
   const location = useLocation();
   const navigate = useNavigate();
+  const [desktopTabs, setDesktopTabs] = useState<DesktopWorkspaceTab[]>(() => {
+    const saved = readStoredDesktopTabs();
+    if (saved.length > 0) return saved;
+    const tabId = makeDesktopTabId();
+    return [buildDesktopWorkspaceTab('chat', withDesktopTabQuery('/', '', tabId), '新聊天', tabId)];
+  });
+  const [activeDesktopTabId, setActiveDesktopTabId] = useState(() => localStorage.getItem(DESKTOP_ACTIVE_TAB_STORAGE_KEY) || '');
+  const [desktopTabMenu, setDesktopTabMenu] = useState<{ tabId: string; x: number; y: number } | null>(null);
+  const [renamingDesktopTabId, setRenamingDesktopTabId] = useState<string | null>(null);
+  const [desktopTabRenameValue, setDesktopTabRenameValue] = useState('');
+  const [draggedDesktopTabId, setDraggedDesktopTabId] = useState<string | null>(null);
+  const [dragOverDesktopTabId, setDragOverDesktopTabId] = useState<string | null>(null);
   const isCodeRoute = location.pathname === '/code';
   const isCoworkRoute = location.pathname === '/cowork';
   const isChatRoute = !isCodeRoute && !isCoworkRoute;
+  const currentDesktopTabId = useMemo(() => new URLSearchParams(location.search).get('tab') || '', [location.search]);
+  const visibleDesktopTabs = useMemo(() => sortDesktopTabsForDisplay(desktopTabs), [desktopTabs]);
+  const desktopTabStripRef = useRef<HTMLDivElement>(null);
+  const desktopTabRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const closeTransientPanels = useCallback(() => {
+    setShowSettings(false);
+    setShowUpgrade(false);
+    setDocumentPanelDoc(null);
+    setShowArtifacts(false);
+  }, []);
 
   useEffect(() => {
     setShowAppMenu(false);
   }, [location.pathname, showSettings, showUpgrade]);
+
+  useEffect(() => {
+    if (!desktopTabMenu) return;
+    const closeMenu = () => setDesktopTabMenu(null);
+    document.addEventListener('mousedown', closeMenu);
+    return () => document.removeEventListener('mousedown', closeMenu);
+  }, [desktopTabMenu]);
+
+  useEffect(() => {
+    const activeTabId = currentDesktopTabId || activeDesktopTabId;
+    if (!activeTabId) return;
+    const strip = desktopTabStripRef.current;
+    const node = desktopTabRefs.current[activeTabId];
+    if (!strip || !node) return;
+    node.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+  }, [currentDesktopTabId, activeDesktopTabId, visibleDesktopTabs.map((tab) => `${tab.id}:${tab.pinned ? 1 : 0}`).join('|')]);
 
   // Navigation history for back/forward buttons
   const [navHistory, setNavHistory] = useState<string[]>([location.pathname + location.search + location.hash]);
@@ -424,11 +569,286 @@ const Layout = () => {
   };
 
   useEffect(() => {
-    setShowSettings(false);
-    setShowUpgrade(false);
-    setDocumentPanelDoc(null);
-    setShowArtifacts(false);
-  }, [location.pathname]);
+    localStorage.setItem(DESKTOP_TABS_STORAGE_KEY, JSON.stringify(desktopTabs.slice(0, 12)));
+  }, [desktopTabs]);
+
+  useEffect(() => {
+    if (activeDesktopTabId) {
+      localStorage.setItem(DESKTOP_ACTIVE_TAB_STORAGE_KEY, activeDesktopTabId);
+    }
+  }, [activeDesktopTabId]);
+
+  useEffect(() => {
+    if (!isDesktopWorkspacePath(location.pathname)) return;
+
+    const syncedTabId = currentDesktopTabId || activeDesktopTabId || makeDesktopTabId();
+    const ensuredPath = withDesktopTabQuery(location.pathname, location.search, syncedTabId);
+    const fullPath = `${location.pathname}${location.search}`;
+    if (fullPath !== ensuredPath) {
+      startTransition(() => {
+        navigate(ensuredPath, { replace: true });
+      });
+      return;
+    }
+
+    const mode = getDesktopTabModeFromPath(location.pathname);
+    const title = getDesktopTabTitle(mode, location.pathname, mode === 'chat' ? currentChatTitle : undefined);
+    setActiveDesktopTabId(syncedTabId);
+    setDesktopTabs((current) => {
+      const existing = current.find((tab) => tab.id === syncedTabId);
+      if (!existing) {
+        return [...current, buildDesktopWorkspaceTab(mode, ensuredPath, title, syncedTabId)];
+      }
+      return current.map((tab) =>
+        tab.id === syncedTabId
+          ? {
+              ...tab,
+              mode,
+              path: ensuredPath,
+              title: mode === 'chat' && currentChatTitle.trim() ? currentChatTitle : title,
+              updatedAt: Date.now(),
+            }
+          : tab,
+      );
+    });
+  }, [location.pathname, location.search, currentDesktopTabId, activeDesktopTabId, currentChatTitle, navigate]);
+
+  useEffect(() => {
+    if (!currentDesktopTabId) return;
+    const mode = getDesktopTabModeFromPath(location.pathname);
+    const nextTitle = getDesktopTabTitle(mode, location.pathname, mode === 'chat' ? currentChatTitle : undefined);
+    setDesktopTabs((current) =>
+      current.map((tab) =>
+        tab.id === currentDesktopTabId
+          ? {
+              ...tab,
+              title: nextTitle,
+              updatedAt: Date.now(),
+            }
+          : tab,
+      ),
+    );
+  }, [currentDesktopTabId, currentChatTitle, location.pathname]);
+
+  useEffect(() => {
+    if (!isDesktopWorkspacePath(location.pathname) || getDesktopTabModeFromPath(location.pathname) !== 'chat') return;
+    setCurrentChatTitle('');
+  }, [location.pathname, currentDesktopTabId]);
+
+  const openDesktopTab = useCallback((tab: DesktopWorkspaceTab) => {
+    closeTransientPanels();
+    setDesktopTabMenu(null);
+    setActiveDesktopTabId(tab.id);
+    startTransition(() => {
+      navigate(tab.path);
+    });
+  }, [closeTransientPanels, navigate]);
+
+  const createDesktopTab = useCallback((mode: DesktopTabMode) => {
+    closeTransientPanels();
+    setDesktopTabMenu(null);
+    const tabId = makeDesktopTabId();
+    const targetPath = withDesktopTabQuery(getDesktopDefaultPath(mode), '', tabId);
+    const nextTab = buildDesktopWorkspaceTab(mode, targetPath, getDesktopTabTitle(mode, getDesktopDefaultPath(mode)), tabId);
+    setDesktopTabs((current) => [...current, nextTab]);
+    setActiveDesktopTabId(tabId);
+    if (mode === 'chat') {
+      setNewChatKey((prev) => prev + 1);
+      setRefreshTrigger((prev) => prev + 1);
+    }
+    startTransition(() => {
+      navigate(targetPath);
+    });
+  }, [closeTransientPanels, navigate]);
+
+  const switchDesktopMode = useCallback((mode: DesktopTabMode) => {
+    closeTransientPanels();
+    setDesktopTabMenu(null);
+    const targetTabId = currentDesktopTabId || activeDesktopTabId;
+    if (!targetTabId) {
+      createDesktopTab(mode);
+      return;
+    }
+    const targetPath = withDesktopTabQuery(getDesktopDefaultPath(mode), '', targetTabId);
+    setDesktopTabs((current) => {
+      const existing = current.find((tab) => tab.id === targetTabId);
+      const nextTitle = getDesktopTabTitle(mode, getDesktopDefaultPath(mode));
+      if (!existing) return [...current, buildDesktopWorkspaceTab(mode, targetPath, nextTitle, targetTabId)];
+      return current.map((tab) =>
+        tab.id === targetTabId
+          ? {
+              ...tab,
+              mode,
+              path: targetPath,
+              title: nextTitle,
+              updatedAt: Date.now(),
+            }
+          : tab,
+      );
+    });
+    setActiveDesktopTabId(targetTabId);
+    if (mode === 'chat') {
+      setNewChatKey((prev) => prev + 1);
+    }
+    startTransition(() => {
+      navigate(targetPath);
+    });
+  }, [closeTransientPanels, createDesktopTab, currentDesktopTabId, activeDesktopTabId, navigate]);
+
+  const closeDesktopTab = useCallback((tabId: string) => {
+    const currentTabs = desktopTabs;
+    const closingIndex = currentTabs.findIndex((tab) => tab.id === tabId);
+    if (closingIndex < 0) return;
+
+    const remaining = currentTabs.filter((tab) => tab.id !== tabId);
+    const nextTabs = remaining.length > 0
+      ? remaining
+      : (() => {
+          const nextId = makeDesktopTabId();
+          return [buildDesktopWorkspaceTab('chat', withDesktopTabQuery('/', '', nextId), '新聊天', nextId)];
+        })();
+    const fallbackTab = nextTabs[Math.min(closingIndex, nextTabs.length - 1)];
+    setDesktopTabs(nextTabs);
+
+    const closingActive = (currentDesktopTabId || activeDesktopTabId) === tabId;
+    if (closingActive) {
+      setActiveDesktopTabId(fallbackTab.id);
+      closeTransientPanels();
+      startTransition(() => {
+        navigate(fallbackTab.path);
+      });
+    }
+  }, [desktopTabs, currentDesktopTabId, activeDesktopTabId, closeTransientPanels, navigate]);
+
+  const startDesktopTabRename = useCallback((tabId: string) => {
+    const targetTab = desktopTabs.find((tab) => tab.id === tabId);
+    if (!targetTab) return;
+    setDesktopTabMenu(null);
+    setRenamingDesktopTabId(tabId);
+    setDesktopTabRenameValue(getDesktopTabLabel(targetTab));
+  }, [desktopTabs]);
+
+  const submitDesktopTabRename = useCallback((tabId: string) => {
+    const nextValue = desktopTabRenameValue.trim();
+    setDesktopTabs((current) =>
+      current.map((tab) =>
+        tab.id === tabId
+          ? {
+              ...tab,
+              customTitle: nextValue || undefined,
+              updatedAt: Date.now(),
+            }
+          : tab,
+      ),
+    );
+    setRenamingDesktopTabId(null);
+    setDesktopTabRenameValue('');
+  }, [desktopTabRenameValue]);
+
+  const closeOtherDesktopTabs = useCallback((tabId: string) => {
+    const targetTab = desktopTabs.find((tab) => tab.id === tabId);
+    if (!targetTab) return;
+    setDesktopTabMenu(null);
+    setDesktopTabs([targetTab]);
+    setActiveDesktopTabId(targetTab.id);
+    if ((currentDesktopTabId || activeDesktopTabId) !== targetTab.id) {
+      startTransition(() => {
+        navigate(targetTab.path);
+      });
+    }
+  }, [desktopTabs, currentDesktopTabId, activeDesktopTabId, navigate]);
+
+  const closeDesktopTabsToRight = useCallback((tabId: string) => {
+    const currentTabs = desktopTabs;
+    const targetIndex = currentTabs.findIndex((tab) => tab.id === tabId);
+    if (targetIndex < 0 || targetIndex === currentTabs.length - 1) {
+      setDesktopTabMenu(null);
+      return;
+    }
+    const nextTabs = currentTabs.slice(0, targetIndex + 1);
+    const activeStillExists = nextTabs.some((tab) => tab.id === (currentDesktopTabId || activeDesktopTabId));
+    setDesktopTabMenu(null);
+    setDesktopTabs(nextTabs);
+    if (!activeStillExists) {
+      const fallbackTab = nextTabs[targetIndex];
+      setActiveDesktopTabId(fallbackTab.id);
+      startTransition(() => {
+        navigate(fallbackTab.path);
+      });
+    }
+  }, [desktopTabs, currentDesktopTabId, activeDesktopTabId, navigate]);
+
+  const handleDesktopTabDrop = useCallback((targetTabId: string) => {
+    if (!draggedDesktopTabId || draggedDesktopTabId === targetTabId) {
+      setDraggedDesktopTabId(null);
+      setDragOverDesktopTabId(null);
+      return;
+    }
+    setDesktopTabs((current) => reorderDesktopWorkspaceTabGroup(current, draggedDesktopTabId, targetTabId));
+    setDraggedDesktopTabId(null);
+    setDragOverDesktopTabId(null);
+  }, [draggedDesktopTabId]);
+
+  const toggleDesktopTabPinned = useCallback((tabId: string) => {
+    setDesktopTabMenu(null);
+    setDesktopTabs((current) => {
+      const target = current.find((tab) => tab.id === tabId);
+      if (!target) return current;
+
+      const updated = current.map((tab) =>
+        tab.id === tabId
+          ? {
+              ...tab,
+              pinned: !tab.pinned,
+              updatedAt: Date.now(),
+            }
+          : tab,
+      );
+
+      const nextTarget = updated.find((tab) => tab.id === tabId);
+      if (!nextTarget) return updated;
+
+      const rest = updated.filter((tab) => tab.id !== tabId);
+      if (nextTarget.pinned) {
+        const insertIndex = rest.findIndex((tab) => !tab.pinned);
+        if (insertIndex < 0) return [...rest, nextTarget];
+        return [...rest.slice(0, insertIndex), nextTarget, ...rest.slice(insertIndex)];
+      }
+
+      const lastPinnedIndex = rest.reduce((acc, tab, index) => (tab.pinned ? index : acc), -1);
+      return [...rest.slice(0, lastPinnedIndex + 1), nextTarget, ...rest.slice(lastPinnedIndex + 1)];
+    });
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey) return;
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        const currentId = currentDesktopTabId || activeDesktopTabId;
+        const tabs = visibleDesktopTabs;
+        if (tabs.length <= 1) return;
+        const currentIndex = tabs.findIndex((tab) => tab.id === currentId);
+        const delta = event.shiftKey ? -1 : 1;
+        const nextIndex = currentIndex < 0
+          ? 0
+          : (currentIndex + delta + tabs.length) % tabs.length;
+        openDesktopTab(tabs[nextIndex]);
+        return;
+      }
+      if (event.key.toLowerCase() === 't') {
+        event.preventDefault();
+        createDesktopTab('chat');
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [currentDesktopTabId, activeDesktopTabId, visibleDesktopTabs, openDesktopTab, createDesktopTab]);
+
+  useEffect(() => {
+    closeTransientPanels();
+  }, [location.pathname, location.search, closeTransientPanels]);
 
   // Listen for open-upgrade event from MainContent paywall
   useEffect(() => {
@@ -541,12 +961,7 @@ const Layout = () => {
   };
 
   const handleNewChat = () => {
-    setNewChatKey(prev => prev + 1);
-    setRefreshTrigger(prev => prev + 1);
-    setShowSettings(false);
-    setShowUpgrade(false);
-    setDocumentPanelDoc(null);
-    setShowArtifacts(false);
+    createDesktopTab('chat');
   };
 
   const handleOpenDocument = useCallback((doc: DocumentInfo) => {
@@ -771,7 +1186,7 @@ const Layout = () => {
           >
             <Tooltip text="Chat" shortcut="Ctrl+1">
               <button
-                onClick={() => navigate('/')}
+                onClick={() => switchDesktopMode('chat')}
                 className={`px-3.5 py-1 text-[13px] font-medium rounded-[10px] transition-colors ${isChatRoute ? 'text-claude-text shadow-sm' : 'text-claude-textSecondary hover:text-claude-text'}`}
                 style={{ backgroundColor: isChatRoute ? 'var(--bg-mode-tab-active)' : 'transparent', fontFamily: 'Inter, system-ui, -apple-system, sans-serif', letterSpacing: '0.01em' }}
               >
@@ -780,7 +1195,7 @@ const Layout = () => {
             </Tooltip>
             <Tooltip text="Cowork" shortcut="Ctrl+2">
               <button
-                onClick={() => navigate('/cowork')}
+                onClick={() => switchDesktopMode('cowork')}
                 className={`px-3.5 py-1 text-[13px] font-medium rounded-[10px] transition-colors ${isCoworkRoute ? 'text-claude-text shadow-sm' : 'text-claude-textSecondary hover:text-claude-text'}`}
                 style={{ backgroundColor: isCoworkRoute ? 'var(--bg-mode-tab-active)' : 'transparent', fontFamily: 'Inter, system-ui, -apple-system, sans-serif', letterSpacing: '0.01em' }}
               >
@@ -789,7 +1204,7 @@ const Layout = () => {
             </Tooltip>
             <Tooltip text="Code" shortcut="Ctrl+3">
               <button
-                onClick={() => navigate('/code')}
+                onClick={() => switchDesktopMode('code')}
                 className={`px-3.5 py-1 text-[13px] font-medium rounded-[10px] transition-colors ${isCodeRoute ? 'text-claude-text shadow-sm' : 'text-claude-textSecondary hover:text-claude-text'}`}
                 style={{ backgroundColor: isCodeRoute ? 'var(--bg-mode-tab-active)' : 'transparent', fontFamily: 'Inter, system-ui, -apple-system, sans-serif', letterSpacing: '0.01em' }}
               >
@@ -813,6 +1228,150 @@ const Layout = () => {
 
         {/* Unified Content Wrapper - takes remaining space after sidebar */}
         <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden relative" style={{ paddingTop: `${titleBarHeight}px` }}>
+          <div className="flex h-[44px] items-center gap-2 border-b border-claude-border bg-claude-bg px-3">
+            <div ref={desktopTabStripRef} className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+              {visibleDesktopTabs.map((tab) => {
+                const isActive = tab.id === (currentDesktopTabId || activeDesktopTabId);
+                const Icon = tab.mode === 'code' ? Code2 : tab.mode === 'cowork' ? UsersRound : MessageSquareText;
+                return (
+                  <div
+                    key={tab.id}
+                    ref={(node) => {
+                      desktopTabRefs.current[tab.id] = node;
+                    }}
+                    draggable
+                    onDragStart={() => setDraggedDesktopTabId(tab.id)}
+                    onDragEnd={() => {
+                      setDraggedDesktopTabId(null);
+                      setDragOverDesktopTabId(null);
+                    }}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      setDragOverDesktopTabId(tab.id);
+                    }}
+                    onDragLeave={() => {
+                      if (dragOverDesktopTabId === tab.id) {
+                        setDragOverDesktopTabId(null);
+                      }
+                    }}
+                    onDrop={() => handleDesktopTabDrop(tab.id)}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      setDesktopTabMenu({ tabId: tab.id, x: event.clientX, y: event.clientY });
+                    }}
+                    className={`group flex min-w-0 max-w-[260px] items-center gap-2 rounded-xl border px-3 py-1.5 text-left transition-all duration-150 ${
+                      isActive
+                        ? 'border-[#2E7CF6]/45 bg-[#2E7CF6]/12 text-claude-text shadow-sm'
+                        : 'border-transparent bg-claude-input text-claude-textSecondary hover:border-claude-border hover:text-claude-text'
+                    } ${draggedDesktopTabId === tab.id ? 'scale-[0.98] opacity-60 shadow-none' : ''} ${dragOverDesktopTabId === tab.id && draggedDesktopTabId !== tab.id ? 'border-[#2E7CF6]/55 shadow-[0_0_0_1px_rgba(46,124,246,0.28)]' : ''}`}
+                  >
+                    <button
+                      onClick={() => openDesktopTab(tab)}
+                      onDoubleClick={() => startDesktopTabRename(tab.id)}
+                      className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                    >
+                      {tab.pinned && <Star size={12} className="flex-shrink-0 text-amber-300" />}
+                      <Icon size={14} className={isActive ? 'text-[#6EA8FF]' : 'text-claude-textSecondary'} />
+                      {renamingDesktopTabId === tab.id ? (
+                        <input
+                          autoFocus
+                          value={desktopTabRenameValue}
+                          onClick={(event) => event.stopPropagation()}
+                          onChange={(event) => setDesktopTabRenameValue(event.target.value)}
+                          onBlur={() => submitDesktopTabRename(tab.id)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              submitDesktopTabRename(tab.id);
+                            } else if (event.key === 'Escape') {
+                              setRenamingDesktopTabId(null);
+                              setDesktopTabRenameValue('');
+                            }
+                          }}
+                          className="w-full min-w-0 rounded-md border border-[#2E7CF6]/45 bg-transparent px-1.5 py-0.5 text-[13px] font-medium text-claude-text outline-none"
+                        />
+                      ) : (
+                        <span className="truncate text-[13px] font-medium">{getDesktopTabLabel(tab)}</span>
+                      )}
+                    </button>
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        closeDesktopTab(tab.id);
+                      }}
+                      className="ml-1 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md text-claude-textSecondary opacity-0 transition-opacity hover:bg-black/5 hover:text-claude-text group-hover:opacity-100 dark:hover:bg-white/5"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <Tooltip text="New workspace tab" shortcut="Ctrl+T">
+              <button
+                onClick={() => createDesktopTab('chat')}
+                className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-claude-border bg-claude-input text-claude-textSecondary transition-colors hover:text-claude-text"
+              >
+                <Plus size={15} />
+              </button>
+            </Tooltip>
+          </div>
+          {desktopTabMenu && (() => {
+            const menuTab = desktopTabs.find((tab) => tab.id === desktopTabMenu.tabId);
+            if (!menuTab) return null;
+            return (
+              <div
+                className="fixed z-[120] w-[220px] overflow-hidden rounded-2xl border border-claude-border bg-claude-input p-1.5 shadow-[0_18px_40px_rgba(0,0,0,0.28)]"
+                style={{ left: Math.max(12, desktopTabMenu.x - 8), top: Math.max(12, desktopTabMenu.y + 4) }}
+                onClick={(event) => event.stopPropagation()}
+              >
+                <button
+                  onClick={() => startDesktopTabRename(menuTab.id)}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] text-claude-text hover:bg-claude-hover"
+                >
+                  <Pencil size={15} className="text-claude-textSecondary" />
+                  重命名标签
+                </button>
+                <button
+                  onClick={() => toggleDesktopTabPinned(menuTab.id)}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] text-claude-text hover:bg-claude-hover"
+                >
+                  <Star size={15} className="text-claude-textSecondary" />
+                  {menuTab.pinned ? '取消固定标签' : '固定标签'}
+                </button>
+                <button
+                  onClick={() => createDesktopTab(menuTab.mode)}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] text-claude-text hover:bg-claude-hover"
+                >
+                  <Plus size={15} className="text-claude-textSecondary" />
+                  新建同类标签
+                </button>
+                <div className="my-1 h-px bg-claude-border" />
+                <button
+                  onClick={() => closeOtherDesktopTabs(menuTab.id)}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] text-claude-text hover:bg-claude-hover"
+                >
+                  <PanelLeftOpen size={15} className="text-claude-textSecondary" />
+                  关闭其他标签
+                </button>
+                <button
+                  onClick={() => closeDesktopTabsToRight(menuTab.id)}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] text-claude-text hover:bg-claude-hover"
+                >
+                  <ArrowRight size={15} className="text-claude-textSecondary" />
+                  关闭右侧标签
+                </button>
+                <div className="my-1 h-px bg-claude-border" />
+                <button
+                  onClick={() => closeDesktopTab(menuTab.id)}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] text-[#C6613F] hover:bg-[#C6613F]/10"
+                >
+                  <Trash size={15} className="text-[#C6613F]" />
+                  关闭标签
+                </button>
+              </div>
+            );
+          })()}
+
           {/* Header - moved to allow conditional placement (Full Width Mode) */}
           {isChatMode && (showArtifacts && !documentPanelDoc) && !showSettings && !showUpgrade && (
             <ChatHeader
@@ -856,7 +1415,7 @@ const Layout = () => {
               ) : location.pathname === '/projects' ? (
                 <ProjectsPage />
               ) : location.pathname === '/cowork' ? (
-                <CoworkPage />
+                <CoworkPage key={`cowork-${currentDesktopTabId || 'default'}`} desktopTabId={currentDesktopTabId || activeDesktopTabId || undefined} />
               ) : location.pathname === '/code' ? (
                 <PageErrorBoundary
                   fallback={(
@@ -870,7 +1429,7 @@ const Layout = () => {
                     </div>
                   )}
                 >
-                  <CodePage />
+                  <CodePage key={`code-${currentDesktopTabId || 'default'}`} desktopTabId={currentDesktopTabId || activeDesktopTabId || undefined} />
                 </PageErrorBoundary>
               ) : location.pathname === '/artifacts' ? (
                 <ArtifactsPage onTryPrompt={(prompt) => {
@@ -885,6 +1444,7 @@ const Layout = () => {
                 }} />
               ) : (
                 <MainContent
+                  key={`chat-${currentDesktopTabId || location.pathname}`}
                   onNewChat={refreshSidebar}
                   resetKey={newChatKey}
                   tunerConfig={tunerConfig}
@@ -893,6 +1453,7 @@ const Layout = () => {
                   onOpenArtifacts={handleOpenArtifacts}
                   onTitleChange={handleTitleChange}
                   onChatModeChange={handleChatModeChange}
+                  desktopTabId={currentDesktopTabId || activeDesktopTabId || undefined}
                 />
               )}
             </div>

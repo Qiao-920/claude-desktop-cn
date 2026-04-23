@@ -285,17 +285,24 @@ const isDangerousCommand = (command: string) => {
   ].some((pattern) => pattern.test(normalized));
 };
 
-const CodePage = () => {
+interface CodePageProps {
+  desktopTabId?: string;
+}
+
+const CodePage = ({ desktopTabId }: CodePageProps) => {
   const uiLanguage = getStoredUiLanguage();
   const isZh = uiLanguage === 'zh-CN';
-  const [workspacePath, setWorkspacePath] = useState(() => localStorage.getItem('code_workspace_path') || '');
+  const workspaceStorageKey = desktopTabId ? `code_workspace_path:${desktopTabId}` : 'code_workspace_path';
+  const commandHistoryStorageKey = desktopTabId ? `code_command_history:${desktopTabId}` : 'code_command_history';
+  const commandDraftStorageKey = desktopTabId ? `code_command_draft:${desktopTabId}` : 'code_command_draft';
+  const [workspacePath, setWorkspacePath] = useState(() => localStorage.getItem(workspaceStorageKey) || localStorage.getItem('code_workspace_path') || '');
   const [currentPath, setCurrentPath] = useState('');
   const [parentPath, setParentPath] = useState<string | null>(null);
   const [entries, setEntries] = useState<CodeWorkspaceEntry[]>([]);
   const [selectedFile, setSelectedFile] = useState<CodeFileResult | null>(null);
   const [editorContent, setEditorContent] = useState('');
   const [originalContent, setOriginalContent] = useState('');
-  const [command, setCommand] = useState('');
+  const [command, setCommand] = useState(() => localStorage.getItem(commandDraftStorageKey) || '');
   const [commandHistory, setCommandHistory] = useState<CodeCommandResult[]>([]);
   const [workspaceHealth, setWorkspaceHealth] = useState<CodeWorkspaceHealthResult | null>(null);
   const [commandAudit, setCommandAudit] = useState<CodeCommandAuditEntry[]>([]);
@@ -395,6 +402,7 @@ const CodePage = () => {
   const rememberWorkspacePath = useCallback((nextWorkspacePath: string) => {
     if (!nextWorkspacePath) return;
     const shouldRemember = localStorage.getItem('code_remember_workspace') !== '0';
+    localStorage.setItem(workspaceStorageKey, nextWorkspacePath);
     localStorage.setItem('code_workspace_path', nextWorkspacePath);
     if (!shouldRemember) return;
     try {
@@ -405,27 +413,35 @@ const CodePage = () => {
     } catch {
       localStorage.setItem('code_recent_workspaces', JSON.stringify([nextWorkspacePath]));
     }
-  }, []);
+  }, [workspaceStorageKey]);
 
   useEffect(() => {
     if (localStorage.getItem('code_persist_command_history') === '0') return;
     try {
-      const raw = JSON.parse(localStorage.getItem('code_command_history') || '[]');
+      const raw = JSON.parse(localStorage.getItem(commandHistoryStorageKey) || '[]');
       if (Array.isArray(raw)) {
         setCommandHistory(raw);
       }
     } catch {
       // ignore
     }
-  }, []);
+  }, [commandHistoryStorageKey]);
 
   useEffect(() => {
     if (localStorage.getItem('code_persist_command_history') === '0') {
-      localStorage.removeItem('code_command_history');
+      localStorage.removeItem(commandHistoryStorageKey);
       return;
     }
-    localStorage.setItem('code_command_history', JSON.stringify(commandHistory.slice(0, 12)));
-  }, [commandHistory]);
+    localStorage.setItem(commandHistoryStorageKey, JSON.stringify(commandHistory.slice(0, 12)));
+  }, [commandHistory, commandHistoryStorageKey]);
+
+  useEffect(() => {
+    if (!command.trim()) {
+      localStorage.removeItem(commandDraftStorageKey);
+      return;
+    }
+    localStorage.setItem(commandDraftStorageKey, command);
+  }, [command, commandDraftStorageKey]);
 
   const refreshAgentConfig = useCallback(async () => {
     try {

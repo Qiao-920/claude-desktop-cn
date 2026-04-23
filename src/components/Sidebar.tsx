@@ -109,6 +109,7 @@ const RenameModal = ({ isOpen, onClose, onSave, initialTitle }: RenameModalProps
 const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, onOpenSettings, onOpenUpgrade, onCloseOverlays, tunerConfig, setTunerConfig }: SidebarProps) => {
   const navigate = useNavigate();
   const location = useLocation();
+  const isZh = localStorage.getItem('ui_language') === 'zh-CN';
   const codeJumpUrl = ((import.meta as any).env?.VITE_CODE_JUMP_URL || '/code/').trim();
   const [chats, setChats] = useState<any[]>([]);
   const [activeMenuIndex, setActiveMenuIndex] = useState<number | null>(null);
@@ -161,6 +162,22 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
   const userMenuRef = useRef<HTMLDivElement>(null);
   const userBtnRef = useRef<HTMLButtonElement>(null);
 
+  const groupedRecents = React.useMemo(() => {
+    const limited = chats.slice(0, 30).map((chat, index) => ({ chat, index }));
+    const sections: Array<{ label: string; projectName?: string | null; items: Array<{ chat: any; index: number }> }> = [];
+    for (const item of limited) {
+      const projectName = item.chat.project_name || null;
+      const label = projectName || (isZh ? '聊天' : 'Chats');
+      const existing = sections.find((section) => section.label === label);
+      if (existing) {
+        existing.items.push(item);
+      } else {
+        sections.push({ label, projectName, items: [item] });
+      }
+    }
+    return sections;
+  }, [chats, isZh]);
+
   // Map labels to the correct custom icon
   const getIcon = (label: string, size: number) => {
     const className = "dark:invert transition-[filter] duration-200";
@@ -176,7 +193,10 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
   const handleNewChat = () => {
     setIsNewChatAnimating(true);
     setTimeout(() => setIsNewChatAnimating(false), 300);
-    if (onNewChatClick) onNewChatClick();
+    if (onNewChatClick) {
+      onNewChatClick();
+      return;
+    }
     navigate('/');
   };
 
@@ -580,7 +600,61 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
 
           {/* Recents List */}
           <div className={`space-y-0.5 pb-2 transition-all duration-200 ${isCollapsed || isRecentsCollapsed ? 'opacity-0 hidden h-0 overflow-hidden' : 'opacity-100'}`}>
-            {chats.slice(0, 30).map((chat, index) => {
+            {groupedRecents.map((section) => (
+              <div key={section.label} className="space-y-0.5">
+                <div
+                  className="px-3 pt-1 text-[11px] uppercase tracking-[0.08em] text-claude-textSecondary/70"
+                  style={{ paddingLeft: `${tunerConfig?.recentsPl || 12}px` }}
+                >
+                  {section.projectName || (isZh ? '聊天' : 'Chats')}
+                </div>
+                {section.items.map(({ chat, index }) => {
+                  const isActive = location.pathname === `/chat/${chat.id}`;
+                  return (
+                    <div
+                      key={`grouped-${chat.id}`}
+                      onClick={() => { onCloseOverlays?.(); navigate(`/chat/${chat.id}`); }}
+                      className={`
+                        relative group flex items-center w-full rounded-lg transition-colors cursor-pointer min-h-[32px]
+                        ${isActive || activeMenuIndex === index ? 'bg-claude-hover' : 'hover:bg-claude-hover'}
+                      `}
+                      style={{
+                        paddingTop: `${tunerConfig?.recentsItemPy || 6}px`,
+                        paddingBottom: `${tunerConfig?.recentsItemPy || 6}px`,
+                        paddingLeft: `${(tunerConfig?.recentsPl || 12) + 12}px`,
+                        paddingRight: `${tunerConfig?.recentsPl || 12}px`
+                      }}
+                    >
+                      {streamingIds.has(chat.id) && (
+                        <span
+                          className="flex-shrink-0 mr-2 w-[7px] h-[7px] rounded-full bg-neutral-700 dark:bg-neutral-300 animate-pulse"
+                          style={{ animationDuration: '1.6s' }}
+                        />
+                      )}
+                      <div className="flex-1 min-w-0 pr-6">
+                        <div
+                          className="text-claude-text truncate leading-snug"
+                          style={{ fontSize: `${tunerConfig?.recentsFontSize || 13}px` }}
+                        >
+                          {chat.title || 'New Chat'}
+                        </div>
+                      </div>
+
+                      <button
+                        onClick={(e) => handleMenuClick(e, index)}
+                        className={`
+                          absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-claude-textSecondary hover:text-claude-text transition-all
+                          ${activeMenuIndex === index ? 'opacity-100 block' : 'opacity-0 group-hover:opacity-100 hidden group-hover:block'}
+                        `}
+                      >
+                        <IconDotsHorizontal size={16} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+            {false && chats.slice(0, 30).map((chat, index) => {
               const isActive = location.pathname === `/chat/${chat.id}`;
               return (
                 <div

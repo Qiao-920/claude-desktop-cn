@@ -2,12 +2,113 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Search, Plus, ChevronDown, ArrowLeft, MoreVertical, Star, ArrowUp, FileText, Trash, Pencil, MessageSquare, X, Upload, Check, AudioLines, ChevronRight, Archive, Github, RefreshCw, FolderOpen, Copy, GitBranch, Link2 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Paperclip, ListCollapse } from 'lucide-react';
-import { getProjects, createProject, getProject, updateProject, deleteProject, uploadProjectFile, deleteProjectFile, createProjectConversation, deleteConversation, getSkills, Project, ProjectFile, ProjectGithubSource, importProjectGithub, syncProjectGithubSource, updateProjectGithubSource, removeProjectGithubSource, deriveProjectWorkspace } from '../api';
+import { getProjects, createProject, getProject, updateProject, deleteProject, uploadProjectFile, deleteProjectFile, createProjectConversation, deleteConversation, updateConversation, getSkills, Project, ProjectFile, ProjectGithubSource, importProjectGithub, syncProjectGithubSource, updateProjectGithubSource, removeProjectGithubSource, deriveProjectWorkspace } from '../api';
 import ModelSelector, { SelectableModel } from './ModelSelector';
 import { IconPlus } from './Icons';
 import startProjectsImg from '../assets/icons/start-projects.png';
 import AddFromGithubModal, { GithubAddPayload } from './AddFromGithubModal';
 import { copyToClipboard } from '../utils/clipboard';
+
+const getConversationGroupKey = (dateValue?: string) => {
+  if (!dateValue) return 'older';
+  const target = new Date(dateValue);
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfTarget = new Date(target.getFullYear(), target.getMonth(), target.getDate()).getTime();
+  const diffDays = Math.floor((startOfToday - startOfTarget) / (24 * 60 * 60 * 1000));
+  if (diffDays <= 0) return 'today';
+  if (diffDays === 1) return 'yesterday';
+  if (diffDays <= 7) return 'week';
+  return 'older';
+};
+
+const getConversationGroupLabel = (key: string, isZh: boolean) => {
+  if (key === 'today') return isZh ? '今天' : 'Today';
+  if (key === 'yesterday') return isZh ? '昨天' : 'Yesterday';
+  if (key === 'week') return isZh ? '最近 7 天' : 'Last 7 days';
+  return isZh ? '更早' : 'Older';
+};
+
+const formatConversationTime = (value?: string) => {
+  if (!value) return '';
+  const date = new Date(value);
+  return `${date.toLocaleDateString()} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+};
+
+const getTimelineDayLabel = (value: string, isZh: boolean) => {
+  const target = new Date(value);
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfTarget = new Date(target.getFullYear(), target.getMonth(), target.getDate()).getTime();
+  const diffDays = Math.floor((startOfToday - startOfTarget) / (24 * 60 * 60 * 1000));
+  if (diffDays <= 0) return isZh ? '今天' : 'Today';
+  if (diffDays === 1) return isZh ? '昨天' : 'Yesterday';
+  return target.toLocaleDateString();
+};
+
+type ProjectDocDraft = {
+  overview: string;
+  goals: string;
+  stack: string;
+  constraints: string;
+  commands: string;
+  notes: string;
+};
+
+const PROJECT_DOC_SECTIONS: Array<{ key: keyof ProjectDocDraft; title: string }> = [
+  { key: 'overview', title: 'Overview' },
+  { key: 'goals', title: 'Goals' },
+  { key: 'stack', title: 'Tech Stack' },
+  { key: 'constraints', title: 'Constraints' },
+  { key: 'commands', title: 'Commands' },
+  { key: 'notes', title: 'Notes' },
+];
+
+const createEmptyProjectDocDraft = (): ProjectDocDraft => ({
+  overview: '',
+  goals: '',
+  stack: '',
+  constraints: '',
+  commands: '',
+  notes: '',
+});
+
+const normalizeProjectDocText = (value?: string) => (value || '').replace(/\r\n/g, '\n').trim();
+
+const parseProjectDocument = (value?: string): ProjectDocDraft => {
+  const source = normalizeProjectDocText(value);
+  const draft = createEmptyProjectDocDraft();
+
+  if (!source) return draft;
+
+  let matchedSection = false;
+  PROJECT_DOC_SECTIONS.forEach((section) => {
+    const pattern = new RegExp(`##\\s+${section.title}\\s*\\n([\\s\\S]*?)(?=\\n##\\s+|$)`, 'i');
+    const match = source.match(pattern);
+    if (match) {
+      draft[section.key] = normalizeProjectDocText(match[1]);
+      matchedSection = true;
+    }
+  });
+
+  if (!matchedSection) {
+    draft.overview = source;
+  }
+
+  return draft;
+};
+
+const buildProjectDocument = (draft: ProjectDocDraft) => (
+  PROJECT_DOC_SECTIONS
+    .map((section) => {
+      const content = normalizeProjectDocText(draft[section.key]);
+      if (!content) return null;
+      return `## ${section.title}\n${content}`;
+    })
+    .filter(Boolean)
+    .join('\n\n')
+    .trim()
+);
 
 const ProjectsPage = () => {
   const navigate = useNavigate();
@@ -22,6 +123,7 @@ const ProjectsPage = () => {
   const [currentProject, setCurrentProject] = useState<any>(null);
   const [editingInstructions, setEditingInstructions] = useState(false);
   const [instructionsText, setInstructionsText] = useState('');
+  const [projectDocDraft, setProjectDocDraft] = useState<ProjectDocDraft>(createEmptyProjectDocDraft);
   const [uploading, setUploading] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [editingName, setEditingName] = useState(false);
@@ -46,8 +148,15 @@ const ProjectsPage = () => {
   const [syncingSourceId, setSyncingSourceId] = useState<string | null>(null);
   const [projectActionMessage, setProjectActionMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
   const [derivingProjectId, setDerivingProjectId] = useState<string | null>(null);
+  const [conversationActionMenuId, setConversationActionMenuId] = useState<string | null>(null);
   const plusMenuRef = useRef<HTMLDivElement>(null);
   const plusBtnRef = useRef<HTMLButtonElement>(null);
+
+  const hydrateProjectDocEditor = useCallback((projectData: any) => {
+    const parsed = parseProjectDocument(projectData?.instructions || projectData?.description || '');
+    setProjectDocDraft(parsed);
+    setInstructionsText(buildProjectDocument(parsed));
+  }, []);
 
   // Model selector state — load from self-hosted config or use defaults
   const isSelfHostedMode = localStorage.getItem('user_mode') === 'selfhosted';
@@ -136,10 +245,10 @@ const ProjectsPage = () => {
     try {
       const data = await getProject(id);
       setCurrentProject(data);
-      setInstructionsText(data.instructions || '');
+      hydrateProjectDocEditor(data);
       setGithubError(null);
     } catch (_) { }
-  }, []);
+  }, [hydrateProjectDocEditor]);
 
   useEffect(() => {
     const projectId = new URLSearchParams(location.search).get('project');
@@ -153,6 +262,11 @@ const ProjectsPage = () => {
     const timer = window.setTimeout(() => setProjectActionMessage(null), 3200);
     return () => window.clearTimeout(timer);
   }, [projectActionMessage]);
+
+  useEffect(() => {
+    const nextInstructions = buildProjectDocument(projectDocDraft);
+    setInstructionsText((prev) => (prev === nextInstructions ? prev : nextInstructions));
+  }, [projectDocDraft]);
 
   const getCodeWorkspacePath = () => localStorage.getItem('code_workspace_path') || '';
 
@@ -222,7 +336,8 @@ const ProjectsPage = () => {
 
   const handleSaveInstructions = async () => {
     if (!currentProject) return;
-    await updateProject(currentProject.id, { instructions: instructionsText });
+    const nextInstructions = buildProjectDocument(projectDocDraft);
+    await updateProject(currentProject.id, { instructions: nextInstructions });
     setEditingInstructions(false);
     loadProject(currentProject.id);
   };
@@ -282,6 +397,101 @@ const ProjectsPage = () => {
       return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
     });
   }, [projects, searchQuery, sortBy]);
+
+  const groupedProjectConversations = useMemo(() => {
+    if (!currentProject?.conversations) return [];
+    const buckets: Array<{ key: string; label: string; items: any[] }> = [
+      { key: 'today', label: getConversationGroupLabel('today', isZh), items: [] },
+      { key: 'yesterday', label: getConversationGroupLabel('yesterday', isZh), items: [] },
+      { key: 'week', label: getConversationGroupLabel('week', isZh), items: [] },
+      { key: 'older', label: getConversationGroupLabel('older', isZh), items: [] },
+    ];
+    currentProject.conversations.forEach((conv: any) => {
+      const key = getConversationGroupKey(conv.created_at);
+      const bucket = buckets.find((item) => item.key === key);
+      if (bucket) bucket.items.push(conv);
+    });
+    return buckets.filter((bucket) => bucket.items.length > 0);
+  }, [currentProject, isZh]);
+
+  const projectActivityItems = useMemo(() => {
+    if (!currentProject) return [];
+    const parsedDoc = parseProjectDocument(currentProject.instructions || currentProject.description || '');
+    const projectDoc = currentProject.instructions || currentProject.description;
+    const projectSummary = projectDoc ? [{
+      id: `project-${currentProject.id}`,
+      type: 'project',
+      title: isZh ? '项目文档已更新' : 'Project doc updated',
+      detail: parsedDoc.goals || parsedDoc.overview || (isZh ? '继续补目标、约束和常用命令。' : 'Keep enriching goals, constraints, and commands.'),
+      at: currentProject.updated_at,
+    }] : [];
+    const conversations = (currentProject.conversations || []).map((conv: any) => ({
+      id: `conv-${conv.id}`,
+      type: 'chat',
+      title: conv.title || (isZh ? '未命名聊天' : 'Untitled chat'),
+      detail: isZh ? '项目聊天' : 'Project chat',
+      at: conv.created_at,
+    }));
+    const files = (currentProject.files || []).map((file: ProjectFile) => ({
+      id: `file-${file.id}`,
+      type: 'file',
+      title: file.file_name,
+      detail: file.source_type === 'github' ? 'GitHub file' : (isZh ? '项目文件' : 'Project file'),
+      at: file.created_at,
+    }));
+    const sources = (currentProject.github_sources || []).map((source: ProjectGithubSource) => ({
+      id: `source-${source.id}`,
+      type: 'github',
+      title: source.repo_full_name,
+      detail: isZh ? `同步到 ${source.ref}` : `Synced to ${source.ref}`,
+      at: source.last_synced_at || source.added_at,
+    }));
+
+    return [...projectSummary, ...conversations, ...files, ...sources]
+      .filter((item) => item.at)
+      .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+      .slice(0, 8);
+  }, [currentProject, isZh]);
+
+  const currentProjectDoc = useMemo(
+    () => parseProjectDocument(currentProject?.instructions || currentProject?.description || ''),
+    [currentProject?.instructions, currentProject?.description],
+  );
+
+  const projectDocSections = useMemo(() => {
+    const sectionLabels: Record<keyof ProjectDocDraft, string> = {
+      overview: isZh ? '项目概览' : 'Overview',
+      goals: isZh ? '目标' : 'Goals',
+      stack: isZh ? '技术栈' : 'Tech stack',
+      constraints: isZh ? '约束' : 'Constraints',
+      commands: isZh ? '常用命令' : 'Commands',
+      notes: isZh ? '补充备注' : 'Notes',
+    };
+
+    return PROJECT_DOC_SECTIONS.map((section) => ({
+      key: section.key,
+      label: sectionLabels[section.key],
+      value: currentProjectDoc[section.key],
+    })).filter((section) => section.value);
+  }, [currentProjectDoc, isZh]);
+
+  const updateProjectDocField = (key: keyof ProjectDocDraft, value: string) => {
+    setProjectDocDraft((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const groupedProjectTimeline = useMemo(() => {
+    const groups: Array<{ label: string; items: typeof projectActivityItems }> = [];
+    projectActivityItems.forEach((item) => {
+      const label = getTimelineDayLabel(item.at, isZh);
+      const existing = groups.find((group) => group.label === label);
+      if (existing) {
+        existing.items.push(item);
+      } else {
+        groups.push({ label, items: [item] });
+      }
+    });
+    return groups;
+  }, [projectActivityItems, isZh]);
 
   const handleProjectGithubImport = async (payload: GithubAddPayload) => {
     if (!currentProject) return;
@@ -454,6 +664,40 @@ const ProjectsPage = () => {
     }
   };
 
+  const handleCopyConversationId = async (conversationId: string) => {
+    const ok = await copyToClipboard(conversationId);
+    showProjectActionResult(ok ? 'success' : 'error', ok ? (isZh ? '已复制会话 ID' : 'Conversation ID copied') : (isZh ? '复制会话 ID 失败' : 'Failed to copy conversation ID'));
+  };
+
+  const handleCopyConversationDeeplink = async (conversationId: string) => {
+    const base = window.location.href.split('#')[0];
+    const ok = await copyToClipboard(`${base}#/chat/${conversationId}`);
+    showProjectActionResult(ok ? 'success' : 'error', ok ? (isZh ? '已复制聊天 Deeplink' : 'Chat deeplink copied') : (isZh ? '复制聊天 Deeplink 失败' : 'Failed to copy chat deeplink'));
+  };
+
+  const handleOpenConversationWorkspace = (conversation: any) => {
+    if (!conversation?.workspace_path) {
+      showProjectActionResult('error', isZh ? '这个聊天还没有工作区目录' : 'This chat does not have a workspace path');
+      return;
+    }
+    setCodeWorkspacePath(conversation.workspace_path);
+    navigate('/code');
+  };
+
+  const handleDetachConversationFromProject = async (conversationId: string) => {
+    if (!currentProject) return;
+    try {
+      await updateConversation(conversationId, { project_id: null });
+      await loadProject(currentProject.id);
+      await loadProjects();
+      setConversationActionMenuId(null);
+      showProjectActionResult('success', isZh ? '已移出项目聊天分组' : 'Conversation removed from project');
+    } catch (error: any) {
+      console.error(error);
+      showProjectActionResult('error', error?.message || (isZh ? '移出项目失败' : 'Failed to remove conversation from project'));
+    }
+  };
+
   // ═══ Project Detail View ═══
   if (currentProject) {
     return (
@@ -566,11 +810,44 @@ const ProjectsPage = () => {
 
           <div className="mb-4 grid grid-cols-2 gap-3">
             <div className="rounded-[16px] border border-claude-border bg-transparent px-4 py-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-[12px] uppercase tracking-[0.08em] text-claude-textSecondary">{isZh ? '项目文档' : 'Project doc'}</div>
+                <button
+                  onClick={() => {
+                    hydrateProjectDocEditor(currentProject);
+                    setEditingInstructions(true);
+                  }}
+                  className="rounded-lg border border-claude-border px-2.5 py-1 text-[11px] text-claude-text transition-colors hover:bg-claude-hover"
+                >
+                  {isZh ? '编辑文档' : 'Edit doc'}
+                </button>
+              </div>
+                  {projectDocSections.length > 0 ? (
+                <div className="mt-3 space-y-3">
+                  <div className="rounded-[14px] border border-claude-border px-3 py-3 text-[14px] leading-7 text-claude-textSecondary">
+                    {currentProjectDoc.overview || currentProject.description || projectDocSections[0]?.value}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {projectDocSections.filter((section) => section.key !== 'overview').slice(0, 4).map((section) => (
+                      <div key={section.key} className="rounded-[12px] border border-claude-border px-3 py-3">
+                        <div className="text-[11px] uppercase tracking-[0.08em] text-claude-textSecondary">{section.label}</div>
+                        <div className="mt-1 line-clamp-3 text-[13px] leading-6 text-claude-text">{section.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-2 text-[14px] leading-7 text-claude-textSecondary">
+                  {isZh ? '这里还没有项目文档。补充项目目标、约束和常用命令后，这个项目会更像一个长期上下文容器。' : 'This project does not have a document yet. Add goals, constraints, and common commands to turn it into a durable context hub.'}
+                </div>
+              )}
+            </div>
+            {false && <div className="rounded-[16px] border border-claude-border bg-transparent px-4 py-4">
               <div className="text-[12px] uppercase tracking-[0.08em] text-claude-textSecondary">{isZh ? '项目文档' : 'Project doc'}</div>
               <div className="mt-2 text-[14px] leading-7 text-claude-textSecondary">
                 {currentProject.instructions || currentProject.description || (isZh ? '这里还没有项目文档。补充项目目标、约束和常用命令后，这个项目会更像一个长期上下文容器。' : 'This project does not have a document yet. Add goals, constraints, and common commands to turn it into a durable context hub.')}
               </div>
-            </div>
+            </div>}
             <div className="rounded-[16px] border border-claude-border bg-transparent px-4 py-4">
               <div className="text-[12px] uppercase tracking-[0.08em] text-claude-textSecondary">{isZh ? '项目工作区' : 'Project workspace'}</div>
               <div className="mt-2 break-all text-[13px] leading-6 text-claude-text">
@@ -693,8 +970,134 @@ const ProjectsPage = () => {
               </div>
             </div>
 
+            {currentProject.conversations && currentProject.conversations.length > 0 && (
+              <div className="mt-2 grid grid-cols-[1.2fr_0.8fr] gap-4">
+                <div className="border border-claude-border rounded-[16px] overflow-hidden bg-transparent">
+                  <div className="px-5 py-3 text-[13px] font-medium text-claude-textSecondary border-b border-claude-border">
+                    {isZh ? `项目聊天 ${currentProject.conversations.length}` : `${currentProject.conversations.length} project conversations`}
+                  </div>
+                  <div className="divide-y divide-claude-border">
+                    {groupedProjectConversations.map((group) => (
+                      <div key={group.key} className="px-4 py-3">
+                        <div className="px-1 pb-2 text-[11px] uppercase tracking-[0.08em] text-claude-textSecondary">
+                          {group.label}
+                        </div>
+                        <div className="space-y-2">
+                          {group.items.map((conv: any) => (
+                            <div key={conv.id} className="group rounded-[12px] border border-transparent px-3 py-3 transition-colors hover:border-claude-border hover:bg-claude-hover">
+                              <div className="flex items-start gap-3">
+                                <button onClick={() => navigate(`/chat/${conv.id}`)} className="flex min-w-0 flex-1 items-start gap-3 text-left">
+                                  <MessageSquare size={16} className="mt-0.5 flex-shrink-0 text-claude-textSecondary" />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="truncate text-[14px] text-claude-text">{conv.title}</div>
+                                    <div className="mt-1 text-[12px] text-claude-textSecondary">{formatConversationTime(conv.created_at)}</div>
+                                  </div>
+                                </button>
+                                <div className="relative flex items-center gap-1">
+                                  <button onClick={() => setConversationActionMenuId((prev) => prev === conv.id ? null : conv.id)} className="rounded-md p-1 text-claude-textSecondary transition-colors hover:bg-black/5 hover:text-claude-text dark:hover:bg-white/5">
+                                    <MoreVertical size={14} />
+                                  </button>
+                                  <button onClick={(e) => handleDeleteConversation(conv.id, e)} className="rounded-md p-1 text-claude-textSecondary opacity-0 transition-all hover:text-red-500 group-hover:opacity-100" title={isZh ? '删除对话' : 'Delete conversation'}>
+                                    <Trash size={14} />
+                                  </button>
+                                  {conversationActionMenuId === conv.id && (
+                                    <>
+                                      <div className="fixed inset-0 z-40" onClick={() => setConversationActionMenuId(null)} />
+                                      <div className="absolute right-0 top-full z-50 mt-1 w-[220px] rounded-[14px] border border-gray-200 bg-white py-1.5 shadow-[0_4px_24px_rgba(0,0,0,0.15)] dark:border-[#65645F] dark:bg-[#30302E]">
+                                        <button onClick={() => { setConversationActionMenuId(null); navigate(`/chat/${conv.id}`); }} className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-[13px] text-claude-text transition-colors hover:bg-black/5 dark:hover:bg-white/5">
+                                          <MessageSquare size={15} className="text-claude-textSecondary" />
+                                          {isZh ? '打开聊天' : 'Open chat'}
+                                        </button>
+                                        <button onClick={() => { setConversationActionMenuId(null); handleOpenConversationWorkspace(conv); }} className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-[13px] text-claude-text transition-colors hover:bg-black/5 dark:hover:bg-white/5">
+                                          <ChevronRight size={15} className="text-claude-textSecondary" />
+                                          {isZh ? '派生到本地 Code' : 'Derive to local Code'}
+                                        </button>
+                                        <button onClick={() => { setConversationActionMenuId(null); handleCopyConversationId(conv.id); }} className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-[13px] text-claude-text transition-colors hover:bg-black/5 dark:hover:bg-white/5">
+                                          <Copy size={15} className="text-claude-textSecondary" />
+                                          {isZh ? '复制会话 ID' : 'Copy conversation ID'}
+                                        </button>
+                                        <button onClick={() => { setConversationActionMenuId(null); handleCopyConversationDeeplink(conv.id); }} className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-[13px] text-claude-text transition-colors hover:bg-black/5 dark:hover:bg-white/5">
+                                          <Link2 size={15} className="text-claude-textSecondary" />
+                                          {isZh ? '复制 Deeplink' : 'Copy deeplink'}
+                                        </button>
+                                        <div className="my-1.5 border-t border-claude-border opacity-50" />
+                                        <button onClick={() => handleDetachConversationFromProject(conv.id)} className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-[13px] text-[#C6613F] transition-colors hover:bg-[#C6613F]/10">
+                                          <Archive size={15} className="text-[#C6613F]" />
+                                          {isZh ? '移出项目' : 'Remove from project'}
+                                        </button>
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-[16px] border border-claude-border bg-transparent px-4 py-4">
+                  <div className="text-[13px] font-medium text-claude-textSecondary">{isZh ? '项目时间线' : 'Project timeline'}</div>
+                  <div className="mt-3 space-y-3">
+                    {groupedProjectTimeline.map((group) => (
+                      <div key={group.label} className="rounded-[12px] border border-claude-border px-3 py-3">
+                        <div className="text-[11px] uppercase tracking-[0.08em] text-claude-textSecondary">{group.label}</div>
+                        <div className="mt-3 space-y-0">
+                          {group.items.map((item, index) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              onClick={() => {
+                                if (item.type === 'chat' && item.id.startsWith('conv-')) {
+                                  navigate(`/chat/${item.id.replace('conv-', '')}`);
+                                }
+                              }}
+                              className="flex w-full items-start gap-3 text-left"
+                            >
+                              <div className="flex w-6 flex-col items-center pt-0.5">
+                                <span className={`h-2.5 w-2.5 rounded-full ${
+                                  item.type === 'chat'
+                                    ? 'bg-[#C98B6E]'
+                                    : item.type === 'github'
+                                      ? 'bg-[#6E8BC9]'
+                                      : item.type === 'file'
+                                        ? 'bg-emerald-400'
+                                        : 'bg-claude-textSecondary'
+                                }`} />
+                                {index < group.items.length - 1 && (
+                                  <span className="mt-1 min-h-[24px] w-px flex-1 bg-claude-border" />
+                                )}
+                              </div>
+                              <div className="min-w-0 flex-1 pb-4">
+                                <div className="text-[13px] font-medium text-claude-text">{item.title}</div>
+                                <div className="mt-1 text-[12px] leading-6 text-claude-textSecondary">{item.detail}</div>
+                                <div className="mt-2 text-[11px] text-claude-textSecondary">{formatConversationTime(item.at)}</div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                {false && <div className="rounded-[16px] border border-claude-border bg-transparent px-4 py-4">
+                  <div className="text-[13px] font-medium text-claude-textSecondary">{isZh ? '最近活动' : 'Recent activity'}</div>
+                  <div className="mt-3 space-y-3">
+                    {projectActivityItems.map((item) => (
+                      <div key={item.id} className="rounded-[12px] border border-claude-border px-3 py-3">
+                        <div className="text-[13px] font-medium text-claude-text">{item.title}</div>
+                        <div className="mt-1 text-[12px] text-claude-textSecondary">{item.detail}</div>
+                        <div className="mt-2 text-[11px] text-claude-textSecondary">{formatConversationTime(item.at)}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>}
+              </div>
+            )}
+
             {/* Conversation List / Banner */}
-            {currentProject.conversations && currentProject.conversations.length > 0 ? (
+            {false && currentProject.conversations && currentProject.conversations.length > 0 ? (
               <div className="border border-claude-border rounded-[16px] overflow-hidden bg-transparent mt-2">
                 <div className="px-5 py-3 text-[13px] font-medium text-claude-textSecondary border-b border-claude-border">
                   {currentProject.conversations.length} conversation{currentProject.conversations.length > 1 ? 's' : ''}
@@ -733,7 +1136,12 @@ const ProjectsPage = () => {
               {/* Instructions Header */}
               <div
                 className="p-5 border-b border-claude-border hover:bg-black/[0.015] dark:hover:bg-white/[0.015] transition-colors cursor-pointer group"
-                onClick={() => { if (!editingInstructions) setEditingInstructions(true); }}
+                onClick={() => {
+                  if (!editingInstructions) {
+                    hydrateProjectDocEditor(currentProject);
+                    setEditingInstructions(true);
+                  }
+                }}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex-1">
@@ -753,6 +1161,110 @@ const ProjectsPage = () => {
                   )}
                 </div>
                 {editingInstructions && (
+                  <div
+                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
+                    onClick={() => {
+                      setEditingInstructions(false);
+                      hydrateProjectDocEditor(currentProject);
+                    }}
+                  >
+                    <div
+                      className="w-full max-w-[920px] bg-white dark:bg-[#2A2928] border border-claude-border rounded-[20px] shadow-2xl p-7"
+                      onClick={e => e.stopPropagation()}
+                    >
+                      <h2 className="text-[20px] font-bold text-claude-text mb-2">{isZh ? '设置项目文档' : 'Set project document'}</h2>
+                      <p className="text-[14px] text-[#A1A1AA] mb-5">
+                        {isZh
+                          ? <>给 {currentProject.name} 这个项目补充概览、目标、技术栈、约束和常用命令。它会成为项目聊天、项目卡片和后续协作入口共用的长期上下文。</>
+                          : <>Add a durable project brief for {currentProject.name}, including goals, stack, constraints, and common commands.</>}
+                      </p>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="col-span-2">
+                          <label className="mb-2 block text-[13px] font-medium text-claude-textSecondary">{isZh ? '项目概览' : 'Overview'}</label>
+                          <textarea
+                            autoFocus
+                            value={projectDocDraft.overview}
+                            onChange={e => updateProjectDocField('overview', e.target.value)}
+                            placeholder={isZh ? '这个项目是做什么的，当前阶段在推进什么。' : 'What this project is for and what is being worked on right now.'}
+                            className="h-[96px] w-full rounded-[12px] border border-claude-border bg-claude-bg px-4 py-3 text-[14px] text-claude-text outline-none transition-colors focus:border-[#3A7ADA] focus:ring-1 focus:ring-[#3A7ADA]"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-2 block text-[13px] font-medium text-claude-textSecondary">{isZh ? '项目目标' : 'Goals'}</label>
+                          <textarea
+                            value={projectDocDraft.goals}
+                            onChange={e => updateProjectDocField('goals', e.target.value)}
+                            placeholder={isZh ? '例如：补齐 P1、修复预览稳定性、准备下一版发版。' : 'Example: finish P1, harden preview stability, prepare the next release.'}
+                            className="h-[112px] w-full rounded-[12px] border border-claude-border bg-claude-bg px-4 py-3 text-[14px] text-claude-text outline-none transition-colors focus:border-[#3A7ADA] focus:ring-1 focus:ring-[#3A7ADA]"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-2 block text-[13px] font-medium text-claude-textSecondary">{isZh ? '技术栈 / 运行方式' : 'Tech stack / runtime'}</label>
+                          <textarea
+                            value={projectDocDraft.stack}
+                            onChange={e => updateProjectDocField('stack', e.target.value)}
+                            placeholder={isZh ? '例如：Electron + React + Vite，主仓库路径、打包命令、发布方式。' : 'Example: Electron + React + Vite, repo path, build command, release flow.'}
+                            className="h-[112px] w-full rounded-[12px] border border-claude-border bg-claude-bg px-4 py-3 text-[14px] text-claude-text outline-none transition-colors focus:border-[#3A7ADA] focus:ring-1 focus:ring-[#3A7ADA]"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-2 block text-[13px] font-medium text-claude-textSecondary">{isZh ? '约束 / 原则' : 'Constraints / principles'}</label>
+                          <textarea
+                            value={projectDocDraft.constraints}
+                            onChange={e => updateProjectDocField('constraints', e.target.value)}
+                            placeholder={isZh ? '例如：P0 + P1 一起推进，按整块迁移做，优先中文桌面体验。' : 'Example: ship P0 + P1 together, migrate in full slices, prioritize the Chinese desktop UX.'}
+                            className="h-[112px] w-full rounded-[12px] border border-claude-border bg-claude-bg px-4 py-3 text-[14px] text-claude-text outline-none transition-colors focus:border-[#3A7ADA] focus:ring-1 focus:ring-[#3A7ADA]"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-2 block text-[13px] font-medium text-claude-textSecondary">{isZh ? '常用命令' : 'Common commands'}</label>
+                          <textarea
+                            value={projectDocDraft.commands}
+                            onChange={e => updateProjectDocField('commands', e.target.value)}
+                            placeholder={isZh ? '一行一个，例如：npm run build' : 'One per line, for example: npm run build'}
+                            className="h-[132px] w-full rounded-[12px] border border-claude-border bg-claude-bg px-4 py-3 font-mono text-[13px] text-claude-text outline-none transition-colors focus:border-[#3A7ADA] focus:ring-1 focus:ring-[#3A7ADA]"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-2 block text-[13px] font-medium text-claude-textSecondary">{isZh ? '补充备注' : 'Notes'}</label>
+                          <textarea
+                            value={projectDocDraft.notes}
+                            onChange={e => updateProjectDocField('notes', e.target.value)}
+                            placeholder={isZh ? '补充风险、版本目标、引用仓库等额外信息。' : 'Extra context such as risks, release targets, or linked repositories.'}
+                            className="h-[132px] w-full rounded-[12px] border border-claude-border bg-claude-bg px-4 py-3 text-[14px] text-claude-text outline-none transition-colors focus:border-[#3A7ADA] focus:ring-1 focus:ring-[#3A7ADA]"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="mt-5 rounded-[14px] border border-claude-border bg-claude-bg px-4 py-4">
+                        <div className="text-[12px] uppercase tracking-[0.08em] text-claude-textSecondary">{isZh ? '生成的项目指令预览' : 'Generated instruction preview'}</div>
+                        <pre className="mt-3 max-h-[180px] overflow-y-auto whitespace-pre-wrap break-words text-[13px] leading-6 text-claude-textSecondary">
+                          {instructionsText || (isZh ? '补充上面的字段后，这里会生成可复用的项目文档。' : 'Fill the fields above to generate the reusable project brief.')}
+                        </pre>
+                      </div>
+
+                      <div className="flex justify-end gap-3 mt-5">
+                        <button
+                          onClick={() => {
+                            setEditingInstructions(false);
+                            hydrateProjectDocEditor(currentProject);
+                          }}
+                          className="px-4 py-2 text-[14px] font-medium text-claude-text hover:bg-white/5 border border-transparent hover:border-claude-border rounded-xl transition-all"
+                        >
+                          {isZh ? '取消' : 'Cancel'}
+                        </button>
+                        <button
+                          onClick={handleSaveInstructions}
+                          className="px-4 py-2 text-[14px] font-medium bg-[#E6E6E6] text-[#222] rounded-xl hover:opacity-90 transition-opacity"
+                        >
+                          {isZh ? '保存项目文档' : 'Save project doc'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {false && editingInstructions && (
                   <div
                     className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
                     onClick={() => { setEditingInstructions(false); setInstructionsText(currentProject.instructions || ''); }}

@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   Circle,
   Clock3,
+  FileText,
   FolderGit2,
   FolderOpen,
   Github,
@@ -19,7 +20,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getAgentConfig, getGithubStatus, getProjects, Project } from '../api';
+import { getAgentConfig, getGithubStatus, getProject, getProjects, Project } from '../api';
 import { getStoredUiLanguage } from '../utils/chineseClientText';
 
 const formatPermissionLabel = (permissionMode?: string, isZh = true): string => {
@@ -45,6 +46,79 @@ type CoworkTask = {
   status: CoworkTaskStatus;
   source: string;
   updatedAt: string;
+};
+
+type ProjectActivityItem = {
+  id: string;
+  projectId: string;
+  projectName: string;
+  type: 'chat' | 'file' | 'github' | 'project';
+  title: string;
+  detail: string;
+  at: string;
+};
+
+type ProjectDocSummary = {
+  projectId: string;
+  projectName: string;
+  overview: string;
+  goals: string;
+  constraints: string;
+  commands: string[];
+  workspacePath: string;
+  conversationCount: number;
+  fileCount: number;
+  githubCount: number;
+  updatedAt: string;
+};
+
+const normalizeProjectDocText = (value?: string) => (value || '').replace(/\r\n/g, '\n').trim();
+
+const parseProjectDocSections = (value?: string) => {
+  const source = normalizeProjectDocText(value);
+  const sections = {
+    overview: '',
+    goals: '',
+    constraints: '',
+    commands: '',
+  };
+
+  if (!source) return sections;
+
+  const titles: Array<keyof typeof sections> = ['overview', 'goals', 'constraints', 'commands'];
+  const titleMap: Record<keyof typeof sections, string> = {
+    overview: 'Overview',
+    goals: 'Goals',
+    constraints: 'Constraints',
+    commands: 'Commands',
+  };
+
+  let matched = false;
+  titles.forEach((key) => {
+    const pattern = new RegExp(`##\\s+${titleMap[key]}\\s*\\n([\\s\\S]*?)(?=\\n##\\s+|$)`, 'i');
+    const match = source.match(pattern);
+    if (match) {
+      sections[key] = normalizeProjectDocText(match[1]);
+      matched = true;
+    }
+  });
+
+  if (!matched) {
+    sections.overview = source;
+  }
+
+  return sections;
+};
+
+const getTimelineGroupLabel = (value: string, isZh: boolean) => {
+  const target = new Date(value);
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const startOfTarget = new Date(target.getFullYear(), target.getMonth(), target.getDate()).getTime();
+  const diffDays = Math.floor((startOfToday - startOfTarget) / (24 * 60 * 60 * 1000));
+  if (diffDays <= 0) return isZh ? '今天' : 'Today';
+  if (diffDays === 1) return isZh ? '昨天' : 'Yesterday';
+  return target.toLocaleDateString();
 };
 
 const COWORK_BOARD_STORAGE_KEY = 'cowork_task_board_v1';
@@ -81,18 +155,25 @@ const createSeedTasks = (isZh: boolean, workspacePath: string): CoworkTask[] => 
   ];
 };
 
-const CoworkPage = () => {
+interface CoworkPageProps {
+  desktopTabId?: string;
+}
+
+const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
   const navigate = useNavigate();
   const isZh = getStoredUiLanguage() === 'zh-CN';
+  const boardStorageKey = desktopTabId ? `${COWORK_BOARD_STORAGE_KEY}:${desktopTabId}` : COWORK_BOARD_STORAGE_KEY;
   const [projects, setProjects] = useState<Project[]>([]);
   const [githubConnected, setGithubConnected] = useState<boolean | null>(null);
   const [permissionLabel, setPermissionLabel] = useState<string>(formatPermissionLabel(undefined, isZh));
   const [loading, setLoading] = useState(true);
+  const [projectActivities, setProjectActivities] = useState<ProjectActivityItem[]>([]);
+  const [projectDocSummaries, setProjectDocSummaries] = useState<ProjectDocSummary[]>([]);
 
   const workspacePath = localStorage.getItem('code_workspace_path') || '';
   const [boardTasks, setBoardTasks] = useState<CoworkTask[]>(() => {
     try {
-      const raw = JSON.parse(localStorage.getItem(COWORK_BOARD_STORAGE_KEY) || '[]');
+      const raw = JSON.parse(localStorage.getItem(boardStorageKey) || '[]');
       return Array.isArray(raw) && raw.length > 0 ? raw : createSeedTasks(isZh, workspacePath);
     } catch {
       return createSeedTasks(isZh, workspacePath);
@@ -111,6 +192,12 @@ const CoworkPage = () => {
     () => projects.filter((project) => Number(project.is_archived) !== 1).slice(0, 6),
     [projects],
   );
+
+  const formatActivityTime = (value?: string) => {
+    if (!value) return '';
+    const date = new Date(value);
+    return `${date.toLocaleDateString()} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -150,8 +237,115 @@ const CoworkPage = () => {
   }, [isZh]);
 
   useEffect(() => {
-    localStorage.setItem(COWORK_BOARD_STORAGE_KEY, JSON.stringify(boardTasks));
-  }, [boardTasks]);
+    localStorage.setItem(boardStorageKey, JSON.stringify(boardTasks));
+  }, [boardTasks, boardStorageKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadActivities = async () => {
+      if (activeProjects.length === 0) {
+        setProjectActivities([]);
+        setProjectDocSummaries([]);
+        return;
+      }
+
+      const details = await Promise.allSettled(activeProjects.slice(0, 4).map((project) => getProject(project.id)));
+      if (cancelled) return;
+
+      const items: ProjectActivityItem[] = [];
+      const summaries: ProjectDocSummary[] = [];
+      details.forEach((result, index) => {
+        if (result.status !== 'fulfilled') return;
+        const detail = result.value as any;
+        const project = activeProjects[index];
+        const parsedDoc = parseProjectDocSections(detail.instructions || detail.description || '');
+        const commandLines = normalizeProjectDocText(parsedDoc.commands)
+          .split('\n')
+          .map((line) => line.replace(/^[-*]\s*/, '').trim())
+          .filter(Boolean)
+          .slice(0, 3);
+
+        summaries.push({
+          projectId: project.id,
+          projectName: project.name,
+          overview: parsedDoc.overview || detail.description || (isZh ? '还没有项目概览。' : 'No project overview yet.'),
+          goals: parsedDoc.goals,
+          constraints: parsedDoc.constraints,
+          commands: commandLines,
+          workspacePath: detail.workspace_path || project.workspace_path || '',
+          conversationCount: (detail.conversations || []).length,
+          fileCount: (detail.files || []).length,
+          githubCount: (detail.github_sources || []).length,
+          updatedAt: detail.updated_at || project.updated_at,
+        });
+
+        items.push({
+          id: `project-${project.id}`,
+          type: 'project',
+          projectId: project.id,
+          projectName: project.name,
+          title: isZh ? '项目文档已准备' : 'Project doc ready',
+          detail: parsedDoc.goals || parsedDoc.overview || (isZh ? '继续补项目约束和常用命令。' : 'Keep enriching goals, constraints, and commands.'),
+          at: detail.updated_at || project.updated_at,
+        });
+        (detail.conversations || []).slice(0, 4).forEach((conversation: any) => {
+          items.push({
+            id: `conv-${conversation.id}`,
+            type: 'chat',
+            projectId: project.id,
+            projectName: project.name,
+            title: conversation.title || (isZh ? '未命名聊天' : 'Untitled chat'),
+            detail: isZh ? '项目聊天' : 'Project chat',
+            at: conversation.created_at,
+          });
+        });
+        (detail.files || []).slice(0, 3).forEach((file: any) => {
+          items.push({
+            id: `file-${file.id}`,
+            type: 'file',
+            projectId: project.id,
+            projectName: project.name,
+            title: file.file_name,
+            detail: file.source_type === 'github' ? 'GitHub file' : (isZh ? '项目文件' : 'Project file'),
+            at: file.created_at,
+          });
+        });
+        (detail.github_sources || []).slice(0, 2).forEach((source: any) => {
+          items.push({
+            id: `source-${source.id}`,
+            type: 'github',
+            projectId: project.id,
+            projectName: project.name,
+            title: source.repo_full_name,
+            detail: isZh ? `同步到 ${source.ref}` : `Synced to ${source.ref}`,
+            at: source.last_synced_at || source.added_at,
+          });
+        });
+      });
+
+      setProjectActivities(
+        items
+          .filter((item) => item.at)
+          .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+          .slice(0, 10),
+      );
+      setProjectDocSummaries(
+        summaries.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
+      );
+    };
+
+    loadActivities().catch(() => {
+      if (!cancelled) {
+        setProjectActivities([]);
+        setProjectDocSummaries([]);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProjects, isZh]);
 
   const openSettingsSection = (section: string) => {
     window.dispatchEvent(new CustomEvent('open-settings', { detail: { section } }));
@@ -340,6 +534,20 @@ const CoworkPage = () => {
     },
   ];
 
+  const groupedProjectTimeline = useMemo(() => {
+    const groups: Array<{ label: string; items: ProjectActivityItem[] }> = [];
+    projectActivities.forEach((item) => {
+      const label = getTimelineGroupLabel(item.at, isZh);
+      const existing = groups.find((group) => group.label === label);
+      if (existing) {
+        existing.items.push(item);
+      } else {
+        groups.push({ label, items: [item] });
+      }
+    });
+    return groups;
+  }, [projectActivities, isZh]);
+
   return (
     <div className="h-full overflow-y-auto bg-claude-bg text-claude-text">
       <div className="mx-auto max-w-[1180px] px-8 py-10">
@@ -397,6 +605,106 @@ const CoworkPage = () => {
               </button>
             );
           })}
+        </div>
+
+        <div className="mt-6 rounded-2xl border border-claude-border bg-claude-input p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-3">
+                <FileText size={18} className="text-claude-textSecondary" />
+                <h2 className="text-[17px] font-semibold text-claude-text">
+                  {isZh ? '项目文档摘要' : 'Project doc snapshots'}
+                </h2>
+              </div>
+              <p className="mt-2 text-[13px] leading-6 text-claude-textSecondary">
+                {isZh
+                  ? '把项目概览、目标、约束和常用命令放到首页，方便你在进入具体项目之前先判断上下文。'
+                  : 'Surface project overviews, goals, constraints, and commands before drilling into a specific project.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/projects')}
+              className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-text transition-colors hover:bg-claude-hover"
+            >
+              {isZh ? '打开 Projects' : 'Open Projects'}
+            </button>
+          </div>
+
+          <div className="mt-5 grid grid-cols-2 gap-4">
+            {projectDocSummaries.length > 0 ? projectDocSummaries.map((summary) => (
+              <button
+                key={summary.projectId}
+                type="button"
+                onClick={() => navigate(`/projects?project=${summary.projectId}`)}
+                className="rounded-2xl border border-claude-border bg-claude-bg p-5 text-left transition-colors hover:bg-claude-hover"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-[16px] font-semibold text-claude-text">{summary.projectName}</div>
+                    <div className="mt-1 text-[12px] text-claude-textSecondary">{formatActivityTime(summary.updatedAt)}</div>
+                  </div>
+                  <ArrowRight size={16} className="shrink-0 text-claude-textSecondary" />
+                </div>
+
+                <div className="mt-4 rounded-xl border border-claude-border px-4 py-3 text-[13px] leading-6 text-claude-textSecondary">
+                  {summary.overview}
+                </div>
+
+                <div className="mt-4 grid grid-cols-3 gap-2 text-[11px]">
+                  <div className="rounded-xl border border-claude-border px-3 py-2">
+                    <div className="text-claude-textSecondary">{isZh ? '聊天' : 'Chats'}</div>
+                    <div className="mt-1 text-[15px] font-semibold text-claude-text">{summary.conversationCount}</div>
+                  </div>
+                  <div className="rounded-xl border border-claude-border px-3 py-2">
+                    <div className="text-claude-textSecondary">{isZh ? '文件' : 'Files'}</div>
+                    <div className="mt-1 text-[15px] font-semibold text-claude-text">{summary.fileCount}</div>
+                  </div>
+                  <div className="rounded-xl border border-claude-border px-3 py-2">
+                    <div className="text-claude-textSecondary">GitHub</div>
+                    <div className="mt-1 text-[15px] font-semibold text-claude-text">{summary.githubCount}</div>
+                  </div>
+                </div>
+
+                <div className="mt-4 space-y-2">
+                  {summary.goals && (
+                    <div className="rounded-xl border border-claude-border px-3 py-3">
+                      <div className="text-[11px] uppercase tracking-[0.08em] text-claude-textSecondary">{isZh ? '目标' : 'Goals'}</div>
+                      <div className="mt-1 line-clamp-2 text-[12px] leading-6 text-claude-text">{summary.goals}</div>
+                    </div>
+                  )}
+                  {summary.constraints && (
+                    <div className="rounded-xl border border-claude-border px-3 py-3">
+                      <div className="text-[11px] uppercase tracking-[0.08em] text-claude-textSecondary">{isZh ? '约束' : 'Constraints'}</div>
+                      <div className="mt-1 line-clamp-2 text-[12px] leading-6 text-claude-text">{summary.constraints}</div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {summary.commands.length > 0 ? summary.commands.map((command) => (
+                    <span key={command} className="rounded-full border border-claude-border px-2.5 py-1 text-[11px] text-claude-textSecondary">
+                      {command}
+                    </span>
+                  )) : (
+                    <span className="rounded-full border border-dashed border-claude-border px-2.5 py-1 text-[11px] text-claude-textSecondary">
+                      {isZh ? '还没写常用命令' : 'No commands yet'}
+                    </span>
+                  )}
+                </div>
+
+                <div className="mt-4 truncate text-[11px] text-claude-textSecondary">
+                  {summary.workspacePath || (isZh ? '还没有绑定工作区' : 'No workspace linked yet')}
+                </div>
+              </button>
+            )) : (
+              <div className="col-span-2 rounded-2xl border border-dashed border-claude-border px-5 py-10 text-center text-[13px] leading-7 text-claude-textSecondary">
+                {isZh
+                  ? '项目文档摘要会在这里显示。先去 Projects 给项目补概览、目标和常用命令。'
+                  : 'Project doc snapshots will appear here once projects have overviews, goals, and commands.'}
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="mt-6 rounded-2xl border border-claude-border bg-claude-input p-6">
@@ -586,6 +894,65 @@ const CoworkPage = () => {
           </div>
 
           <div className="space-y-4">
+            <div className="rounded-2xl border border-claude-border bg-claude-input p-6">
+              <div className="flex items-center gap-3">
+                <Clock3 size={18} className="text-claude-textSecondary" />
+                <h2 className="text-[17px] font-semibold text-claude-text">
+                  {isZh ? '项目时间线' : 'Project timeline'}
+                </h2>
+              </div>
+              <div className="mt-4 space-y-3">
+                {projectActivities.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-claude-border px-4 py-5 text-[13px] leading-6 text-claude-textSecondary">
+                    {isZh
+                      ? '这里会按时间线汇总项目文档、聊天、文件更新和 GitHub 同步，方便快速判断哪个项目正在推进。'
+                      : 'Project docs, chats, files, and GitHub sync events will land here as a lightweight timeline.'}
+                  </div>
+                ) : (
+                  groupedProjectTimeline.map((group) => (
+                    <div key={group.label} className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                      <div className="text-[11px] uppercase tracking-[0.08em] text-claude-textSecondary">{group.label}</div>
+                      <div className="mt-4 space-y-0">
+                        {group.items.map((item, index) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => navigate(`/projects?project=${item.projectId}`)}
+                            className="flex w-full items-start gap-3 text-left"
+                          >
+                            <div className="flex w-7 flex-col items-center pt-0.5">
+                              <span className={`h-2.5 w-2.5 rounded-full ${
+                                item.type === 'chat'
+                                  ? 'bg-[#C98B6E]'
+                                  : item.type === 'github'
+                                    ? 'bg-[#6E8BC9]'
+                                    : item.type === 'file'
+                                      ? 'bg-emerald-400'
+                                      : 'bg-claude-textSecondary'
+                              }`} />
+                              {index < group.items.length - 1 && (
+                                <span className="mt-1 min-h-[28px] w-px flex-1 bg-claude-border" />
+                              )}
+                            </div>
+                            <div className="min-w-0 flex-1 pb-4">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0">
+                                  <div className="text-[12px] text-claude-textSecondary">{item.projectName}</div>
+                                  <div className="mt-1 truncate text-[14px] font-medium text-claude-text">{item.title}</div>
+                                  <div className="mt-1 text-[12px] leading-6 text-claude-textSecondary">{item.detail}</div>
+                                </div>
+                                <div className="shrink-0 text-[11px] text-claude-textSecondary">{formatActivityTime(item.at)}</div>
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
             <div className="rounded-2xl border border-claude-border bg-claude-input p-6">
               <div className="flex items-center gap-3">
                 <MessageSquareText size={18} className="text-claude-textSecondary" />

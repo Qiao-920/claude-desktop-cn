@@ -682,6 +682,7 @@ interface MainContentProps {
   onOpenArtifacts?: () => void;
   onTitleChange?: (title: string) => void;
   onChatModeChange?: (isChat: boolean) => void;
+  desktopTabId?: string;
 }
 
 // 草稿存储：在切换对话、打开设置页面时保留输入内容和附件
@@ -1259,7 +1260,7 @@ const MessageList = React.memo<MessageListProps>(({
   );
 });
 
-const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtifactsUpdate, onOpenArtifacts, onTitleChange, onChatModeChange }: MainContentProps) => {
+const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtifactsUpdate, onOpenArtifacts, onTitleChange, onChatModeChange, desktopTabId }: MainContentProps) => {
   const uiLanguage = useClientLanguageText();
   const { id } = useParams(); // Get conversation ID from URL
   const location = useLocation();
@@ -1946,7 +1947,9 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
   }, [fallbackCommonModels]);
 
   // 草稿持久化：切换对话 / 打开设置页面时保存，切回时恢复
-  const draftKey = activeId || '__new__';
+  const draftKey = activeId
+    ? `${activeId}:${desktopTabId || 'default'}`
+    : `__new__:${desktopTabId || 'default'}`;
   useEffect(() => {
     const saved = draftsStore.get(draftKey);
     if (saved) {
