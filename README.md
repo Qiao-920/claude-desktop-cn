@@ -19,10 +19,10 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `1.6.24` |
-| Windows 安装包 | `Claude-Desktop-CN-Setup-1.6.24.exe` |
+| 当前版本 | `1.6.25` |
+| Windows 安装包 | `Claude-Desktop-CN-Setup-1.6.25.exe` |
 | 下载页面 | [GitHub Releases](https://github.com/Qiao-920/claude-desktop-cn/releases) |
-| 本轮更新说明 | [Claude Desktop CN v1.6.24](docs/releases/v1.6.24-cn.md) |
+| 本轮更新说明 | [Claude Desktop CN v1.6.25](docs/releases/v1.6.25-cn.md) |
 | 产品任务清单 | [cc-haha 能力对照与 Claude Desktop CN 产品任务清单](docs/cc-haha-capability-map.md) |
 
 默认安装路径通常是：
@@ -80,7 +80,7 @@ npm run electron:build:win
 
 ## 文档
 
-- [v1.6.24 发布说明](docs/releases/v1.6.24-cn.md)
+- [v1.6.25 发布说明](docs/releases/v1.6.25-cn.md)
 - [能力对照与任务清单](docs/cc-haha-capability-map.md)
 
 ## 仓库
