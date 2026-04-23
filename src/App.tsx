@@ -47,6 +47,29 @@ const Tooltip = ({ children, text, shortcut }: { children: React.ReactNode; text
   );
 };
 
+class PageErrorBoundary extends React.Component<
+  { fallback: React.ReactNode; children: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { fallback: React.ReactNode; children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error('[PageErrorBoundary]', error);
+  }
+
+  render() {
+    if (this.state.hasError) return this.props.fallback;
+    return this.props.children;
+  }
+}
+
 const ChatHeader = ({
   title,
   showArtifacts,
@@ -835,7 +858,20 @@ const Layout = () => {
               ) : location.pathname === '/cowork' ? (
                 <CoworkPage />
               ) : location.pathname === '/code' ? (
-                <CodePage />
+                <PageErrorBoundary
+                  fallback={(
+                    <div className="flex h-full items-center justify-center bg-claude-bg px-6">
+                      <div className="max-w-[520px] rounded-2xl border border-claude-border bg-claude-input px-6 py-5 text-center shadow-xl">
+                        <div className="text-[18px] font-semibold text-claude-text">Code 页面加载失败</div>
+                        <div className="mt-2 text-[13px] leading-6 text-claude-textSecondary">
+                          代码工作区遇到了渲染错误。现在已经加了兜底保护，你可以返回聊天继续使用，或刷新后重试。
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                >
+                  <CodePage />
+                </PageErrorBoundary>
               ) : location.pathname === '/artifacts' ? (
                 <ArtifactsPage onTryPrompt={(prompt) => {
                   if (prompt === '__remix__') {

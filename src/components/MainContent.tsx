@@ -124,18 +124,6 @@ const SkillTag: React.FC<{ slug: string; description?: string; descriptionZh?: s
   );
 };
 
-// Overlay that mirrors textarea text: /skill-name in blue, rest in normal color
-const SkillInputOverlay: React.FC<{ text: string; className?: string; style?: React.CSSProperties }> = ({ text, className, style }) => {
-  const match = text.match(/^(\/[a-zA-Z0-9_-]+)([\s\S]*)$/);
-  if (!match) return null;
-  return (
-    <div className={className} style={{ ...style, pointerEvents: 'none', position: 'absolute', top: 0, left: 0, right: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }} aria-hidden>
-      <span className="text-[#4B9EFA]">{match[1]}</span>
-      <span className="text-claude-text">{match[2] || ''}</span>
-    </div>
-  );
-};
-
 const ChatStyleSelector: React.FC<{
   language: UiLanguage;
   styles: ChatStyle[];
@@ -3941,14 +3929,9 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
               <div className="flex-1 overflow-y-auto min-h-0">
                 <FileUploadPreview files={pendingFiles} onRemove={handleRemoveFile} />
                 <div className="relative">
-                  <SkillInputOverlay
-                    text={inputText}
-                    className="pl-5 pr-4 pt-5 pb-1 text-[16px] font-sans font-[350] overflow-hidden"
-                    style={{ minHeight: '48px' }}
-                  />
                   <textarea
                     ref={inputRef}
-                    className={`w-full pl-5 pr-4 pt-5 pb-1 placeholder:text-claude-textSecondary text-[16px] outline-none resize-none overflow-hidden bg-transparent font-sans font-[350] ${inputText.match(/^\/[a-zA-Z0-9_-]+/) ? 'text-transparent caret-claude-text' : 'text-claude-text'}`}
+                    className="w-full pl-5 pr-4 pt-5 pb-1 placeholder:text-claude-textSecondary text-[16px] outline-none resize-none overflow-hidden bg-transparent font-sans font-[350] text-claude-text"
                     style={{ minHeight: '48px', borderRadius: `${tunerConfig?.inputRadius || 16}px ${tunerConfig?.inputRadius || 16}px 0 0` }}
                     placeholder={selectedSkill
                       ? (uiLanguage === 'zh-CN'
@@ -4303,14 +4286,9 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
               >
                 <FileUploadPreview files={pendingFiles} onRemove={handleRemoveFile} />
                 <div className="relative">
-                  <SkillInputOverlay
-                    text={inputText}
-                    className="px-4 pt-4 pb-0 text-[16px] font-sans font-[350]"
-                    style={{ height: `${inputBarBaseHeight}px`, minHeight: '16px', boxSizing: 'border-box', overflow: 'hidden' }}
-                  />
                   <textarea
                     ref={inputRef}
-                    className={`w-full px-4 pt-4 pb-0 placeholder:text-claude-textSecondary outline-none resize-none bg-transparent font-sans font-[350] ${inputText.match(/^\/[a-zA-Z0-9_-]+/) ? 'text-transparent caret-claude-text' : 'text-claude-text'}`}
+                    className="w-full px-4 pt-4 pb-0 placeholder:text-claude-textSecondary outline-none resize-none bg-transparent font-sans font-[350] text-claude-text"
                     style={{ height: `${inputBarBaseHeight}px`, minHeight: '16px', boxSizing: 'border-box', overflowY: 'hidden', fontSize: 'var(--chat-input-font-size)', lineHeight: 'var(--chat-message-line-height)' }}
                     placeholder={selectedSkill
                       ? (uiLanguage === 'zh-CN'

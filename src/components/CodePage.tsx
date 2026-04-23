@@ -1554,7 +1554,7 @@ const CodePage = () => {
                         {isZh ? '这已经是 Code 模式的第二层：文件树、编辑保存、Git 状态和命令面板都集中在一个工作区里。' : 'This is the second Code layer: file tree, editing, Git status, and command output in one workspace.'}
                       </p>
                     </div>
-                    {workspaceHealth.fixes?.length ? (
+                    {false ? (
                       <div className="mt-3 border-t border-claude-border/70 pt-3">
                         <div className="mb-2 flex items-center justify-between">
                           <div className="text-[11px] font-medium text-claude-text">{isZh ? '修复建议' : 'Recommended fixes'}</div>
@@ -1651,6 +1651,50 @@ const CodePage = () => {
                         </div>
                       ))}
                     </div>
+                    {workspaceHealth.fixes?.length ? (
+                      <div className="mt-3 border-t border-claude-border/70 pt-3">
+                        <div className="mb-2 flex items-center justify-between">
+                          <div className="text-[11px] font-medium text-claude-text">{isZh ? '修复建议' : 'Recommended fixes'}</div>
+                          <div className="text-[10px] text-claude-textSecondary">{workspaceHealth.fixes.length}</div>
+                        </div>
+                        <div className="space-y-2">
+                          {workspaceHealth.fixes.slice(0, 3).map((fix) => (
+                            <div key={fix.id} className="rounded-md border border-claude-border/70 bg-claude-bg/60 px-2.5 py-2">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className={`rounded border px-1.5 py-0.5 text-[10px] ${healthFixToneClass(fix.severity)}`}>
+                                      {fix.severity === 'error'
+                                        ? (isZh ? '阻塞' : 'Blocking')
+                                        : fix.severity === 'warning'
+                                          ? (isZh ? '建议处理' : 'Recommended')
+                                          : (isZh ? '可优化' : 'Nice to have')}
+                                    </span>
+                                    <span className="truncate text-[11px] font-medium text-claude-text">{fix.title}</span>
+                                  </div>
+                                  <div className="mt-1 text-[10px] leading-5 text-claude-textSecondary">{fix.detail}</div>
+                                  {fix.command ? (
+                                    <code className="mt-1 block truncate text-[10px] text-claude-textSecondary" title={fix.command}>
+                                      {fix.command}
+                                    </code>
+                                  ) : null}
+                                </div>
+                                {fix.command ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setCommand(fix.command || '')}
+                                    className="shrink-0 rounded-md border border-claude-border px-2 py-1 text-[10px] text-claude-textSecondary hover:bg-claude-hover"
+                                    title={isZh ? '填入命令框' : 'Fill command box'}
+                                  >
+                                    {isZh ? '填入' : 'Use'}
+                                  </button>
+                                ) : null}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
                 ) : (
                   <div className="rounded-md border border-dashed border-claude-border px-3 py-3 text-[12px] leading-5 text-claude-textSecondary">

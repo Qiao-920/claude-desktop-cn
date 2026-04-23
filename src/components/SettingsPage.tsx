@@ -226,6 +226,36 @@ const getSkillTranslationMeta = (skill: SkillItem, isZh: boolean) => {
   };
 };
 
+const getSkillSourceFolderValue = (skill: SkillItem, isZh: boolean) => {
+  const slug = skill.source_dir || skill.source || skill.id || 'skill';
+  if (skill.builtIn || skill.source === 'bundled') {
+    return isZh ? `内置 Skills / ${slug}` : `Bundled skills / ${slug}`;
+  }
+  if (skill.source === 'local') {
+    return isZh ? `本地 Skills / ${slug}` : `Local skills / ${slug}`;
+  }
+  if (skill.source === 'user') {
+    return `~/.claude/skills/${slug}`;
+  }
+  return skill.source_dir || skill.source || '—';
+};
+
+const getSkillSourceFolderHint = (skill: SkillItem, isZh: boolean) => {
+  const slug = skill.source_dir || skill.id || 'skill';
+  if (skill.builtIn || skill.source === 'bundled') {
+    return isZh
+      ? `内置 Skill 已做脱敏显示，不暴露打包后的本机绝对路径。标识：${slug}`
+      : `Bundled skills are masked here instead of exposing packaged absolute paths. Key: ${slug}`;
+  }
+  if (skill.source === 'local') {
+    return `~/.agents/skills/${slug}`;
+  }
+  if (skill.source === 'user') {
+    return `~/.claude/skills/${slug}`;
+  }
+  return skill.dir_path || (isZh ? '当前环境不显示完整来源路径。' : 'The full source path is hidden in this environment.');
+};
+
 const getMcpServerHealthState = (server: McpServerConfig) => {
   if (!server.enabled) return 'disabled';
   if (server.lastTestStatus === 'error' || server.lastToolScanStatus === 'error') return 'issues';
@@ -2721,8 +2751,8 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                         />
                         <InfoStat
                           label={isZh ? '来源目录' : 'Source folder'}
-                          value={selectedSkill.source_dir || selectedSkill.source || '—'}
-                          hint={selectedSkill.dir_path || (isZh ? '部分内置 Skill 不暴露完整路径。' : 'Some bundled skills do not expose a full path.')}
+                          value={getSkillSourceFolderValue(selectedSkill, isZh)}
+                          hint={getSkillSourceFolderHint(selectedSkill, isZh)}
                         />
                       </div>
 
@@ -2806,7 +2836,9 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                       )}
 
                       <div className="flex flex-wrap gap-2">
-                        <InlineActionButton onClick={openSelectedSkillDirectory}>{isZh ? '打开目录' : 'Open folder'}</InlineActionButton>
+                        {!(selectedSkill.builtIn || selectedSkill.source === 'bundled') && (
+                          <InlineActionButton onClick={openSelectedSkillDirectory}>{isZh ? '打开目录' : 'Open folder'}</InlineActionButton>
+                        )}
                         <InlineActionButton onClick={openCustomizeSkills}>{isZh ? '到自定义页编辑' : 'Edit in Customize'}</InlineActionButton>
                         <InlineActionButton onClick={reloadSkills}>{isZh ? '重新读取' : 'Reload'}</InlineActionButton>
                       </div>
