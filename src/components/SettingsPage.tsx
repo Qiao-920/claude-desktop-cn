@@ -43,6 +43,7 @@ import {
   getProviderModels,
   getProjects,
   getSessions,
+  getSkillDetail,
   getSkills,
   getUserProfile,
   getUserUsage,
@@ -98,7 +99,12 @@ type SkillItem = {
   enabled?: boolean;
   builtIn?: boolean;
   source?: string;
+  source_dir?: string;
+  dir_path?: string;
   file_count?: number;
+  files?: Array<string | { path?: string; name?: string; size?: number; type?: string }>;
+  content?: string;
+  is_example?: boolean;
 };
 
 type SkillDescriptionLanguage = 'zh-CN' | 'en';
@@ -160,6 +166,30 @@ const getSkillDescription = (skill: SkillItem, language: SkillDescriptionLanguag
   if (fallback) return `英文原文：${fallback}`;
   return '这个 Skill 还没有中文说明。后续可以补充用途、触发方式和示例。';
 };
+
+const parseEnvLines = (value: string) => {
+  const env: Record<string, string> = {};
+  value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#'))
+    .forEach((line) => {
+      const index = line.indexOf('=');
+      if (index <= 0) return;
+      const key = line.slice(0, index).trim();
+      const val = line.slice(index + 1).trim();
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+        env[key] = val;
+      }
+    });
+  return env;
+};
+
+const formatEnvLines = (env?: Record<string, string>) =>
+  Object.entries(env || {}).map(([key, value]) => `${key}=${value}`).join('\n');
+
+const getSkillFiles = (skill?: SkillItem | null) =>
+  (skill?.files || []).map((file) => (typeof file === 'string' ? file : file.path || file.name || '')).filter(Boolean);
 
 const WORK_OPTIONS = [
   '软件工程',
@@ -440,7 +470,10 @@ const ToggleSwitch = ({
     aria-checked={checked}
     aria-label={label}
     disabled={disabled}
-    onClick={onChange}
+    onClick={(event) => {
+      event.stopPropagation();
+      onChange();
+    }}
     className={`group inline-flex h-8 w-[58px] shrink-0 items-center rounded-full border px-1 transition-all focus:outline-none focus:ring-2 focus:ring-[#2E7CF6]/35 disabled:cursor-not-allowed disabled:opacity-55 ${
       checked
         ? 'border-[#2E7CF6]/45 bg-[#2E7CF6]'
@@ -501,6 +534,11 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const [gitStatus, setGitStatus] = useState<CodeGitStatusResult | null>(null);
   const [skillStats, setSkillStats] = useState({ enabled: 0, builtIn: 0, custom: 0 });
   const [skillsList, setSkillsList] = useState<SkillItem[]>([]);
+  const [selectedSkillId, setSelectedSkillId] = useState('');
+  const [selectedSkillDetail, setSelectedSkillDetail] = useState<SkillItem | null>(null);
+  const [skillBusy, setSkillBusy] = useState('');
+  const [skillSearch, setSkillSearch] = useState('');
+  const [skillFilter, setSkillFilter] = useState<'all' | 'enabled' | 'custom'>('all');
   const [skillDescriptionLanguage, setSkillDescriptionLanguage] = useState<SkillDescriptionLanguage>(() => {
     const saved = localStorage.getItem('skills_description_language');
     return saved === 'en' || saved === 'zh-CN' ? saved : 'zh-CN';
@@ -512,8 +550,11 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     command: '',
     args: '',
     url: '',
+    env: '',
   });
   const [mcpBusy, setMcpBusy] = useState('');
+  const [mcpEditingEnvId, setMcpEditingEnvId] = useState('');
+  const [mcpEditingEnv, setMcpEditingEnv] = useState('');
   const [codeCommandTimeout, setCodeCommandTimeout] = useState(localStorage.getItem('code_command_timeout_ms') || '120000');
   const [persistCommandHistory, setPersistCommandHistory] = useState(localStorage.getItem('code_persist_command_history') !== '0');
   const [rememberWorkspace, setRememberWorkspace] = useState(localStorage.getItem('code_remember_workspace') !== '0');
@@ -527,6 +568,23 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     }
   });
   const activeWorkspacePath = localStorage.getItem('code_workspace_path') || '';
+
+  const applySkillsPayload = (data: any) => {
+    const examples = Array.isArray(data?.examples) ? data.examples : [];
+    const mine = Array.isArray(data?.my_skills) ? data.my_skills : [];
+    const all: SkillItem[] = [
+      ...examples.map((item: any) => ({ ...item, builtIn: true, source: item.source || 'built-in' })),
+      ...mine.map((item: any) => ({ ...item, builtIn: false, source: item.source || 'custom' })),
+    ];
+    setSkillsList(all);
+    setSkillStats({
+      enabled: all.filter((item) => item?.enabled).length,
+      builtIn: examples.length,
+      custom: mine.length,
+    });
+    setSelectedSkillId((prev) => (prev && all.some((item) => item.id === prev) ? prev : all[0]?.id || ''));
+    return all;
+  };
 
   const [fullName, setFullName] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -649,21 +707,12 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
 
       try {
         const data = await getSkills();
-        const examples = Array.isArray(data?.examples) ? data.examples : [];
-        const mine = Array.isArray(data?.my_skills) ? data.my_skills : [];
-        const all = [
-          ...examples.map((item: any) => ({ ...item, builtIn: true, source: 'built-in' })),
-          ...mine.map((item: any) => ({ ...item, builtIn: false, source: 'custom' })),
-        ];
-        setSkillsList(all);
-        setSkillStats({
-          enabled: all.filter((item: any) => item?.enabled).length,
-          builtIn: examples.length,
-          custom: mine.length,
-        });
+        applySkillsPayload(data);
       } catch {
         setSkillsList([]);
         setSkillStats({ enabled: 0, builtIn: 0, custom: 0 });
+        setSelectedSkillId('');
+        setSelectedSkillDetail(null);
       }
 
       try {
@@ -684,6 +733,30 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   useEffect(() => {
     document.documentElement.setAttribute('data-chat-font', chatFont);
   }, [chatFont]);
+
+  useEffect(() => {
+    if (!selectedSkillId) {
+      setSelectedSkillDetail(null);
+      return;
+    }
+    let cancelled = false;
+    setSkillBusy((prev) => (prev === 'reload' ? prev : `detail:${selectedSkillId}`));
+    getSkillDetail(selectedSkillId)
+      .then((detail) => {
+        if (!cancelled) setSelectedSkillDetail(detail);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSelectedSkillDetail(skillsList.find((item) => item.id === selectedSkillId) || null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSkillBusy((prev) => (prev === `detail:${selectedSkillId}` ? '' : prev));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSkillId, skillsList]);
 
   const navItems = useMemo(() => {
     const items: Array<{ key: SettingsSection; label: string; badge?: string }> = [
@@ -869,18 +942,51 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     }
   };
 
+  const reloadSkills = async () => {
+    setSkillBusy('reload');
+    try {
+      const data = await getSkills();
+      applySkillsPayload(data);
+    } catch (error: any) {
+      setSaveMsg(error?.message || (isZh ? '刷新 Skills 失败' : 'Failed to refresh skills'));
+      window.setTimeout(() => setSaveMsg(''), 2200);
+    } finally {
+      setSkillBusy('');
+    }
+  };
+
+  const openCustomizeSkills = () => {
+    onClose();
+    navigate('/customize');
+  };
+
+  const openSelectedSkillDirectory = () => {
+    const dirPath = selectedSkillDetail?.dir_path;
+    const api = (window as any).electronAPI;
+    if (dirPath && api?.openFolder) {
+      api.openFolder(dirPath);
+      return;
+    }
+    setSaveMsg(isZh ? '当前环境无法直接打开 Skill 目录。' : 'Cannot open the skill folder in this environment.');
+    window.setTimeout(() => setSaveMsg(''), 2200);
+  };
+
   const handleAddMcpServer = async () => {
     if (mcpBusy) return;
     const name = mcpDraft.name.trim() || (mcpDraft.type === 'http' ? 'HTTP MCP' : 'Local MCP');
     const payload = mcpDraft.type === 'http'
-      ? { name, type: 'http' as const, url: mcpDraft.url.trim(), enabled: true }
-      : {
-          name,
-          type: 'stdio' as const,
-          command: mcpDraft.command.trim(),
-          args: mcpDraft.args.split(/\s+/).map((item) => item.trim()).filter(Boolean),
-          enabled: true,
-        };
+        ? { name, type: 'http' as const, url: mcpDraft.url.trim(), enabled: true }
+        : {
+            name,
+            type: 'stdio' as const,
+            command: mcpDraft.command.trim(),
+            args: mcpDraft.args.split(/\s+/).map((item) => item.trim()).filter(Boolean),
+            env: parseEnvLines(mcpDraft.env),
+            enabled: true,
+          };
+    if (payload.type === 'http') {
+      (payload as any).env = parseEnvLines(mcpDraft.env);
+    }
     if ((payload.type === 'http' && !payload.url) || (payload.type === 'stdio' && !payload.command)) {
       setSaveMsg(isZh ? '请先填写 MCP 地址或命令。' : 'Fill in the MCP URL or command first.');
       window.setTimeout(() => setSaveMsg(''), 2200);
@@ -889,7 +995,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     setMcpBusy('create');
     try {
       await createMcpServer(payload);
-      setMcpDraft({ name: 'Local MCP', type: 'stdio', command: '', args: '', url: '' });
+      setMcpDraft({ name: 'Local MCP', type: 'stdio', command: '', args: '', url: '', env: '' });
       await reloadMcpServers();
     } catch (error: any) {
       setSaveMsg(error?.message || (isZh ? '添加 MCP 失败' : 'Failed to add MCP server'));
@@ -930,6 +1036,26 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     }
   };
 
+  const startEditMcpEnv = (server: McpServerConfig) => {
+    setMcpEditingEnvId(server.id);
+    setMcpEditingEnv(formatEnvLines(server.env));
+  };
+
+  const saveMcpEnv = async (server: McpServerConfig) => {
+    setMcpBusy(`${server.id}:env`);
+    try {
+      const data = await updateMcpServer(server.id, { env: parseEnvLines(mcpEditingEnv) });
+      setMcpServers(Array.isArray(data?.servers) ? data.servers : []);
+      setMcpEditingEnvId('');
+      setMcpEditingEnv('');
+    } catch (error: any) {
+      setSaveMsg(error?.message || (isZh ? '保存 MCP 环境变量失败' : 'Failed to save MCP env'));
+      window.setTimeout(() => setSaveMsg(''), 2200);
+    } finally {
+      setMcpBusy('');
+    }
+  };
+
   const handleToggleSkill = async (skill: SkillItem) => {
     try {
       const next = !skill.enabled;
@@ -941,6 +1067,9 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
         builtIn: nextList.filter((item) => item.builtIn).length,
         custom: nextList.filter((item) => !item.builtIn).length,
       });
+      if (selectedSkillDetail?.id === skill.id) {
+        setSelectedSkillDetail({ ...selectedSkillDetail, enabled: next });
+      }
     } catch (error: any) {
       setSaveMsg(error?.message || (isZh ? '切换 Skill 失败' : 'Failed to update skill'));
       window.setTimeout(() => setSaveMsg(''), 2200);
@@ -1022,6 +1151,27 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
       setPwdSaving(false);
     }
   };
+
+  const normalizedSkillSearch = skillSearch.trim().toLowerCase();
+  const filteredSkillsList = skillsList.filter((skill) => {
+    if (skillFilter === 'enabled' && !skill.enabled) return false;
+    if (skillFilter === 'custom' && skill.builtIn) return false;
+    if (!normalizedSkillSearch) return true;
+    const haystack = [
+      skill.name,
+      skill.id,
+      skill.source_dir,
+      skill.description,
+      getSkillDescription(skill, skillDescriptionLanguage),
+    ].filter(Boolean).join(' ').toLowerCase();
+    return haystack.includes(normalizedSkillSearch);
+  });
+  const selectedSkill = selectedSkillDetail || skillsList.find((skill) => skill.id === selectedSkillId) || null;
+  const selectedSkillFiles = getSkillFiles(selectedSkill);
+  const selectedSkillPrompt = selectedSkill?.content
+    ?.replace(/^---[\s\S]*?---/, '')
+    .trim()
+    .slice(0, 520);
 
   const currentSection = (() => {
     switch (section) {
@@ -1638,6 +1788,13 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                     />
                   </div>
                 )}
+                <textarea
+                  value={mcpDraft.env}
+                  onChange={(event) => setMcpDraft((prev) => ({ ...prev, env: event.target.value }))}
+                  rows={3}
+                  placeholder={isZh ? '环境变量，可选。每行一个 KEY=value' : 'Optional env vars. One KEY=value per line'}
+                  className="mt-3 w-full resize-none rounded-lg border border-claude-border bg-claude-input px-3 py-2 font-mono text-[12px] leading-5 text-claude-text outline-none"
+                />
                 <div className="mt-3 flex justify-end">
                   <InlineActionButton onClick={handleAddMcpServer}>{mcpBusy === 'create' ? (isZh ? '添加中...' : 'Adding...') : (isZh ? '添加服务' : 'Add server')}</InlineActionButton>
                 </div>
@@ -1675,7 +1832,12 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                               {server.type === 'http' ? server.url : `${server.command || ''} ${(server.args || []).join(' ')}`.trim()}
                             </div>
                             <div className="mt-2 text-[11px] text-claude-textSecondary">
-                              {server.lastTestStatus ? `${server.lastTestStatus}: ${server.lastTestMessage || ''}` : (isZh ? '尚未测试' : 'Not tested yet')}
+                              {server.lastTestStatus && server.lastTestStatus !== 'unknown'
+                                ? `${server.lastTestStatus}: ${server.lastTestMessage || ''} · ${formatTime(server.lastTestAt)}`
+                                : (isZh ? '尚未测试' : 'Not tested yet')}
+                            </div>
+                            <div className="mt-1 text-[11px] text-claude-textSecondary">
+                              {isZh ? '环境变量' : 'Env vars'}: {Object.keys(server.env || {}).length}
                             </div>
                           </div>
                           <ToggleSwitch
@@ -1689,8 +1851,25 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                           <InlineActionButton onClick={() => handleTestMcpServer(server)}>
                             {mcpBusy === `${server.id}:test` ? (isZh ? '测试中...' : 'Testing...') : (isZh ? '测试' : 'Test')}
                           </InlineActionButton>
+                          <InlineActionButton onClick={() => startEditMcpEnv(server)}>{isZh ? '环境变量' : 'Env vars'}</InlineActionButton>
                           <InlineActionButton tone="danger" onClick={() => handleDeleteMcpServer(server)}>{isZh ? '删除' : 'Delete'}</InlineActionButton>
                         </div>
+                        {mcpEditingEnvId === server.id && (
+                          <div className="mt-3 rounded-lg border border-claude-border bg-claude-bg px-3 py-3">
+                            <div className="mb-2 text-[12px] font-medium text-claude-text">{isZh ? '编辑环境变量' : 'Edit env vars'}</div>
+                            <textarea
+                              value={mcpEditingEnv}
+                              onChange={(event) => setMcpEditingEnv(event.target.value)}
+                              rows={4}
+                              className="w-full resize-none rounded-lg border border-claude-border bg-claude-input px-3 py-2 font-mono text-[12px] leading-5 text-claude-text outline-none"
+                              placeholder="KEY=value"
+                            />
+                            <div className="mt-2 flex justify-end gap-2">
+                              <InlineActionButton onClick={() => { setMcpEditingEnvId(''); setMcpEditingEnv(''); }}>{isZh ? '取消' : 'Cancel'}</InlineActionButton>
+                              <InlineActionButton onClick={() => saveMcpEnv(server)}>{mcpBusy === `${server.id}:env` ? (isZh ? '保存中...' : 'Saving...') : (isZh ? '保存' : 'Save')}</InlineActionButton>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )) : (
                       <div className="rounded-lg border border-dashed border-claude-border px-3 py-4 text-[12px] leading-6 text-claude-textSecondary">
@@ -1738,36 +1917,148 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                   </div>
                 </div>
               </div>
-              <div className="space-y-2">
-                {skillsList.length > 0 ? skillsList.map((skill) => (
-                  <div key={skill.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-5 rounded-xl border border-claude-border bg-claude-bg px-4 py-3 transition-colors hover:border-claude-textSecondary/25">
-                    <div className="min-w-0 pr-2">
-                      <div className="flex items-center gap-2">
-                        <div className="truncate text-[14px] font-medium text-claude-text">{skill.name || skill.id}</div>
-                        <span className="rounded border border-claude-border px-1.5 py-0.5 text-[10px] text-claude-textSecondary">
-                          {skill.builtIn ? (isZh ? '内置' : 'Built-in') : (isZh ? '自定义' : 'Custom')}
+              <div className="mb-4 flex flex-wrap items-center gap-2">
+                <input
+                  value={skillSearch}
+                  onChange={(event) => setSkillSearch(event.target.value)}
+                  placeholder={isZh ? '搜索 Skill 名称、用途或来源' : 'Search skill name, purpose, or source'}
+                  className="h-9 min-w-[260px] flex-1 rounded-lg border border-claude-border bg-claude-bg px-3 text-[13px] text-claude-text outline-none focus:border-[#2E7CF6]/45"
+                />
+                {[
+                  { value: 'all' as const, label: isZh ? '全部' : 'All' },
+                  { value: 'enabled' as const, label: isZh ? '已启用' : 'Enabled' },
+                  { value: 'custom' as const, label: isZh ? '自定义' : 'Custom' },
+                ].map((item) => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    onClick={() => setSkillFilter(item.value)}
+                    className={`h-9 rounded-lg border px-3 text-[12px] font-medium transition-colors ${
+                      skillFilter === item.value
+                        ? 'border-[#2E7CF6]/35 bg-[#2E7CF6]/12 text-[#2E7CF6]'
+                        : 'border-claude-border text-claude-textSecondary hover:bg-claude-hover hover:text-claude-text'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+                <InlineActionButton onClick={reloadSkills}>{skillBusy === 'reload' ? (isZh ? '刷新中...' : 'Refreshing...') : (isZh ? '刷新' : 'Refresh')}</InlineActionButton>
+                <InlineActionButton onClick={openCustomizeSkills}>{isZh ? '创建 / 导入' : 'Create / import'}</InlineActionButton>
+              </div>
+
+              <div className="grid grid-cols-[minmax(0,0.9fr)_minmax(320px,0.8fr)] gap-4">
+                <div className="max-h-[620px] space-y-2 overflow-y-auto pr-1">
+                  {filteredSkillsList.length > 0 ? filteredSkillsList.map((skill) => (
+                    <div
+                      key={skill.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setSelectedSkillId(skill.id)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          setSelectedSkillId(skill.id);
+                        }
+                      }}
+                      className={`grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-4 rounded-xl border px-4 py-3 text-left transition-colors ${
+                        selectedSkillId === skill.id
+                          ? 'border-[#2E7CF6]/45 bg-[#2E7CF6]/8'
+                          : 'border-claude-border bg-claude-bg hover:border-claude-textSecondary/25'
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <div className="truncate text-[14px] font-medium text-claude-text">{skill.name || skill.id}</div>
+                          <span className="shrink-0 rounded border border-claude-border px-1.5 py-0.5 text-[10px] text-claude-textSecondary">
+                            {skill.builtIn ? (isZh ? '内置' : 'Built-in') : (isZh ? '自定义' : 'Custom')}
+                          </span>
+                        </div>
+                        <div className="mt-1 line-clamp-2 text-[12px] leading-5 text-claude-textSecondary">
+                          {getSkillDescription(skill, skillDescriptionLanguage)}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={`w-10 text-right text-[11px] ${skill.enabled ? 'text-[#2E7CF6]' : 'text-claude-textSecondary'}`}>
+                          {skill.enabled ? (isZh ? '启用' : 'On') : (isZh ? '停用' : 'Off')}
                         </span>
-                      </div>
-                      <div className="mt-1 line-clamp-2 text-[12px] leading-5 text-claude-textSecondary">
-                        {getSkillDescription(skill, skillDescriptionLanguage)}
+                        <ToggleSwitch
+                          checked={Boolean(skill.enabled)}
+                          label={skill.enabled ? (isZh ? '停用 Skill' : 'Disable skill') : (isZh ? '启用 Skill' : 'Enable skill')}
+                          onChange={() => handleToggleSkill(skill)}
+                        />
                       </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className={`w-10 text-right text-[11px] ${skill.enabled ? 'text-[#2E7CF6]' : 'text-claude-textSecondary'}`}>
-                        {skill.enabled ? (isZh ? '启用' : 'On') : (isZh ? '停用' : 'Off')}
-                      </span>
-                      <ToggleSwitch
-                        checked={Boolean(skill.enabled)}
-                        label={skill.enabled ? (isZh ? '停用 Skill' : 'Disable skill') : (isZh ? '启用 Skill' : 'Enable skill')}
-                        onChange={() => handleToggleSkill(skill)}
-                      />
+                  )) : (
+                    <div className="rounded-xl border border-dashed border-claude-border px-4 py-5 text-[13px] leading-6 text-claude-textSecondary">
+                      {skillsList.length > 0
+                        ? isZh ? '没有匹配的 Skills。' : 'No matching skills.'
+                        : isZh ? '暂时还没有读取到 Skills。' : 'No skills were loaded yet.'}
                     </div>
-                  </div>
-                )) : (
-                  <div className="rounded-xl border border-dashed border-claude-border px-4 py-5 text-[13px] leading-6 text-claude-textSecondary">
-                    {isZh ? '暂时还没有读取到 Skills。' : 'No skills were loaded yet.'}
-                  </div>
-                )}
+                  )}
+                </div>
+
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  {selectedSkill ? (
+                    <div className="space-y-4">
+                      <div className="flex items-start justify-between gap-4">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <div className="truncate text-[16px] font-semibold text-claude-text">{selectedSkill.name || selectedSkill.id}</div>
+                            <span className="rounded border border-claude-border px-1.5 py-0.5 text-[10px] text-claude-textSecondary">
+                              {selectedSkill.builtIn ? (isZh ? '内置' : 'Built-in') : (isZh ? '自定义' : 'Custom')}
+                            </span>
+                          </div>
+                          <div className="mt-1 break-all font-mono text-[11px] text-claude-textSecondary">{selectedSkill.id}</div>
+                        </div>
+                        <ToggleSwitch
+                          checked={Boolean(selectedSkill.enabled)}
+                          label={selectedSkill.enabled ? (isZh ? '停用 Skill' : 'Disable skill') : (isZh ? '启用 Skill' : 'Enable skill')}
+                          onChange={() => handleToggleSkill(selectedSkill)}
+                        />
+                      </div>
+
+                      <div className="rounded-lg border border-claude-border bg-claude-input px-3 py-3">
+                        <div className="text-[12px] font-medium text-claude-text">{isZh ? '用途说明' : 'Purpose'}</div>
+                        <div className="mt-1 text-[12px] leading-6 text-claude-textSecondary">
+                          {getSkillDescription(selectedSkill, skillDescriptionLanguage)}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3">
+                        <InfoStat
+                          label={isZh ? '文件数量' : 'Files'}
+                          value={selectedSkillFiles.length || selectedSkill.file_count || 0}
+                          hint={selectedSkillFiles.slice(0, 3).join(' · ') || (isZh ? '详情接口会返回文件清单。' : 'The detail endpoint returns the file list.')}
+                        />
+                        <InfoStat
+                          label={isZh ? '来源目录' : 'Source folder'}
+                          value={selectedSkill.source_dir || selectedSkill.source || '—'}
+                          hint={selectedSkill.dir_path || (isZh ? '部分内置 Skill 不暴露完整路径。' : 'Some bundled skills do not expose a full path.')}
+                        />
+                      </div>
+
+                      {selectedSkillPrompt && (
+                        <div className="rounded-lg border border-claude-border bg-claude-input px-3 py-3">
+                          <div className="mb-2 text-[12px] font-medium text-claude-text">{isZh ? '触发说明摘录' : 'Instruction excerpt'}</div>
+                          <pre className="max-h-[150px] whitespace-pre-wrap text-[11px] leading-5 text-claude-textSecondary">{selectedSkillPrompt}</pre>
+                        </div>
+                      )}
+
+                      <div className="flex flex-wrap gap-2">
+                        <InlineActionButton onClick={openSelectedSkillDirectory}>{isZh ? '打开目录' : 'Open folder'}</InlineActionButton>
+                        <InlineActionButton onClick={openCustomizeSkills}>{isZh ? '到自定义页编辑' : 'Edit in Customize'}</InlineActionButton>
+                        <InlineActionButton onClick={reloadSkills}>{isZh ? '重新读取' : 'Reload'}</InlineActionButton>
+                      </div>
+                      {skillBusy === `detail:${selectedSkill.id}` && (
+                        <div className="text-[12px] text-claude-textSecondary">{isZh ? '正在读取详情...' : 'Loading details...'}</div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-claude-border px-3 py-6 text-[13px] leading-6 text-claude-textSecondary">
+                      {isZh ? '从左侧选择一个 Skill 查看详情。' : 'Select a skill on the left to inspect it.'}
+                    </div>
+                  )}
+                </div>
               </div>
             </SectionCard>
           </div>

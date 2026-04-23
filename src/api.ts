@@ -1445,6 +1445,7 @@ export interface McpServerConfig {
   command?: string;
   args?: string[];
   url?: string;
+  env?: Record<string, string>;
   enabled: boolean;
   lastTestAt?: string;
   lastTestStatus?: 'unknown' | 'ok' | 'error';

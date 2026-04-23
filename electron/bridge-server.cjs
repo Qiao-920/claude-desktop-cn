@@ -2730,6 +2730,7 @@ function initServer(mainWindow) {
             command: item.command || '',
             args: Array.isArray(item.args) ? item.args : [],
             url: item.url || '',
+            env: item.env && typeof item.env === 'object' && !Array.isArray(item.env) ? item.env : {},
             enabled: item.enabled !== false,
             lastTestAt: item.lastTestAt || '',
             lastTestStatus: item.lastTestStatus || 'unknown',
@@ -2794,6 +2795,7 @@ function initServer(mainWindow) {
             command: String(body.command || '').trim(),
             args: Array.isArray(body.args) ? body.args.map(String) : String(body.args || '').split(/\s+/).filter(Boolean),
             url: String(body.url || '').trim(),
+            env: body.env && typeof body.env === 'object' && !Array.isArray(body.env) ? body.env : {},
             enabled: body.enabled !== false,
             lastTestAt: '',
             lastTestStatus: 'unknown',
@@ -2818,6 +2820,7 @@ function initServer(mainWindow) {
             ...(typeof body.command === 'string' ? { command: body.command.trim() } : {}),
             ...(Array.isArray(body.args) ? { args: body.args.map(String) } : typeof body.args === 'string' ? { args: body.args.split(/\s+/).filter(Boolean) } : {}),
             ...(typeof body.url === 'string' ? { url: body.url.trim() } : {}),
+            ...(body.env && typeof body.env === 'object' && !Array.isArray(body.env) ? { env: body.env } : {}),
             ...(typeof body.enabled === 'boolean' ? { enabled: body.enabled } : {}),
         };
         saveMcpServers(servers);
