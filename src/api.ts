@@ -772,7 +772,14 @@ export async function getCodeCommandAudit(workspacePath: string): Promise<{ entr
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to read command audit');
   }
-  return res.json();
+  const data = await res.json();
+  return {
+    entries: Array.isArray(data.entries)
+      ? data.entries
+      : Array.isArray(data.audit)
+        ? data.audit
+        : [],
+  };
 }
 
 export async function runCodeCommand(workspacePath: string, command: string, timeout = 120000, shell = 'powershell', approved = false): Promise<CodeCommandResult> {
@@ -1450,8 +1457,30 @@ export interface McpServerConfig {
   lastTestAt?: string;
   lastTestStatus?: 'unknown' | 'ok' | 'error';
   lastTestMessage?: string;
+  tools?: McpToolInfo[];
+  toolCount?: number;
+  lastToolScanAt?: string;
+  lastToolScanStatus?: 'unknown' | 'ok' | 'error' | 'unsupported';
+  lastToolScanMessage?: string;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface McpToolInfo {
+  name: string;
+  description?: string;
+}
+
+export interface McpToolAuditEntry {
+  id: string;
+  createdAt: string;
+  serverId: string;
+  serverName: string;
+  serverType: McpServerConfig['type'];
+  action: 'discover_tools';
+  decision: 'discovered' | 'failed' | 'unsupported';
+  toolCount: number;
+  message?: string;
 }
 
 export async function getMcpServers(): Promise<{ servers: McpServerConfig[] }> {
@@ -1487,6 +1516,19 @@ export async function testMcpServer(id: string): Promise<{ server: McpServerConf
     method: 'POST',
   });
   return res.json();
+}
+
+export async function discoverMcpServerTools(id: string): Promise<{ server: McpServerConfig; result: any; servers: McpServerConfig[] }> {
+  const res = await request(`/mcp/servers/${encodeURIComponent(id)}/tools`, {
+    method: 'POST',
+  });
+  return res.json();
+}
+
+export async function getMcpToolAudit(): Promise<{ entries: McpToolAuditEntry[] }> {
+  const res = await request('/mcp/tool-audit');
+  const data = await res.json();
+  return { entries: Array.isArray(data.entries) ? data.entries : [] };
 }
 
 // GitHub Connector

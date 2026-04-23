@@ -74,6 +74,19 @@ function getSkillSummaryZh(value?: string, description?: string) {
   return '用于处理专项任务的扩展技能。';
 }
 
+type SkillDescriptionLanguage = 'zh-CN' | 'en';
+
+function getStoredSkillDescriptionLanguage(): SkillDescriptionLanguage {
+  const value = localStorage.getItem('skills_description_language');
+  if (value === 'zh-CN' || value === 'en') return value;
+  return getStoredUiLanguage() === 'zh-CN' ? 'zh-CN' : 'en';
+}
+
+function getSkillMenuDescription(skill: { name?: string; description?: string }, language: SkillDescriptionLanguage) {
+  if (language === 'zh-CN') return getSkillSummaryZh(skill.name, skill.description);
+  return skill.description || 'Specialized skill';
+}
+
 // Blue skill tag shown in chat messages (hover shows tooltip)
 const SkillTag: React.FC<{ slug: string; description?: string }> = ({ slug, description }) => {
   const [hover, setHover] = useState(false);
@@ -1538,6 +1551,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
   const [showSkillsSubmenu, setShowSkillsSubmenu] = useState(false);
   const [enabledSkills, setEnabledSkills] = useState<Array<{ id: string; name: string; description?: string }>>([]);
   const [selectedSkill, setSelectedSkill] = useState<{ name: string; slug: string; description?: string } | null>(null);
+  const [skillDescriptionLanguage, setSkillDescriptionLanguage] = useState<SkillDescriptionLanguage>(() => getStoredSkillDescriptionLanguage());
   const plusMenuRef = useRef<HTMLDivElement>(null);
   const plusBtnRef = useRef<HTMLButtonElement>(null);
   // Add-to-project state
@@ -1654,6 +1668,18 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
       setProjectList((data || []).filter(p => !p.is_archived));
     }).catch(() => {});
   }, [showPlusMenu]);
+
+  useEffect(() => {
+    const syncSkillDescriptionLanguage = () => {
+      setSkillDescriptionLanguage(getStoredSkillDescriptionLanguage());
+    };
+    window.addEventListener('storage', syncSkillDescriptionLanguage);
+    window.addEventListener('skillsDescriptionLanguageChanged', syncSkillDescriptionLanguage as EventListener);
+    return () => {
+      window.removeEventListener('storage', syncSkillDescriptionLanguage);
+      window.removeEventListener('skillsDescriptionLanguageChanged', syncSkillDescriptionLanguage as EventListener);
+    };
+  }, []);
 
   // 点击外部关闭加号菜单
   useEffect(() => {
@@ -4006,12 +4032,12 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                                   setInputText(prev => prev ? `/${slug} ${prev}` : `/${slug} `);
                                   inputRef.current?.focus();
                                 }}
-                                title={uiLanguage === 'zh-CN' ? getSkillSummaryZh(skill.name, skill.description) : (skill.description || skill.name)}
+                                title={getSkillMenuDescription(skill, skillDescriptionLanguage)}
                                 className="w-full text-left px-4 py-2.5 text-[13px] text-claude-text hover:bg-claude-hover transition-colors"
                               >
                                 <div className="font-medium truncate">{skill.name}</div>
                                 <div className="mt-1 text-[11px] leading-4 text-claude-textSecondary whitespace-normal">
-                                  {uiLanguage === 'zh-CN' ? getSkillSummaryZh(skill.name, skill.description) : (skill.description || 'Specialized skill')}
+                                  {getSkillMenuDescription(skill, skillDescriptionLanguage)}
                                 </div>
                               </button>
                             )) : (
@@ -4363,12 +4389,12 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                                     setInputText(prev => prev ? `/${slug} ${prev}` : `/${slug} `);
                                     inputRef.current?.focus();
                                   }}
-                                  title={uiLanguage === 'zh-CN' ? getSkillSummaryZh(skill.name, skill.description) : (skill.description || skill.name)}
+                                  title={getSkillMenuDescription(skill, skillDescriptionLanguage)}
                                   className="w-full text-left px-4 py-2.5 text-[13px] text-claude-text hover:bg-claude-hover transition-colors"
                                 >
                                   <div className="font-medium truncate">{skill.name}</div>
                                   <div className="mt-1 text-[11px] leading-4 text-claude-textSecondary whitespace-normal">
-                                    {uiLanguage === 'zh-CN' ? getSkillSummaryZh(skill.name, skill.description) : (skill.description || 'Specialized skill')}
+                                    {getSkillMenuDescription(skill, skillDescriptionLanguage)}
                                   </div>
                                 </button>
                               ))}

@@ -208,6 +208,7 @@ function initServer(mainWindow) {
     const dbPath = path.join(userDataPath, 'claude-desktop.json');
     const agentConfigPath = path.join(userDataPath, 'agent-config.json');
     const mcpServersPath = path.join(userDataPath, 'mcp-servers.json');
+    const mcpToolAuditPath = path.join(userDataPath, 'mcp-tool-audit.json');
     const commandAuditPath = path.join(userDataPath, 'code-command-audit.json');
     setAccessConfigPath(agentConfigPath);
     const validPermissionModes = new Set(['workspace_write', 'project', 'full_access']);
@@ -2735,12 +2736,52 @@ function initServer(mainWindow) {
             lastTestAt: item.lastTestAt || '',
             lastTestStatus: item.lastTestStatus || 'unknown',
             lastTestMessage: item.lastTestMessage || '',
+            tools: normalizeMcpTools(item.tools),
+            toolCount: Number.isFinite(Number(item.toolCount)) ? Number(item.toolCount) : normalizeMcpTools(item.tools).length,
+            lastToolScanAt: item.lastToolScanAt || '',
+            lastToolScanStatus: item.lastToolScanStatus || 'unknown',
+            lastToolScanMessage: item.lastToolScanMessage || '',
         }));
     }
 
     function saveMcpServers(servers) {
         writeJsonFile(mcpServersPath, servers);
         return servers;
+    }
+
+    function normalizeMcpTools(tools) {
+        if (!Array.isArray(tools)) return [];
+        return tools.map((tool) => ({
+            name: String(tool && tool.name || '').trim(),
+            description: typeof (tool && tool.description) === 'string' ? tool.description.trim() : '',
+        })).filter((tool) => tool.name).slice(0, 80);
+    }
+
+    function readMcpToolAudit() {
+        const raw = readJsonFile(mcpToolAuditPath, []);
+        if (!Array.isArray(raw)) return [];
+        return raw;
+    }
+
+    function appendMcpToolAudit(serverConfig, result) {
+        const entry = {
+            id: makeLocalId('mcp_tool_audit'),
+            createdAt: new Date().toISOString(),
+            serverId: serverConfig.id,
+            serverName: serverConfig.name,
+            serverType: serverConfig.type,
+            action: 'discover_tools',
+            decision: result.lastToolScanStatus === 'ok'
+                ? 'discovered'
+                : result.lastToolScanStatus === 'unsupported'
+                    ? 'unsupported'
+                    : 'failed',
+            toolCount: result.toolCount || 0,
+            message: result.lastToolScanMessage || '',
+        };
+        const next = [entry, ...readMcpToolAudit()].slice(0, 200);
+        writeJsonFile(mcpToolAuditPath, next);
+        return entry;
     }
 
     async function testMcpServer(serverConfig) {
@@ -2782,8 +2823,161 @@ function initServer(mainWindow) {
         });
     }
 
+    async function discoverMcpServerTools(serverConfig) {
+        const now = new Date().toISOString();
+        if (serverConfig.type === 'http') {
+            return {
+                ok: false,
+                tools: [],
+                toolCount: 0,
+                lastToolScanAt: now,
+                lastToolScanStatus: 'unsupported',
+                lastToolScanMessage: 'HTTP MCP tool discovery is not wired yet. Use stdio servers in this build.',
+            };
+        }
+        if (!serverConfig.command) {
+            return {
+                ok: false,
+                tools: [],
+                toolCount: 0,
+                lastToolScanAt: now,
+                lastToolScanStatus: 'error',
+                lastToolScanMessage: 'Missing command',
+            };
+        }
+
+        const { spawn } = require('child_process');
+        return new Promise((resolve) => {
+            let stdout = '';
+            let stderr = '';
+            let finished = false;
+            let child = null;
+            const finish = (result) => {
+                if (finished) return;
+                finished = true;
+                clearTimeout(timer);
+                try {
+                    if (child && !child.killed) child.kill();
+                } catch (_) {}
+                resolve(result);
+            };
+            const timer = setTimeout(() => {
+                finish({
+                    ok: false,
+                    tools: [],
+                    toolCount: 0,
+                    lastToolScanAt: now,
+                    lastToolScanStatus: 'error',
+                    lastToolScanMessage: 'Timed out while asking the MCP server for tools',
+                });
+            }, 8000);
+
+            try {
+                child = spawn(serverConfig.command, Array.isArray(serverConfig.args) ? serverConfig.args : [], {
+                    cwd: app.getPath('home'),
+                    env: { ...process.env, ...(serverConfig.env || {}) },
+                    windowsHide: true,
+                    stdio: ['pipe', 'pipe', 'pipe'],
+                });
+            } catch (error) {
+                finish({
+                    ok: false,
+                    tools: [],
+                    toolCount: 0,
+                    lastToolScanAt: now,
+                    lastToolScanStatus: 'error',
+                    lastToolScanMessage: error.message || 'Failed to start MCP server',
+                });
+                return;
+            }
+
+            const inspectBuffer = () => {
+                const lines = String(stdout || '').split(/\r?\n/).filter(Boolean);
+                for (const line of lines) {
+                    try {
+                        const payload = JSON.parse(line);
+                        if (payload && payload.id === 2) {
+                            if (payload.error) {
+                                finish({
+                                    ok: false,
+                                    tools: [],
+                                    toolCount: 0,
+                                    lastToolScanAt: now,
+                                    lastToolScanStatus: 'error',
+                                    lastToolScanMessage: payload.error.message || 'tools/list failed',
+                                });
+                                return;
+                            }
+                            const tools = normalizeMcpTools(payload.result && payload.result.tools);
+                            finish({
+                                ok: true,
+                                tools,
+                                toolCount: tools.length,
+                                lastToolScanAt: now,
+                                lastToolScanStatus: 'ok',
+                                lastToolScanMessage: `${tools.length} tools discovered`,
+                            });
+                            return;
+                        }
+                    } catch (_) {}
+                }
+            };
+
+            child.stdout.on('data', (chunk) => {
+                stdout += chunk.toString('utf8');
+                inspectBuffer();
+            });
+            child.stderr.on('data', (chunk) => {
+                stderr += chunk.toString('utf8');
+            });
+            child.on('error', (error) => {
+                finish({
+                    ok: false,
+                    tools: [],
+                    toolCount: 0,
+                    lastToolScanAt: now,
+                    lastToolScanStatus: 'error',
+                    lastToolScanMessage: error.message || 'MCP server failed to start',
+                });
+            });
+            child.on('exit', () => {
+                inspectBuffer();
+                finish({
+                    ok: false,
+                    tools: [],
+                    toolCount: 0,
+                    lastToolScanAt: now,
+                    lastToolScanStatus: 'error',
+                    lastToolScanMessage: (stderr || stdout || 'MCP server exited before returning tools').slice(0, 300),
+                });
+            });
+
+            const send = (payload) => {
+                try {
+                    child.stdin.write(JSON.stringify(payload) + '\n');
+                } catch (_) {}
+            };
+            send({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'initialize',
+                params: {
+                    protocolVersion: '2024-11-05',
+                    capabilities: {},
+                    clientInfo: { name: 'Claude Desktop CN', version: 'local' },
+                },
+            });
+            send({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
+            send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+        });
+    }
+
     server.get('/api/mcp/servers', (_req, res) => {
         res.json({ servers: readMcpServers() });
+    });
+
+    server.get('/api/mcp/tool-audit', (_req, res) => {
+        res.json({ entries: readMcpToolAudit().slice(0, 80) });
     });
 
     server.post('/api/mcp/servers', (req, res) => {
@@ -2800,6 +2994,11 @@ function initServer(mainWindow) {
             lastTestAt: '',
             lastTestStatus: 'unknown',
             lastTestMessage: '',
+            tools: [],
+            toolCount: 0,
+            lastToolScanAt: '',
+            lastToolScanStatus: 'unknown',
+            lastToolScanMessage: '',
         };
         const servers = readMcpServers();
         servers.unshift(serverConfig);
@@ -2843,6 +3042,25 @@ function initServer(mainWindow) {
         if (index < 0) return res.status(404).json({ error: 'MCP server not found' });
         const result = await testMcpServer(servers[index]);
         servers[index] = { ...servers[index], ...result };
+        saveMcpServers(servers);
+        res.json({ server: servers[index], result, servers });
+    });
+
+    server.post('/api/mcp/servers/:id/tools', async (req, res) => {
+        const { id } = req.params;
+        const servers = readMcpServers();
+        const index = servers.findIndex(item => item.id === id);
+        if (index < 0) return res.status(404).json({ error: 'MCP server not found' });
+        const result = await discoverMcpServerTools(servers[index]);
+        servers[index] = {
+            ...servers[index],
+            tools: result.tools || [],
+            toolCount: result.toolCount || 0,
+            lastToolScanAt: result.lastToolScanAt,
+            lastToolScanStatus: result.lastToolScanStatus,
+            lastToolScanMessage: result.lastToolScanMessage,
+        };
+        appendMcpToolAudit(servers[index], result);
         saveMcpServers(servers);
         res.json({ server: servers[index], result, servers });
     });
@@ -3882,7 +4100,7 @@ You have the following skills available. When a user's request matches a skill's
             const { workspacePath } = req.body || {};
             const { workspaceRoot } = resolveCodeWorkspacePath(workspacePath, workspacePath);
             const audit = readCommandAudit().filter(item => !item.cwd || path.resolve(item.cwd) === workspaceRoot).slice(0, 80);
-            res.json({ audit });
+            res.json({ entries: audit, audit });
         } catch (err) {
             res.status(err.statusCode || 500).json({ error: err.message || 'Failed to read command audit' });
         }
