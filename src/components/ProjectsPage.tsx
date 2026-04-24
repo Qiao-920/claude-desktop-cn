@@ -1,8 +1,8 @@
 ﻿import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Search, Plus, ChevronDown, ArrowLeft, MoreVertical, Star, ArrowUp, FileText, Trash, Pencil, MessageSquare, X, Upload, Check, AudioLines, ChevronRight, Archive, Github, RefreshCw, FolderOpen, Copy, GitBranch, Link2, Circle, Clock3, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Search, Plus, ChevronDown, ArrowLeft, MoreVertical, Star, ArrowUp, FileText, Trash, Pencil, MessageSquare, X, Upload, Check, AudioLines, ChevronRight, Archive, Github, RefreshCw, FolderOpen, Copy, GitBranch, Link2, Circle, Clock3, AlertCircle, CheckCircle2, Bot, UsersRound } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Paperclip, ListCollapse } from 'lucide-react';
-import { getProjects, createProject, getProject, updateProject, deleteProject, uploadProjectFile, deleteProjectFile, createProjectConversation, deleteConversation, updateConversation, getSkills, Project, ProjectFile, ProjectGithubSource, ProjectStatus, ProjectTask, ProjectTaskStatus, importProjectGithub, syncProjectGithubSource, updateProjectGithubSource, removeProjectGithubSource, deriveProjectWorkspace } from '../api';
+import { getProjects, createProject, getProject, updateProject, deleteProject, uploadProjectFile, deleteProjectFile, createProjectConversation, deleteConversation, updateConversation, getSkills, Project, ProjectFile, ProjectGithubSource, ProjectStatus, ProjectTask, ProjectTaskRunState, ProjectTaskStatus, ProjectTeamMember, ProjectTeamMemberKind, ProjectTeamMemberStatus, importProjectGithub, syncProjectGithubSource, updateProjectGithubSource, removeProjectGithubSource, deriveProjectWorkspace } from '../api';
 import ModelSelector, { SelectableModel } from './ModelSelector';
 import { IconPlus } from './Icons';
 import startProjectsImg from '../assets/icons/start-projects.png';
@@ -62,6 +62,15 @@ type ProjectMetaDraft = {
   nextAction: string;
 };
 
+type ProjectTeamDraft = {
+  name: string;
+  kind: ProjectTeamMemberKind;
+  role: string;
+  focus: string;
+  model: string;
+  status: ProjectTeamMemberStatus;
+};
+
 const PROJECT_DOC_SECTIONS: Array<{ key: keyof ProjectDocDraft; title: string }> = [
   { key: 'overview', title: 'Overview' },
   { key: 'goals', title: 'Goals' },
@@ -87,6 +96,15 @@ const createEmptyProjectMetaDraft = (): ProjectMetaDraft => ({
   nextAction: '',
 });
 
+const createEmptyProjectTeamDraft = (): ProjectTeamDraft => ({
+  name: '',
+  kind: 'human',
+  role: '',
+  focus: '',
+  model: '',
+  status: 'active',
+});
+
 const PROJECT_STATUS_OPTIONS: Array<{ id: ProjectStatus; zh: string; en: string }> = [
   { id: 'active', zh: '进行中', en: 'In progress' },
   { id: 'blocked', zh: '阻塞', en: 'Blocked' },
@@ -101,6 +119,25 @@ const PROJECT_TASK_STATUS_OPTIONS: Array<{ id: ProjectTaskStatus; zh: string; en
   { id: 'done', zh: '已完成', en: 'Done' },
 ];
 
+const PROJECT_TEAM_KIND_OPTIONS: Array<{ id: ProjectTeamMemberKind; zh: string; en: string }> = [
+  { id: 'human', zh: '人工成员', en: 'Human' },
+  { id: 'agent', zh: '代理成员', en: 'Agent' },
+];
+
+const PROJECT_TEAM_STATUS_OPTIONS: Array<{ id: ProjectTeamMemberStatus; zh: string; en: string }> = [
+  { id: 'active', zh: '活跃', en: 'Active' },
+  { id: 'idle', zh: '待命', en: 'Idle' },
+  { id: 'blocked', zh: '阻塞', en: 'Blocked' },
+];
+
+const PROJECT_TASK_RUN_STATE_OPTIONS: Array<{ id: ProjectTaskRunState; zh: string; en: string }> = [
+  { id: 'idle', zh: '未执行', en: 'Idle' },
+  { id: 'running', zh: '执行中', en: 'Running' },
+  { id: 'updated', zh: '有更新', en: 'Updated' },
+  { id: 'blocked', zh: '执行受阻', en: 'Blocked' },
+  { id: 'failed', zh: '执行失败', en: 'Failed' },
+];
+
 const getProjectStatusLabel = (status: ProjectStatus | undefined, isZh: boolean) => {
   const option = PROJECT_STATUS_OPTIONS.find((item) => item.id === status) || PROJECT_STATUS_OPTIONS[0];
   return isZh ? option.zh : option.en;
@@ -108,6 +145,21 @@ const getProjectStatusLabel = (status: ProjectStatus | undefined, isZh: boolean)
 
 const getProjectTaskStatusLabel = (status: ProjectTaskStatus | undefined, isZh: boolean) => {
   const option = PROJECT_TASK_STATUS_OPTIONS.find((item) => item.id === status) || PROJECT_TASK_STATUS_OPTIONS[0];
+  return isZh ? option.zh : option.en;
+};
+
+const getProjectTeamKindLabel = (kind: ProjectTeamMemberKind | undefined, isZh: boolean) => {
+  const option = PROJECT_TEAM_KIND_OPTIONS.find((item) => item.id === kind) || PROJECT_TEAM_KIND_OPTIONS[0];
+  return isZh ? option.zh : option.en;
+};
+
+const getProjectTeamStatusLabel = (status: ProjectTeamMemberStatus | undefined, isZh: boolean) => {
+  const option = PROJECT_TEAM_STATUS_OPTIONS.find((item) => item.id === status) || PROJECT_TEAM_STATUS_OPTIONS[0];
+  return isZh ? option.zh : option.en;
+};
+
+const getProjectTaskRunStateLabel = (state: ProjectTaskRunState | undefined, isZh: boolean) => {
+  const option = PROJECT_TASK_RUN_STATE_OPTIONS.find((item) => item.id === state) || PROJECT_TASK_RUN_STATE_OPTIONS[0];
   return isZh ? option.zh : option.en;
 };
 
@@ -166,6 +218,8 @@ const ProjectsPage = () => {
   const [savingProjectMeta, setSavingProjectMeta] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskDescription, setNewTaskDescription] = useState('');
+  const [newTaskAssigneeId, setNewTaskAssigneeId] = useState('');
+  const [newTeamMemberDraft, setNewTeamMemberDraft] = useState<ProjectTeamDraft>(createEmptyProjectTeamDraft);
   const [uploading, setUploading] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [editingName, setEditingName] = useState(false);
@@ -420,6 +474,13 @@ const ProjectsPage = () => {
     await loadProjects();
   };
 
+  const persistProjectTeamMembers = async (nextTeamMembers: ProjectTeamMember[]) => {
+    if (!currentProject) return;
+    await updateProject(currentProject.id, { team_members: nextTeamMembers });
+    await loadProject(currentProject.id);
+    await loadProjects();
+  };
+
   const addProjectTask = async () => {
     if (!currentProject || !newTaskTitle.trim()) return;
     const now = new Date().toISOString();
@@ -430,12 +491,14 @@ const ProjectsPage = () => {
         description: newTaskDescription.trim(),
         status: 'todo',
         source: 'project',
+        assignee_id: newTaskAssigneeId,
         updated_at: now,
       },
       ...((currentProject.tasks || []) as ProjectTask[]),
     ];
     setNewTaskTitle('');
     setNewTaskDescription('');
+    setNewTaskAssigneeId('');
     await persistProjectTasks(nextTasks);
   };
 
@@ -453,6 +516,73 @@ const ProjectsPage = () => {
     if (!currentProject) return;
     const nextTasks = ((currentProject.tasks || []) as ProjectTask[]).filter((task) => task.id !== taskId);
     await persistProjectTasks(nextTasks);
+  };
+
+  const reassignProjectTask = async (taskId: string, assigneeId: string) => {
+    if (!currentProject) return;
+    const nextTasks = ((currentProject.tasks || []) as ProjectTask[]).map((task) => (
+      task.id === taskId
+        ? { ...task, assignee_id: assigneeId, updated_at: new Date().toISOString() }
+        : task
+    ));
+    await persistProjectTasks(nextTasks);
+  };
+
+  const addProjectTeamMember = async () => {
+    if (!currentProject || !newTeamMemberDraft.name.trim()) return;
+    const now = new Date().toISOString();
+    const nextMembers: ProjectTeamMember[] = [
+      {
+        id: `project-member-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+        name: newTeamMemberDraft.name.trim(),
+        kind: newTeamMemberDraft.kind,
+        role: newTeamMemberDraft.role.trim(),
+        focus: newTeamMemberDraft.focus.trim(),
+        model: newTeamMemberDraft.kind === 'agent' ? newTeamMemberDraft.model.trim() : '',
+        status: newTeamMemberDraft.status,
+        updated_at: now,
+      },
+      ...currentProjectTeamMembers,
+    ];
+    setNewTeamMemberDraft(createEmptyProjectTeamDraft());
+    await persistProjectTeamMembers(nextMembers);
+  };
+
+  const removeProjectTeamMember = async (memberId: string) => {
+    if (!currentProject) return;
+    const nextMembers = currentProjectTeamMembers.filter((member) => member.id !== memberId);
+    const nextTasks = currentProjectTasks.map((task) => (
+      task.assignee_id === memberId
+        ? { ...task, assignee_id: '', updated_at: new Date().toISOString() }
+        : task
+    ));
+    await updateProject(currentProject.id, {
+      team_members: nextMembers,
+      tasks: nextTasks,
+    });
+    await loadProject(currentProject.id);
+    await loadProjects();
+  };
+
+  const updateProjectTeamMemberField = async (
+    memberId: string,
+    patch: Partial<Pick<ProjectTeamMember, 'role' | 'focus' | 'status' | 'model'>>,
+  ) => {
+    if (!currentProject) return;
+    const nextMembers = currentProjectTeamMembers.map((member) => (
+      member.id === memberId
+        ? {
+            ...member,
+            ...patch,
+            model: member.kind === 'agent' ? String(patch.model ?? member.model ?? '').trim() : '',
+            role: String(patch.role ?? member.role ?? '').trim(),
+            focus: String(patch.focus ?? member.focus ?? '').trim(),
+            status: (patch.status || member.status) as ProjectTeamMemberStatus,
+            updated_at: new Date().toISOString(),
+          }
+        : member
+    ));
+    await persistProjectTeamMembers(nextMembers);
   };
 
   const handleFileUpload = async (files: FileList | File[]) => {
@@ -542,7 +672,7 @@ const ProjectsPage = () => {
       id: `conv-${conv.id}`,
       type: 'chat',
       title: conv.title || (isZh ? '未命名聊天' : 'Untitled chat'),
-      detail: isZh ? '项目聊天' : 'Project chat',
+      detail: buildProjectConversationDetail(conv),
       at: conv.created_at,
     }));
     const files = (currentProject.files || []).map((file: ProjectFile) => ({
@@ -564,7 +694,7 @@ const ProjectsPage = () => {
       .filter((item) => item.at)
       .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
       .slice(0, 8);
-  }, [currentProject, isZh]);
+  }, [buildProjectConversationDetail, currentProject, isZh]);
 
   const currentProjectDoc = useMemo(
     () => parseProjectDocument(currentProject?.instructions || currentProject?.description || ''),
@@ -575,6 +705,69 @@ const ProjectsPage = () => {
     () => Array.isArray(currentProject?.tasks) ? currentProject.tasks : [],
     [currentProject?.tasks],
   );
+
+  const currentProjectTeamMembers = useMemo<ProjectTeamMember[]>(
+    () => Array.isArray(currentProject?.team_members) ? currentProject.team_members : [],
+    [currentProject?.team_members],
+  );
+
+  const teamMemberMap = useMemo(() => (
+    new Map(currentProjectTeamMembers.map((member) => [member.id, member]))
+  ), [currentProjectTeamMembers]);
+
+  const getTaskAssigneeLabel = useCallback((assigneeId?: string) => {
+    if (!assigneeId) return isZh ? '未分派' : 'Unassigned';
+    return teamMemberMap.get(assigneeId)?.name || (isZh ? '未分派' : 'Unassigned');
+  }, [isZh, teamMemberMap]);
+
+  const getTaskRunStateTone = useCallback((state?: ProjectTaskRunState) => {
+    if (state === 'running') return 'border-[#C98B6E]/30 bg-[#C98B6E]/10 text-[#C98B6E]';
+    if (state === 'updated') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
+    if (state === 'blocked') return 'border-amber-500/30 bg-amber-500/10 text-amber-300';
+    if (state === 'failed') return 'border-red-500/30 bg-red-500/10 text-red-300';
+    return 'border-claude-border bg-transparent text-claude-textSecondary';
+  }, []);
+
+  const buildProjectConversationDetail = useCallback((conv: any) => {
+    if (conv?.project_run_kind === 'task_execution') {
+      const memberName = conv?.project_member_id ? teamMemberMap.get(conv.project_member_id)?.name : '';
+      return memberName
+        ? (isZh ? `任务执行会话 · ${memberName}` : `Task execution chat · ${memberName}`)
+        : (isZh ? '任务执行会话' : 'Task execution chat');
+    }
+    if (conv?.project_run_kind === 'role_chat') {
+      const memberName = conv?.project_member_id ? teamMemberMap.get(conv.project_member_id)?.name : '';
+      return memberName
+        ? (isZh ? `角色会话 · ${memberName}` : `Role chat · ${memberName}`)
+        : (isZh ? '角色会话' : 'Role chat');
+    }
+    return isZh ? '项目聊天' : 'Project chat';
+  }, [isZh, teamMemberMap]);
+
+  const buildProjectTaskDetail = useCallback((task: ProjectTask) => {
+    const parts = [
+      `${isZh ? '项目任务' : 'Project task'} · ${getProjectTaskStatusLabel(task.status, isZh)}`,
+    ];
+    if (task.assignee_id) {
+      parts.push(getTaskAssigneeLabel(task.assignee_id));
+    }
+    if (task.run_state && task.run_state !== 'idle') {
+      parts.push(getProjectTaskRunStateLabel(task.run_state, isZh));
+    }
+    if (task.run_summary) {
+      parts.push(task.run_summary);
+    }
+    return parts.join(' · ');
+  }, [getTaskAssigneeLabel, isZh]);
+
+  const teamAssignmentStats = useMemo(() => {
+    return currentProjectTeamMembers.map((member) => ({
+      ...member,
+      taskCount: currentProjectTasks.filter((task) => task.assignee_id === member.id).length,
+      doingCount: currentProjectTasks.filter((task) => task.assignee_id === member.id && task.status === 'doing').length,
+      blockedCount: currentProjectTasks.filter((task) => task.assignee_id === member.id && task.status === 'blocked').length,
+    }));
+  }, [currentProjectTasks, currentProjectTeamMembers]);
 
   const enhancedProjectActivityItems = useMemo(() => {
     if (!currentProject) return [];
@@ -595,7 +788,7 @@ const ProjectsPage = () => {
         id: `project-task-${task.id}`,
         type: 'project',
         title: task.title,
-      detail: `${isZh ? '项目任务' : 'Project task'} 路 ${getProjectTaskStatusLabel(task.status, isZh)}`,
+        detail: buildProjectTaskDetail(task),
         at: task.updated_at,
       });
     });
@@ -605,7 +798,7 @@ const ProjectsPage = () => {
           id: `project-conv-${conv.id}`,
           type: 'chat',
           title: conv.title || (isZh ? '未命名聊天' : 'Untitled chat'),
-        detail: isZh ? '项目聊天' : 'Project chat',
+        detail: buildProjectConversationDetail(conv),
           at: conv.created_at,
         });
     });
@@ -634,7 +827,7 @@ const ProjectsPage = () => {
       .filter((item) => item.at)
       .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
       .slice(0, 12);
-  }, [currentProject, currentProjectTasks, isZh]);
+  }, [buildProjectConversationDetail, buildProjectTaskDetail, currentProject, currentProjectTasks, isZh]);
 
   const projectTaskColumns = useMemo(
     () => PROJECT_TASK_STATUS_OPTIONS.map((option) => ({
@@ -794,6 +987,100 @@ const ProjectsPage = () => {
       showProjectActionResult('error', error?.message || (isZh ? '绑定当前工作区失败' : 'Failed to link current workspace'));
     }
   };
+
+  const buildTeamMemberChatPrompt = useCallback((member: ProjectTeamMember) => {
+    const lines = [
+      isZh ? `你现在以项目成员「${member.name}」的身份参与这个项目。` : `You are now operating as the project member "${member.name}".`,
+      member.kind === 'agent'
+        ? (isZh ? '这是一个代理角色，请用执行型工作方式来推进。' : 'This is an agent role, so work in an execution-oriented way.')
+        : (isZh ? '这是一个人工成员角色，请用协作型工作方式来推进。' : 'This is a human collaborator role, so work in a collaborative way.'),
+      currentProject?.name ? (isZh ? `项目：${currentProject.name}` : `Project: ${currentProject.name}`) : '',
+      member.role ? (isZh ? `角色：${member.role}` : `Role: ${member.role}`) : '',
+      member.focus ? (isZh ? `当前专注：${member.focus}` : `Current focus: ${member.focus}`) : '',
+      currentProject?.milestone ? (isZh ? `里程碑：${currentProject.milestone}` : `Milestone: ${currentProject.milestone}`) : '',
+      currentProject?.next_action ? (isZh ? `下一步动作：${currentProject.next_action}` : `Next action: ${currentProject.next_action}`) : '',
+      currentProjectDoc.overview ? (isZh ? `项目概览：${currentProjectDoc.overview}` : `Overview: ${currentProjectDoc.overview}`) : '',
+      currentProjectDoc.goals ? (isZh ? `项目目标：${currentProjectDoc.goals}` : `Goals: ${currentProjectDoc.goals}`) : '',
+      currentProjectDoc.constraints ? (isZh ? `约束：${currentProjectDoc.constraints}` : `Constraints: ${currentProjectDoc.constraints}`) : '',
+      isZh
+        ? '请先用这个角色的口吻说明你会如何推进当前项目，并给出接下来最值得执行的 3 步。'
+        : 'Start by explaining how you would advance this project in this role, then propose the next 3 highest-value steps.',
+    ].filter(Boolean);
+    return lines.join('\n\n');
+  }, [currentProject, currentProjectDoc.constraints, currentProjectDoc.goals, currentProjectDoc.overview, isZh]);
+
+  const buildTaskExecutionPrompt = useCallback((task: ProjectTask, member: ProjectTeamMember) => {
+    const lines = [
+      isZh
+        ? `你现在以代理「${member.name}」的身份接手这个项目任务。`
+        : `You are now taking over this project task as the agent "${member.name}".`,
+      currentProject?.name ? (isZh ? `项目：${currentProject.name}` : `Project: ${currentProject.name}`) : '',
+      member.role ? (isZh ? `代理角色：${member.role}` : `Agent role: ${member.role}`) : '',
+      member.focus ? (isZh ? `当前专注：${member.focus}` : `Current focus: ${member.focus}`) : '',
+      isZh ? `任务标题：${task.title}` : `Task title: ${task.title}`,
+      task.description ? (isZh ? `任务说明：${task.description}` : `Task detail: ${task.description}`) : '',
+      currentProject?.milestone ? (isZh ? `里程碑：${currentProject.milestone}` : `Milestone: ${currentProject.milestone}`) : '',
+      currentProject?.next_action ? (isZh ? `项目下一步：${currentProject.next_action}` : `Project next action: ${currentProject.next_action}`) : '',
+      currentProjectDoc.overview ? (isZh ? `项目概览：${currentProjectDoc.overview}` : `Overview: ${currentProjectDoc.overview}`) : '',
+      currentProjectDoc.goals ? (isZh ? `项目目标：${currentProjectDoc.goals}` : `Goals: ${currentProjectDoc.goals}`) : '',
+      currentProjectDoc.constraints ? (isZh ? `项目约束：${currentProjectDoc.constraints}` : `Constraints: ${currentProjectDoc.constraints}`) : '',
+      isZh
+        ? '请直接进入执行模式：先拆解任务，再说明你会先检查哪些文件、命令或风险点，然后开始推进。'
+        : 'Go into execution mode: break down the task, explain which files/commands/risks you will inspect first, and then start advancing it.',
+    ].filter(Boolean);
+    return lines.join('\n\n');
+  }, [currentProject, currentProjectDoc.constraints, currentProjectDoc.goals, currentProjectDoc.overview, isZh]);
+
+  const openTeamMemberProjectChat = useCallback(async (member: ProjectTeamMember) => {
+    if (!currentProject) return;
+    const title = member.kind === 'agent'
+      ? `${member.name} · ${isZh ? '代理会话' : 'Agent chat'}`
+      : `${member.name} · ${isZh ? '角色会话' : 'Role chat'}`;
+    const initialMessage = buildTeamMemberChatPrompt(member);
+    const model = member.kind === 'agent' && member.model ? member.model : currentModelString;
+    const conv = await createProjectConversation(currentProject.id, title, model, {
+      project_member_id: member.id,
+      project_run_kind: 'role_chat',
+    });
+    navigate(`/chat/${conv.id}`, { state: { initialMessage, model } });
+  }, [buildTeamMemberChatPrompt, currentModelString, currentProject, isZh, navigate]);
+
+  const launchTaskWithAgent = useCallback(async (task: ProjectTask) => {
+    if (!currentProject) return;
+    const agents = currentProjectTeamMembers.filter((member) => member.kind === 'agent' && member.status !== 'blocked');
+    const fallbackAgents = currentProjectTeamMembers.filter((member) => member.kind === 'agent');
+    const assignedMember = task.assignee_id ? teamMemberMap.get(task.assignee_id) : null;
+    const targetAgent =
+      assignedMember && assignedMember.kind === 'agent'
+        ? assignedMember
+        : agents[0] || fallbackAgents[0] || null;
+    if (!targetAgent) {
+      window.alert(isZh ? '请先给这个项目添加至少一个代理成员。' : 'Add at least one agent member to this project first.');
+      return;
+    }
+
+    const nextTasks = currentProjectTasks.map((item) => (
+      item.id === task.id
+        ? {
+            ...item,
+            assignee_id: targetAgent.id,
+            status: item.status === 'todo' ? 'doing' : item.status,
+            updated_at: new Date().toISOString(),
+          }
+        : item
+    ));
+    await updateProject(currentProject.id, { tasks: nextTasks });
+
+    const title = `${task.title} · ${targetAgent.name}`;
+    const initialMessage = buildTaskExecutionPrompt(task, targetAgent);
+    const model = targetAgent.model || currentModelString;
+    const conv = await createProjectConversation(currentProject.id, title, model, {
+      project_task_id: task.id,
+      project_member_id: targetAgent.id,
+      project_run_kind: 'task_execution',
+    });
+    navigate(`/chat/${conv.id}`, { state: { initialMessage, model } });
+  }, [buildTaskExecutionPrompt, currentModelString, currentProject, currentProjectTasks, currentProjectTeamMembers, isZh, navigate, teamMemberMap]);
 
   const handleChooseWorkspaceFolder = async (project: Project) => {
     try {
@@ -1121,7 +1408,165 @@ const ProjectsPage = () => {
               </div>
             </div>
 
-            <div className="mt-4 grid grid-cols-[1fr_1fr_auto] gap-3">
+            <div className="mt-4 grid grid-cols-[0.95fr_1.05fr] gap-3">
+              <div className="rounded-[14px] border border-claude-border bg-claude-bg p-3">
+                <div className="flex items-center gap-2 text-[13px] font-medium text-claude-text">
+                  <UsersRound size={15} className="text-claude-textSecondary" />
+                  {isZh ? '团队与代理' : 'Team and agents'}
+                </div>
+                <div className="mt-2 text-[12px] leading-6 text-claude-textSecondary">
+                  {isZh
+                    ? '先把人和代理角色挂到项目里，再给任务分派负责人。后面可以继续接自动编排。'
+                    : 'Attach humans and agent roles to the project first, then assign task ownership.'}
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <input
+                    value={newTeamMemberDraft.name}
+                    onChange={(e) => setNewTeamMemberDraft((prev) => ({ ...prev, name: e.target.value }))}
+                    placeholder={isZh ? '名称，例如：前端代理' : 'Name, e.g. Frontend agent'}
+                    className="rounded-lg border border-claude-border bg-transparent px-3 py-2 text-[13px] text-claude-text outline-none"
+                  />
+                  <select
+                    value={newTeamMemberDraft.kind}
+                    onChange={(e) => setNewTeamMemberDraft((prev) => ({ ...prev, kind: e.target.value as ProjectTeamMemberKind }))}
+                    className="rounded-lg border border-claude-border bg-transparent px-3 py-2 text-[13px] text-claude-text outline-none"
+                  >
+                    {PROJECT_TEAM_KIND_OPTIONS.map((option) => (
+                      <option key={option.id} value={option.id}>{isZh ? option.zh : option.en}</option>
+                    ))}
+                  </select>
+                  <input
+                    value={newTeamMemberDraft.role}
+                    onChange={(e) => setNewTeamMemberDraft((prev) => ({ ...prev, role: e.target.value }))}
+                    placeholder={isZh ? '角色，例如：前端 / 测试 / 发布' : 'Role, e.g. frontend / QA / release'}
+                    className="rounded-lg border border-claude-border bg-transparent px-3 py-2 text-[13px] text-claude-text outline-none"
+                  />
+                  <select
+                    value={newTeamMemberDraft.status}
+                    onChange={(e) => setNewTeamMemberDraft((prev) => ({ ...prev, status: e.target.value as ProjectTeamMemberStatus }))}
+                    className="rounded-lg border border-claude-border bg-transparent px-3 py-2 text-[13px] text-claude-text outline-none"
+                  >
+                    {PROJECT_TEAM_STATUS_OPTIONS.map((option) => (
+                      <option key={option.id} value={option.id}>{isZh ? option.zh : option.en}</option>
+                    ))}
+                  </select>
+                  <input
+                    value={newTeamMemberDraft.focus}
+                    onChange={(e) => setNewTeamMemberDraft((prev) => ({ ...prev, focus: e.target.value }))}
+                    placeholder={isZh ? '专注事项，例如：组件重构 / 缺陷回归' : 'Focus area'}
+                    className="rounded-lg border border-claude-border bg-transparent px-3 py-2 text-[13px] text-claude-text outline-none"
+                  />
+                  <input
+                    value={newTeamMemberDraft.model}
+                    onChange={(e) => setNewTeamMemberDraft((prev) => ({ ...prev, model: e.target.value }))}
+                    placeholder={isZh ? '代理模型，可选' : 'Agent model, optional'}
+                    disabled={newTeamMemberDraft.kind !== 'agent'}
+                    className="rounded-lg border border-claude-border bg-transparent px-3 py-2 text-[13px] text-claude-text outline-none disabled:opacity-40"
+                  />
+                </div>
+
+                <button
+                  onClick={addProjectTeamMember}
+                  disabled={!newTeamMemberDraft.name.trim()}
+                  className="mt-3 rounded-lg bg-claude-text px-4 py-2 text-[13px] font-medium text-claude-bg disabled:opacity-50"
+                >
+                  {isZh ? '添加成员' : 'Add member'}
+                </button>
+              </div>
+
+              <div className="rounded-[14px] border border-claude-border bg-claude-bg p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-[13px] font-medium text-claude-text">{isZh ? '当前分工' : 'Current ownership'}</div>
+                  <div className="text-[11px] text-claude-textSecondary">
+                    {isZh
+                      ? `${teamAssignmentStats.length} 个成员 / ${teamAssignmentStats.filter((member) => member.kind === 'agent').length} 个代理`
+                      : `${teamAssignmentStats.length} members / ${teamAssignmentStats.filter((member) => member.kind === 'agent').length} agents`}
+                  </div>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {teamAssignmentStats.length > 0 ? teamAssignmentStats.map((member) => (
+                    <div key={member.id} className="rounded-lg border border-claude-border bg-claude-input px-3 py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            {member.kind === 'agent' ? <Bot size={14} className="text-[#C98B6E]" /> : <UsersRound size={14} className="text-[#6E8BC9]" />}
+                            <div className="truncate text-[13px] font-medium text-claude-text">{member.name}</div>
+                            <span className="rounded-full border border-claude-border px-2 py-0.5 text-[10px] text-claude-textSecondary">
+                              {getProjectTeamKindLabel(member.kind, isZh)}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-[12px] leading-5 text-claude-textSecondary">
+                            {member.role || (isZh ? '还没有填写角色' : 'No role yet')}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => removeProjectTeamMember(member.id)}
+                          className="rounded border border-red-500/30 px-2 py-1 text-[10px] text-[#E05A5A] hover:bg-red-500/10"
+                        >
+                          {isZh ? '移除' : 'Remove'}
+                        </button>
+                      </div>
+
+                      <div className="mt-3 grid grid-cols-[1fr_1fr_auto] gap-2">
+                        <input
+                          defaultValue={member.focus || ''}
+                          onBlur={(e) => updateProjectTeamMemberField(member.id, { focus: e.target.value })}
+                          placeholder={isZh ? '专注事项' : 'Focus'}
+                          className="rounded-lg border border-claude-border bg-transparent px-3 py-2 text-[12px] text-claude-text outline-none"
+                        />
+                        <input
+                          defaultValue={member.kind === 'agent' ? (member.model || '') : (member.role || '')}
+                          onBlur={(e) => updateProjectTeamMemberField(member.id, member.kind === 'agent' ? { model: e.target.value } : { role: e.target.value })}
+                          placeholder={member.kind === 'agent' ? (isZh ? '模型，例如 Sonnet' : 'Model, e.g. Sonnet') : (isZh ? '角色' : 'Role')}
+                          className="rounded-lg border border-claude-border bg-transparent px-3 py-2 text-[12px] text-claude-text outline-none"
+                        />
+                        <select
+                          value={member.status}
+                          onChange={(e) => updateProjectTeamMemberField(member.id, { status: e.target.value as ProjectTeamMemberStatus })}
+                          className="rounded-lg border border-claude-border bg-transparent px-3 py-2 text-[12px] text-claude-text outline-none"
+                        >
+                          {PROJECT_TEAM_STATUS_OPTIONS.map((option) => (
+                            <option key={option.id} value={option.id}>{isZh ? option.zh : option.en}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-claude-textSecondary">
+                        <span className="rounded-full border border-claude-border px-2 py-1">
+                          {isZh ? `任务 ${member.taskCount}` : `Tasks ${member.taskCount}`}
+                        </span>
+                        <span className="rounded-full border border-claude-border px-2 py-1">
+                          {isZh ? `进行中 ${member.doingCount}` : `Doing ${member.doingCount}`}
+                        </span>
+                        <span className="rounded-full border border-claude-border px-2 py-1">
+                          {isZh ? `阻塞 ${member.blockedCount}` : `Blocked ${member.blockedCount}`}
+                        </span>
+                        <span className="rounded-full border border-claude-border px-2 py-1">
+                          {getProjectTeamStatusLabel(member.status, isZh)}
+                        </span>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          onClick={() => openTeamMemberProjectChat(member)}
+                          className="rounded border border-claude-border px-2.5 py-1.5 text-[11px] text-claude-textSecondary hover:bg-claude-hover hover:text-claude-text"
+                        >
+                          {member.kind === 'agent'
+                            ? (isZh ? '启动代理会话' : 'Start agent chat')
+                            : (isZh ? '启动角色会话' : 'Start role chat')}
+                        </button>
+                      </div>
+                    </div>
+                  )) : (
+                    <div className="rounded-lg border border-dashed border-claude-border px-3 py-6 text-center text-[12px] leading-6 text-claude-textSecondary">
+                      {isZh ? '还没有团队成员。先加一个人或代理，再开始分派任务。' : 'No team members yet. Add a human or agent first.'}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-[1fr_1fr_220px_auto] gap-3">
               <input
                 value={newTaskTitle}
                 onChange={(e) => setNewTaskTitle(e.target.value)}
@@ -1140,6 +1585,18 @@ const ProjectsPage = () => {
                 placeholder={isZh ? '补充说明，可选' : 'Optional note'}
                 className="rounded-lg border border-claude-border bg-claude-bg px-3 py-2 text-[13px] text-claude-text outline-none"
               />
+              <select
+                value={newTaskAssigneeId}
+                onChange={(e) => setNewTaskAssigneeId(e.target.value)}
+                className="rounded-lg border border-claude-border bg-claude-bg px-3 py-2 text-[13px] text-claude-text outline-none"
+              >
+                <option value="">{isZh ? '先不分派' : 'Unassigned'}</option>
+                {currentProjectTeamMembers.map((member) => (
+                  <option key={member.id} value={member.id}>
+                    {member.name}{member.role ? ` · ${member.role}` : ''}
+                  </option>
+                ))}
+              </select>
               <button
                 onClick={addProjectTask}
                 disabled={!newTaskTitle.trim()}
@@ -1168,6 +1625,63 @@ const ProjectsPage = () => {
                           {task.description && (
                             <div className="mt-1 text-[12px] leading-5 text-claude-textSecondary">{task.description}</div>
                           )}
+                          <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-claude-textSecondary">
+                            <span className="rounded-full border border-claude-border px-2 py-1">
+                              {getTaskAssigneeLabel(task.assignee_id)}
+                            </span>
+                            {task.run_state && task.run_state !== 'idle' ? (
+                              <span className={`rounded-full border px-2 py-1 ${getTaskRunStateTone(task.run_state)}`}>
+                                {getProjectTaskRunStateLabel(task.run_state, isZh)}
+                              </span>
+                            ) : null}
+                          </div>
+                          {task.run_summary ? (
+                            <div className="mt-3 rounded-lg border border-claude-border/80 bg-black/10 px-3 py-2 text-[11px] leading-5 text-claude-textSecondary">
+                              <div className="font-medium text-claude-text">
+                                {isZh ? '最近一次代理更新' : 'Latest agent update'}
+                              </div>
+                              <div className="mt-1">{task.run_summary}</div>
+                              {task.run_updated_at ? (
+                                <div className="mt-2 text-[10px] text-claude-textSecondary">{formatConversationTime(task.run_updated_at)}</div>
+                              ) : null}
+                            </div>
+                          ) : null}
+                          <select
+                            value={task.assignee_id || ''}
+                            onChange={(e) => reassignProjectTask(task.id, e.target.value)}
+                            className="mt-3 w-full rounded-lg border border-claude-border bg-transparent px-3 py-2 text-[12px] text-claude-text outline-none"
+                          >
+                            <option value="">{isZh ? '未分派' : 'Unassigned'}</option>
+                            {currentProjectTeamMembers.map((member) => (
+                              <option key={member.id} value={member.id}>
+                                {member.name}{member.role ? ` · ${member.role}` : ''}
+                              </option>
+                            ))}
+                          </select>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              onClick={() => launchTaskWithAgent(task)}
+                              className="rounded border border-[#C98B6E]/40 px-2.5 py-1.5 text-[11px] text-[#C98B6E] hover:bg-[#C98B6E]/10"
+                            >
+                              {isZh ? '派给代理并启动执行' : 'Assign to agent and run'}
+                            </button>
+                            {task.assignee_id && teamMemberMap.get(task.assignee_id) ? (
+                              <button
+                                onClick={() => openTeamMemberProjectChat(teamMemberMap.get(task.assignee_id)!)}
+                                className="rounded border border-claude-border px-2.5 py-1.5 text-[11px] text-claude-textSecondary hover:bg-claude-hover hover:text-claude-text"
+                              >
+                                {isZh ? '打开负责人会话' : 'Open assignee chat'}
+                              </button>
+                            ) : null}
+                            {task.linked_conversation_id ? (
+                              <button
+                                onClick={() => navigate(`/chat/${task.linked_conversation_id}`)}
+                                className="rounded border border-claude-border px-2.5 py-1.5 text-[11px] text-claude-textSecondary hover:bg-claude-hover hover:text-claude-text"
+                              >
+                                {isZh ? '打开最近执行会话' : 'Open latest run'}
+                              </button>
+                            ) : null}
+                          </div>
                           <div className="mt-3 flex flex-wrap items-center gap-1.5">
                             {PROJECT_TASK_STATUS_OPTIONS.filter((option) => option.id !== task.status).map((target) => (
                               <button
@@ -1314,6 +1828,7 @@ const ProjectsPage = () => {
                                   <MessageSquare size={16} className="mt-0.5 flex-shrink-0 text-claude-textSecondary" />
                                   <div className="min-w-0 flex-1">
                                     <div className="truncate text-[14px] text-claude-text">{conv.title}</div>
+                                    <div className="mt-1 text-[12px] text-claude-textSecondary">{buildProjectConversationDetail(conv)}</div>
                                     <div className="mt-1 text-[12px] text-claude-textSecondary">{formatConversationTime(conv.created_at)}</div>
                                   </div>
                                 </button>

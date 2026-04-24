@@ -416,6 +416,7 @@ export interface Project {
   milestone?: string;
   next_action?: string;
   tasks: ProjectTask[];
+  team_members: ProjectTeamMember[];
   is_archived: number;
   file_count?: number;
   chat_count?: number;
@@ -428,6 +429,25 @@ export type ProjectStatus = 'active' | 'blocked' | 'ready_to_release' | 'done';
 
 export type ProjectTaskStatus = 'todo' | 'doing' | 'blocked' | 'done';
 
+export type ProjectTeamMemberKind = 'human' | 'agent';
+
+export type ProjectTeamMemberStatus = 'active' | 'idle' | 'blocked';
+
+export type ProjectTaskRunState = 'idle' | 'running' | 'updated' | 'blocked' | 'failed';
+
+export type ProjectConversationRunKind = 'general' | 'role_chat' | 'task_execution';
+
+export interface ProjectTeamMember {
+  id: string;
+  name: string;
+  kind: ProjectTeamMemberKind;
+  role?: string;
+  focus?: string;
+  model?: string;
+  status: ProjectTeamMemberStatus;
+  updated_at: string;
+}
+
 export interface ProjectTask {
   id: string;
   title: string;
@@ -435,7 +455,18 @@ export interface ProjectTask {
   status: ProjectTaskStatus;
   source?: string;
   blocked_reason?: string;
+  assignee_id?: string;
+  linked_conversation_id?: string;
+  run_state?: ProjectTaskRunState;
+  run_summary?: string;
+  run_updated_at?: string;
   updated_at: string;
+}
+
+export interface ProjectConversationCreateOptions {
+  project_task_id?: string;
+  project_member_id?: string;
+  project_run_kind?: ProjectConversationRunKind;
 }
 
 export interface ProjectFile {
@@ -493,7 +524,7 @@ export async function getProject(id: string) {
 
 export async function updateProject(
   id: string,
-  data: Partial<Pick<Project, 'name' | 'description' | 'instructions' | 'is_archived' | 'workspace_path' | 'status' | 'owner' | 'milestone' | 'next_action' | 'tasks'>>,
+  data: Partial<Pick<Project, 'name' | 'description' | 'instructions' | 'is_archived' | 'workspace_path' | 'status' | 'owner' | 'milestone' | 'next_action' | 'tasks' | 'team_members'>>,
 ) {
   const res = await request(`/projects/${id}`, {
     method: 'PATCH',
@@ -530,10 +561,15 @@ export async function getProjectConversations(projectId: string) {
   return res.json();
 }
 
-export async function createProjectConversation(projectId: string, title?: string, model?: string) {
+export async function createProjectConversation(
+  projectId: string,
+  title?: string,
+  model?: string,
+  options?: ProjectConversationCreateOptions,
+) {
   const res = await request(`/projects/${projectId}/conversations`, {
     method: 'POST',
-    body: JSON.stringify({ title, model }),
+    body: JSON.stringify({ title, model, ...(options || {}) }),
   });
   return res.json();
 }

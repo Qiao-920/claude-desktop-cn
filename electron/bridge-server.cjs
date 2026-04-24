@@ -895,6 +895,20 @@ if __name__ == "__main__":
     }
     const PROJECT_STATUS_VALUES = new Set(['active', 'blocked', 'ready_to_release', 'done']);
     const PROJECT_TASK_STATUS_VALUES = new Set(['todo', 'doing', 'blocked', 'done']);
+    const PROJECT_TASK_RUN_STATE_VALUES = new Set(['idle', 'running', 'updated', 'blocked', 'failed']);
+    const PROJECT_TEAM_MEMBER_KIND_VALUES = new Set(['human', 'agent']);
+    const PROJECT_TEAM_MEMBER_STATUS_VALUES = new Set(['active', 'idle', 'blocked']);
+
+    const normalizeProjectTeamMember = (member) => ({
+        id: member?.id || makeLocalId('project-member'),
+        name: String(member?.name || '').trim(),
+        kind: PROJECT_TEAM_MEMBER_KIND_VALUES.has(member?.kind) ? member.kind : 'human',
+        role: String(member?.role || '').trim(),
+        focus: String(member?.focus || '').trim(),
+        model: String(member?.model || '').trim(),
+        status: PROJECT_TEAM_MEMBER_STATUS_VALUES.has(member?.status) ? member.status : 'active',
+        updated_at: member?.updated_at || new Date().toISOString(),
+    });
 
     const normalizeProjectTask = (task) => ({
         id: task?.id || makeLocalId('project-task'),
@@ -903,12 +917,20 @@ if __name__ == "__main__":
         status: PROJECT_TASK_STATUS_VALUES.has(task?.status) ? task.status : 'todo',
         source: String(task?.source || '').trim(),
         blocked_reason: String(task?.blocked_reason || '').trim(),
+        assignee_id: String(task?.assignee_id || '').trim(),
+        linked_conversation_id: String(task?.linked_conversation_id || '').trim(),
+        run_state: PROJECT_TASK_RUN_STATE_VALUES.has(task?.run_state) ? task.run_state : (task?.run_summary ? 'updated' : 'idle'),
+        run_summary: String(task?.run_summary || '').trim(),
+        run_updated_at: String(task?.run_updated_at || '').trim(),
         updated_at: task?.updated_at || new Date().toISOString(),
     });
 
     const normalizeProjectRecord = (project) => {
         if (!project || typeof project !== 'object') return project;
         if (!Array.isArray(project.github_sources)) project.github_sources = [];
+        project.team_members = Array.isArray(project.team_members)
+            ? project.team_members.map(normalizeProjectTeamMember).filter((member) => member.name)
+            : [];
         project.status = PROJECT_STATUS_VALUES.has(project.status) ? project.status : 'active';
         project.owner = String(project.owner || '').trim();
         project.milestone = String(project.milestone || '').trim();
@@ -916,7 +938,81 @@ if __name__ == "__main__":
         project.tasks = Array.isArray(project.tasks)
             ? project.tasks.map(normalizeProjectTask).filter((task) => task.title)
             : [];
+        const validMemberIds = new Set(project.team_members.map((member) => member.id));
+        project.tasks = project.tasks.map((task) => ({
+            ...task,
+            assignee_id: task.assignee_id && validMemberIds.has(task.assignee_id) ? task.assignee_id : '',
+        }));
         return project;
+    };
+
+    const normalizeExecutionText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+
+    const summarizeTaskExecution = (text, maxLength = 220) => {
+        const clean = normalizeExecutionText(text);
+        if (!clean) return '';
+        return clean.length > maxLength ? `${clean.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...` : clean;
+    };
+
+    const inferTaskRunState = (task, assistantText, toolCalls) => {
+        const normalized = normalizeExecutionText(assistantText);
+        const lowered = normalized.toLowerCase();
+        const hasToolError = Array.isArray(toolCalls) && toolCalls.some((toolCall) => toolCall && (toolCall.status === 'error' || toolCall.is_error));
+        if (hasToolError) return 'failed';
+        if (/(permission denied|requires approval|waiting for your|waiting on|blocked by|缺少权限|需要你的确认|等待你|无法继续|阻塞)/i.test(lowered)) {
+            return 'blocked';
+        }
+        if (normalized) return 'updated';
+        if (task?.run_state === 'running') return 'failed';
+        return task?.run_state || 'idle';
+    };
+
+    const syncProjectTaskExecution = (conv, assistantText, toolCalls, overrides = {}) => {
+        if (!conv?.project_id || !conv?.project_task_id) return;
+        const project = db.projects.find((item) => item.id === conv.project_id);
+        if (!project) return;
+
+        normalizeProjectRecord(project);
+        const now = new Date().toISOString();
+        let changed = false;
+
+        project.tasks = (project.tasks || []).map((task) => {
+            if (task.id !== conv.project_task_id) return task;
+            changed = true;
+
+            const runState = overrides.run_state || inferTaskRunState(task, assistantText, toolCalls);
+            const fallbackSummary =
+                runState === 'running'
+                    ? 'Task execution session created. Waiting for the first agent update.'
+                    : runState === 'failed'
+                        ? 'Task execution ended without a usable agent update.'
+                        : runState === 'blocked'
+                            ? 'The agent reported a blocker and needs follow-up.'
+                            : 'The agent posted a new task update.';
+            const nextSummary = summarizeTaskExecution(overrides.run_summary || assistantText) || fallbackSummary;
+            const nextStatus =
+                overrides.status
+                || (runState === 'blocked'
+                    ? 'blocked'
+                    : task.status === 'todo'
+                        ? 'doing'
+                        : task.status);
+
+            return {
+                ...task,
+                assignee_id: overrides.assignee_id !== undefined ? overrides.assignee_id : (conv.project_member_id || task.assignee_id || ''),
+                linked_conversation_id: conv.id,
+                run_state: runState,
+                run_summary: nextSummary,
+                run_updated_at: now,
+                status: nextStatus,
+                updated_at: now,
+            };
+        });
+
+        if (!changed) return;
+        project.updated_at = now;
+        saveDb();
     };
 
     const saveDb = () => fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
@@ -1937,6 +2033,7 @@ if __name__ == "__main__":
             milestone: '',
             next_action: '',
             tasks: [],
+            team_members: [],
             github_sources: [],
             is_archived: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
         };
@@ -1980,6 +2077,12 @@ if __name__ == "__main__":
                 return res.status(400).json({ error: 'Project tasks must be an array' });
             }
             project.tasks = req.body.tasks.map(normalizeProjectTask).filter((task) => task.title);
+        }
+        if (req.body.team_members !== undefined) {
+            if (!Array.isArray(req.body.team_members)) {
+                return res.status(400).json({ error: 'Project team members must be an array' });
+            }
+            project.team_members = req.body.team_members.map(normalizeProjectTeamMember).filter((member) => member.name);
         }
         if (req.body.is_archived !== undefined) project.is_archived = req.body.is_archived;
         if (req.body.workspace_path !== undefined) {
@@ -2094,7 +2197,13 @@ if __name__ == "__main__":
         if (!project) return res.status(404).json({ error: 'Project not found' });
 
         const id = uuidv4();
-        const { title = 'New Conversation', model = 'claude-sonnet-4-6' } = req.body;
+        const {
+            title = 'New Conversation',
+            model = 'claude-sonnet-4-6',
+            project_task_id = '',
+            project_member_id = '',
+            project_run_kind = 'general',
+        } = req.body || {};
         const workspacePath = path.join(workspacesDir, id);
         if (!fs.existsSync(workspacePath)) fs.mkdirSync(workspacePath, { recursive: true });
 
@@ -2112,11 +2221,23 @@ if __name__ == "__main__":
 
         const newConv = {
             id, title, model, project_id: project.id,
+            project_task_id: String(project_task_id || '').trim(),
+            project_member_id: String(project_member_id || '').trim(),
+            project_run_kind: String(project_run_kind || 'general').trim() || 'general',
             workspace_path: workspacePath, created_at: new Date().toISOString(),
         };
         db.conversations.push(newConv);
-        project.updated_at = new Date().toISOString();
-        saveDb();
+        if (newConv.project_task_id) {
+            syncProjectTaskExecution(newConv, '', [], {
+                assignee_id: newConv.project_member_id || undefined,
+                run_state: 'running',
+                run_summary: 'Task execution session created. Waiting for the first agent update.',
+                status: 'doing',
+            });
+        } else {
+            project.updated_at = new Date().toISOString();
+            saveDb();
+        }
         res.json(newConv);
     });
 
@@ -2219,7 +2340,15 @@ if __name__ == "__main__":
 
     server.post('/api/conversations', (req, res) => {
         const id = uuidv4();
-        const { title = 'New Conversation', model = 'claude-sonnet-4-6', project_id, research_mode = false } = req.body;
+        const {
+            title = 'New Conversation',
+            model = 'claude-sonnet-4-6',
+            project_id,
+            research_mode = false,
+            project_task_id = '',
+            project_member_id = '',
+            project_run_kind = 'general',
+        } = req.body || {};
         const workspacePath = path.join(workspacesDir, id);
 
         if (!fs.existsSync(workspacePath)) {
@@ -2246,12 +2375,34 @@ if __name__ == "__main__":
         const newConv = {
             id, title, model, workspace_path: workspacePath, created_at: new Date().toISOString(),
             research_mode: !!research_mode,
+            project_task_id: String(project_task_id || '').trim(),
+            project_member_id: String(project_member_id || '').trim(),
+            project_run_kind: String(project_run_kind || 'general').trim() || 'general',
             ...(project_id ? { project_id } : {}),
         };
         db.conversations.push(newConv);
-        saveDb();
+        if (newConv.project_id && newConv.project_task_id) {
+            syncProjectTaskExecution(newConv, '', [], {
+                assignee_id: newConv.project_member_id || undefined,
+                run_state: 'running',
+                run_summary: 'Task execution session created. Waiting for the first agent update.',
+                status: 'doing',
+            });
+        } else {
+            saveDb();
+        }
 
-        res.json({ id, title, model, workspace_path: workspacePath, research_mode: !!research_mode });
+        res.json({
+            id,
+            title,
+            model,
+            workspace_path: workspacePath,
+            research_mode: !!research_mode,
+            ...(project_id ? { project_id } : {}),
+            project_task_id: String(project_task_id || '').trim(),
+            project_member_id: String(project_member_id || '').trim(),
+            project_run_kind: String(project_run_kind || 'general').trim() || 'general',
+        });
     });
 
     server.get('/api/conversations/:id', (req, res) => {
@@ -7217,6 +7368,11 @@ You have the following skills available. When a user's request matches a skill's
             elapsed_ms: elapsedMs,
             tokens_per_second: Number((estimatedTokens / Math.max(elapsedMs / 1000, 0.001)).toFixed(2)),
         };
+        syncProjectTaskExecution(
+            conv,
+            turn.assistantText,
+            turn.toolCalls.size > 0 ? turn.toolCallOrder.map(id => turn.toolCalls.get(id)).filter(Boolean) : [],
+        );
         if (turn.assistantText || turn.thinkingText || turn.toolCalls.size > 0) {
             db.messages.push({ id: turn.assistantUuid || uuidv4(), conversation_id: convId, role: 'assistant', content: JSON.stringify([{ type: 'text', text: turn.assistantText }]), created_at: new Date().toISOString(), engineUuidSynced: !!turn.assistantUuid, thinking: turn.thinkingText || undefined, toolCalls: turn.toolCalls.size > 0 ? turn.toolCallOrder.map(id => turn.toolCalls.get(id)).filter(Boolean) : undefined, toolTextEndOffset: (turn.toolCalls.size > 0 && turn.lastToolDoneTextLen > 0) ? turn.lastToolDoneTextLen : undefined, searchLogs: turn.searchLogs.length > 0 ? turn.searchLogs : undefined, responseStats });
             saveDb();
@@ -7601,6 +7757,7 @@ You have the following skills available. When a user's request matches a skill's
                             sources: result.sources,
                         },
                     });
+                    syncProjectTaskExecution(conv, result.report, [], { run_state: 'updated' });
                     saveDb();
                     sendSSE({ type: 'message_stop' });
                 } catch (err) {

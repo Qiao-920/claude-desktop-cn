@@ -2,6 +2,7 @@
 import {
   AlertCircle,
   ArrowRight,
+  Bot,
   CheckCircle2,
   Circle,
   Clock3,
@@ -20,7 +21,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getAgentConfig, getGithubStatus, getProject, getProjects, Project, ProjectStatus, ProjectTask } from '../api';
+import { getAgentConfig, getGithubStatus, getProject, getProjects, Project, ProjectStatus, ProjectTask, ProjectTeamMember } from '../api';
 import { getStoredUiLanguage } from '../utils/chineseClientText';
 
 const formatPermissionLabel = (permissionMode?: string, isZh = true): string => {
@@ -66,6 +67,8 @@ type ProjectDocSummary = {
   milestone?: string;
   nextAction?: string;
   taskCounts?: Record<'todo' | 'doing' | 'blocked' | 'done', number>;
+  teamCount?: number;
+  agentCount?: number;
   overview: string;
   goals: string;
   constraints: string;
@@ -77,11 +80,31 @@ type ProjectDocSummary = {
   updatedAt: string;
 };
 
+type TeamLoadItem = {
+  member: ProjectTeamMember;
+  projectId: string;
+  projectName: string;
+  taskCount: number;
+  doingCount: number;
+  blockedCount: number;
+};
+
 const getProjectStatusLabel = (status: ProjectStatus | undefined, isZh: boolean) => {
   if (status === 'blocked') return isZh ? '阻塞' : 'Blocked';
   if (status === 'ready_to_release') return isZh ? '待发布' : 'Ready to release';
   if (status === 'done') return isZh ? '已完成' : 'Done';
   return isZh ? '进行中' : 'In progress';
+};
+
+const getTeamMemberKindLabel = (kind: ProjectTeamMember['kind'] | undefined, isZh: boolean) => {
+  if (kind === 'agent') return isZh ? '代理' : 'Agent';
+  return isZh ? '成员' : 'Member';
+};
+
+const getTeamMemberStatusLabel = (status: ProjectTeamMember['status'] | undefined, isZh: boolean) => {
+  if (status === 'blocked') return isZh ? '阻塞' : 'Blocked';
+  if (status === 'idle') return isZh ? '待命' : 'Idle';
+  return isZh ? '活跃' : 'Active';
 };
 
 const normalizeProjectDocText = (value?: string) => (value || '').replace(/\r\n/g, '\n').trim();
@@ -204,16 +227,49 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
     () => projects.filter((project) => Number(project.is_archived) !== 1).slice(0, 6),
     [projects],
   );
+  const activeTeamMembers = useMemo(
+    () => activeProjects.flatMap((project) => Array.isArray(project.team_members) ? project.team_members : []),
+    [activeProjects],
+  );
+  const teamLoadItems = useMemo<TeamLoadItem[]>(() => (
+    activeProjects.flatMap((project) => {
+      const members = Array.isArray(project.team_members) ? project.team_members : [];
+      const tasks = Array.isArray(project.tasks) ? project.tasks : [];
+      return members.map((member) => ({
+        member,
+        projectId: project.id,
+        projectName: project.name,
+        taskCount: tasks.filter((task) => task.assignee_id === member.id).length,
+        doingCount: tasks.filter((task) => task.assignee_id === member.id && task.status === 'doing').length,
+        blockedCount: tasks.filter((task) => task.assignee_id === member.id && task.status === 'blocked').length,
+      }));
+    }).sort((a, b) => {
+      const left = b.doingCount - a.doingCount;
+      if (left !== 0) return left;
+      return b.taskCount - a.taskCount;
+    })
+  ), [activeProjects]);
+  const activeAgentCount = useMemo(
+    () => activeTeamMembers.filter((member) => member.kind === 'agent').length,
+    [activeTeamMembers],
+  );
+  const assignedTaskCount = useMemo(
+    () => activeProjects.reduce((total, project) => total + (Array.isArray(project.tasks) ? project.tasks.filter((task) => !!task.assignee_id).length : 0), 0),
+    [activeProjects],
+  );
   const enhancedProjectDocSummaries = useMemo(() => (
     projectDocSummaries.map((summary) => {
       const project = projects.find((item) => item.id === summary.projectId);
       const tasks: ProjectTask[] = Array.isArray(project?.tasks) ? project!.tasks : [];
+      const teamMembers: ProjectTeamMember[] = Array.isArray(project?.team_members) ? project!.team_members : [];
       return {
         ...summary,
         status: project?.status || 'active',
         owner: project?.owner || '',
         milestone: project?.milestone || '',
         nextAction: project?.next_action || '',
+        teamCount: teamMembers.length,
+        agentCount: teamMembers.filter((member) => member.kind === 'agent').length,
         taskCounts: {
           todo: tasks.filter((task) => task.status === 'todo').length,
           doing: tasks.filter((task) => task.status === 'doing').length,
@@ -452,6 +508,12 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
       icon: ShieldCheck,
     },
     {
+      title: isZh ? '团队 / 代理' : 'Team / Agents',
+      value: loading ? (isZh ? '加载中…' : 'Loading…') : `${activeTeamMembers.length} / ${activeAgentCount}`,
+      hint: isZh ? `已分派 ${assignedTaskCount} 个任务，先把成员和代理角色挂到项目里。` : `${assignedTaskCount} assigned tasks across active projects.`,
+      icon: UsersRound,
+    },
+    {
       title: isZh ? '归档项目' : 'Archived projects',
       value: loading ? (isZh ? '加载中…' : 'Loading…') : String(archivedProjectCount),
       hint: isZh
@@ -598,7 +660,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
           </div>
         </div>
 
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-5 gap-4">
           {summaryCards.map((card) => {
             const Icon = card.icon;
             return (
@@ -692,6 +754,16 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
                       {isZh ? `里程碑 ${summary.milestone}` : `Milestone ${summary.milestone}`}
                     </span>
                   ) : null}
+                  {summary.teamCount ? (
+                    <span className="rounded-full border border-claude-border px-2.5 py-1">
+                      {isZh ? `团队 ${summary.teamCount}` : `Team ${summary.teamCount}`}
+                    </span>
+                  ) : null}
+                  {summary.agentCount ? (
+                    <span className="rounded-full border border-claude-border px-2.5 py-1">
+                      {isZh ? `代理 ${summary.agentCount}` : `Agents ${summary.agentCount}`}
+                    </span>
+                  ) : null}
                 </div>
 
                 <div className="mt-4 rounded-xl border border-claude-border px-4 py-3 text-[13px] leading-6 text-claude-textSecondary">
@@ -779,6 +851,104 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
                   : 'Project doc snapshots will appear here once projects have overviews, goals, and commands.'}
               </div>
             )}
+          </div>
+        </div>
+
+        <div className="mt-6 rounded-2xl border border-claude-border bg-claude-input p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-3">
+                <UsersRound size={18} className="text-claude-textSecondary" />
+                <h2 className="text-[17px] font-semibold text-claude-text">
+                  {isZh ? '团队负载与代理分工' : 'Team load and agent ownership'}
+                </h2>
+              </div>
+              <p className="mt-2 text-[13px] leading-6 text-claude-textSecondary">
+                {isZh
+                  ? '这是一版最实用的多代理 / 团队底座：谁在项目里、谁是代理、谁当前有任务，一眼能看清。'
+                  : 'A practical first collaboration layer: who is in each project, which roles are agents, and who currently owns work.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/projects')}
+              className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-text transition-colors hover:bg-claude-hover"
+            >
+              {isZh ? '去分派任务' : 'Assign work'}
+            </button>
+          </div>
+
+          <div className="mt-5 grid grid-cols-[0.9fr_1.1fr] gap-4">
+            <div className="rounded-2xl border border-claude-border bg-claude-bg p-5">
+              <div className="text-[13px] font-medium text-claude-text">{isZh ? '当前总览' : 'Current overview'}</div>
+              <div className="mt-4 grid grid-cols-2 gap-3 text-[12px]">
+                <div className="rounded-xl border border-claude-border px-3 py-3">
+                  <div className="text-claude-textSecondary">{isZh ? '成员总数' : 'Members'}</div>
+                  <div className="mt-1 text-[20px] font-semibold text-claude-text">{activeTeamMembers.length}</div>
+                </div>
+                <div className="rounded-xl border border-claude-border px-3 py-3">
+                  <div className="text-claude-textSecondary">{isZh ? '代理数量' : 'Agents'}</div>
+                  <div className="mt-1 text-[20px] font-semibold text-claude-text">{activeAgentCount}</div>
+                </div>
+                <div className="rounded-xl border border-claude-border px-3 py-3">
+                  <div className="text-claude-textSecondary">{isZh ? '已分派任务' : 'Assigned tasks'}</div>
+                  <div className="mt-1 text-[20px] font-semibold text-claude-text">{assignedTaskCount}</div>
+                </div>
+                <div className="rounded-xl border border-claude-border px-3 py-3">
+                  <div className="text-claude-textSecondary">{isZh ? '活跃项目' : 'Projects with team'}</div>
+                  <div className="mt-1 text-[20px] font-semibold text-claude-text">
+                    {activeProjects.filter((project) => (project.team_members || []).length > 0).length}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-claude-border bg-claude-bg p-5">
+              <div className="text-[13px] font-medium text-claude-text">{isZh ? '成员看板' : 'Member board'}</div>
+              <div className="mt-4 space-y-3">
+                {teamLoadItems.length > 0 ? teamLoadItems.slice(0, 8).map((item) => (
+                  <button
+                    key={`${item.projectId}:${item.member.id}`}
+                    type="button"
+                    onClick={() => navigate(`/projects?project=${item.projectId}`)}
+                    className="flex w-full items-start justify-between gap-4 rounded-xl border border-claude-border px-4 py-4 text-left transition-colors hover:bg-claude-hover"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        {item.member.kind === 'agent' ? (
+                          <Bot size={14} className="text-[#C98B6E]" />
+                        ) : (
+                          <UsersRound size={14} className="text-[#6E8BC9]" />
+                        )}
+                        <div className="truncate text-[14px] font-medium text-claude-text">{item.member.name}</div>
+                        <span className="rounded-full border border-claude-border px-2 py-0.5 text-[10px] text-claude-textSecondary">
+                          {getTeamMemberKindLabel(item.member.kind, isZh)}
+                        </span>
+                        <span className="rounded-full border border-claude-border px-2 py-0.5 text-[10px] text-claude-textSecondary">
+                          {getTeamMemberStatusLabel(item.member.status, isZh)}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-[12px] leading-6 text-claude-textSecondary">
+                        {item.projectName}
+                        {item.member.role ? ` · ${item.member.role}` : ''}
+                        {item.member.focus ? ` · ${item.member.focus}` : ''}
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right text-[11px] text-claude-textSecondary">
+                      <div>{isZh ? `任务 ${item.taskCount}` : `Tasks ${item.taskCount}`}</div>
+                      <div className="mt-1">{isZh ? `进行中 ${item.doingCount}` : `Doing ${item.doingCount}`}</div>
+                      <div className="mt-1">{isZh ? `阻塞 ${item.blockedCount}` : `Blocked ${item.blockedCount}`}</div>
+                    </div>
+                  </button>
+                )) : (
+                  <div className="rounded-xl border border-dashed border-claude-border px-4 py-6 text-center text-[12px] leading-6 text-claude-textSecondary">
+                    {isZh
+                      ? '还没有任何项目挂团队成员。去项目页先加人、加代理，再给任务分派负责人。'
+                      : 'No project has team members yet. Add humans or agents in Projects first.'}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
 

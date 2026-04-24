@@ -19,10 +19,10 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `1.6.26` |
-| Windows 安装包 | `Claude-Desktop-CN-Setup-1.6.26.exe` |
+| 当前版本 | `1.6.28` |
+| Windows 安装包 | `Claude-Desktop-CN-Setup-1.6.28.exe` |
 | 下载页面 | [GitHub Releases](https://github.com/Qiao-920/claude-desktop-cn/releases) |
-| 本轮更新说明 | [Claude Desktop CN v1.6.26](docs/releases/v1.6.26-cn.md) |
+| 本轮更新说明 | [Claude Desktop CN v1.6.28](docs/releases/v1.6.28-cn.md) |
 | 产品任务清单 | [cc-haha 能力对照与 Claude Desktop CN 产品任务清单](docs/cc-haha-capability-map.md) |
 
 默认安装路径通常是：
@@ -69,6 +69,8 @@ C:\Users\Administrator\AppData\Local\Programs\claude-desktop\
 - 项目列表、项目文档、项目聊天分组
 - 项目状态卡、负责人、里程碑、下一步动作
 - 项目任务板：待处理 / 进行中 / 阻塞 / 已完成
+- 团队成员 / 代理角色、任务指派、代理执行入口
+- 角色会话 / 任务执行会话、最近执行摘要自动回写任务卡
 - 项目时间线与 Cowork 首页摘要卡
 - 派生到本地 Code、派生到新工作树
 
@@ -88,7 +90,7 @@ npm run electron:build:win
 
 ## 文档
 
-- [v1.6.26 发布说明](docs/releases/v1.6.26-cn.md)
+- [v1.6.28 发布说明](docs/releases/v1.6.28-cn.md)
 - [能力对照与任务清单](docs/cc-haha-capability-map.md)
 
 ## 仓库
