@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Plus, Search, Trash2, Sparkles, LayoutGrid, FileText,
   ChevronRight, ChevronDown, Folder, File, MoreHorizontal, Info, Eye, Code,
-  Settings, Check, MessageSquare, ClipboardList, Upload, Github, X, FolderPlus
+  Settings, Check, MessageSquare, ClipboardList, Upload, Github, X, FolderPlus, AppWindow
 } from 'lucide-react';
 import MarkdownRenderer, { CodeBlock } from './MarkdownRenderer';
 import { getSkills, getSkillDetail, getSkillFile, createSkill, updateSkill, deleteSkill, toggleSkill, importSkill, getGithubStatus, getGithubAuthUrl, disconnectGithub } from '../api';
@@ -245,6 +245,10 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
     await disconnectGithub();
     setGithubConnected(false);
     setGithubUser(null);
+  };
+
+  const openComputerUseSettings = () => {
+    window.dispatchEvent(new CustomEvent('open-settings', { detail: { section: 'computerUse' } }));
   };
 
   // Tree state
@@ -696,6 +700,22 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
                 <div>
                   <div className="font-medium text-claude-text text-[15.5px]">{isZh ? '连接你的应用' : 'Connect your apps'}</div>
                   <div className="text-sm text-claude-textSecondary">{isZh ? '把你常用的工具接进来，帮助完成任务' : 'Integrate with the tools you use to complete your tasks'}</div>
+                </div>
+                <div className="ml-auto pr-2">
+                  <ArrowLeft size={16} className="rotate-180 text-claude-textSecondary" />
+                </div>
+              </button>
+
+              <button
+                onClick={openComputerUseSettings}
+                className="w-full flex items-center p-4 border border-claude-border bg-black/[0.02] dark:bg-white/[0.04] rounded-[24px] hover:bg-black/[0.05] dark:hover:bg-white/[0.07] transition-colors text-left group"
+              >
+                <div className="w-11 h-11 rounded-xl bg-claude-bg/50 border border-claude-border flex items-center justify-center mr-4 group-hover:border-claude-textSecondary/30 transition-colors">
+                  <AppWindow size={26} className="text-claude-textSecondary group-hover:text-claude-text transition-colors" />
+                </div>
+                <div>
+                  <div className="font-medium text-claude-text text-[15.5px]">{isZh ? '桌面控制' : 'Computer Use'}</div>
+                  <div className="text-sm text-claude-textSecondary">{isZh ? '进入最小安全版桌控台，按窗口白名单做截图、点击、输入和审计' : 'Open the safe desktop console for screenshots, clicks, typing, and audit inside allowlisted windows'}</div>
                 </div>
                 <div className="ml-auto pr-2">
                   <ArrowLeft size={16} className="rotate-180 text-claude-textSecondary" />
