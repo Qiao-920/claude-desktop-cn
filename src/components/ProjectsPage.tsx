@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Search, Plus, ChevronDown, ArrowLeft, MoreVertical, Star, ArrowUp, FileText, Trash, Pencil, MessageSquare, X, Upload, Check, AudioLines, ChevronRight, Archive, Github, RefreshCw, FolderOpen, Copy, GitBranch, Link2 } from 'lucide-react';
+﻿import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Search, Plus, ChevronDown, ArrowLeft, MoreVertical, Star, ArrowUp, FileText, Trash, Pencil, MessageSquare, X, Upload, Check, AudioLines, ChevronRight, Archive, Github, RefreshCw, FolderOpen, Copy, GitBranch, Link2, Circle, Clock3, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Paperclip, ListCollapse } from 'lucide-react';
-import { getProjects, createProject, getProject, updateProject, deleteProject, uploadProjectFile, deleteProjectFile, createProjectConversation, deleteConversation, updateConversation, getSkills, Project, ProjectFile, ProjectGithubSource, importProjectGithub, syncProjectGithubSource, updateProjectGithubSource, removeProjectGithubSource, deriveProjectWorkspace } from '../api';
+import { getProjects, createProject, getProject, updateProject, deleteProject, uploadProjectFile, deleteProjectFile, createProjectConversation, deleteConversation, updateConversation, getSkills, Project, ProjectFile, ProjectGithubSource, ProjectStatus, ProjectTask, ProjectTaskStatus, importProjectGithub, syncProjectGithubSource, updateProjectGithubSource, removeProjectGithubSource, deriveProjectWorkspace } from '../api';
 import ModelSelector, { SelectableModel } from './ModelSelector';
 import { IconPlus } from './Icons';
 import startProjectsImg from '../assets/icons/start-projects.png';
@@ -23,10 +23,10 @@ const getConversationGroupKey = (dateValue?: string) => {
 };
 
 const getConversationGroupLabel = (key: string, isZh: boolean) => {
-  if (key === 'today') return isZh ? '今天' : 'Today';
-  if (key === 'yesterday') return isZh ? '昨天' : 'Yesterday';
+  if (key === 'today') return isZh ? '浠婂ぉ' : 'Today';
+  if (key === 'yesterday') return isZh ? '鏄ㄥぉ' : 'Yesterday';
   if (key === 'week') return isZh ? '最近 7 天' : 'Last 7 days';
-  return isZh ? '更早' : 'Older';
+  return isZh ? '鏇存棭' : 'Older';
 };
 
 const formatConversationTime = (value?: string) => {
@@ -41,8 +41,8 @@ const getTimelineDayLabel = (value: string, isZh: boolean) => {
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const startOfTarget = new Date(target.getFullYear(), target.getMonth(), target.getDate()).getTime();
   const diffDays = Math.floor((startOfToday - startOfTarget) / (24 * 60 * 60 * 1000));
-  if (diffDays <= 0) return isZh ? '今天' : 'Today';
-  if (diffDays === 1) return isZh ? '昨天' : 'Yesterday';
+  if (diffDays <= 0) return isZh ? '浠婂ぉ' : 'Today';
+  if (diffDays === 1) return isZh ? '鏄ㄥぉ' : 'Yesterday';
   return target.toLocaleDateString();
 };
 
@@ -53,6 +53,13 @@ type ProjectDocDraft = {
   constraints: string;
   commands: string;
   notes: string;
+};
+
+type ProjectMetaDraft = {
+  status: ProjectStatus;
+  owner: string;
+  milestone: string;
+  nextAction: string;
 };
 
 const PROJECT_DOC_SECTIONS: Array<{ key: keyof ProjectDocDraft; title: string }> = [
@@ -72,6 +79,37 @@ const createEmptyProjectDocDraft = (): ProjectDocDraft => ({
   commands: '',
   notes: '',
 });
+
+const createEmptyProjectMetaDraft = (): ProjectMetaDraft => ({
+  status: 'active',
+  owner: '',
+  milestone: '',
+  nextAction: '',
+});
+
+const PROJECT_STATUS_OPTIONS: Array<{ id: ProjectStatus; zh: string; en: string }> = [
+  { id: 'active', zh: '进行中', en: 'In progress' },
+  { id: 'blocked', zh: '阻塞', en: 'Blocked' },
+  { id: 'ready_to_release', zh: '待发布', en: 'Ready to release' },
+  { id: 'done', zh: '已完成', en: 'Done' },
+];
+
+const PROJECT_TASK_STATUS_OPTIONS: Array<{ id: ProjectTaskStatus; zh: string; en: string }> = [
+  { id: 'todo', zh: '待处理', en: 'To do' },
+  { id: 'doing', zh: '进行中', en: 'Doing' },
+  { id: 'blocked', zh: '阻塞', en: 'Blocked' },
+  { id: 'done', zh: '已完成', en: 'Done' },
+];
+
+const getProjectStatusLabel = (status: ProjectStatus | undefined, isZh: boolean) => {
+  const option = PROJECT_STATUS_OPTIONS.find((item) => item.id === status) || PROJECT_STATUS_OPTIONS[0];
+  return isZh ? option.zh : option.en;
+};
+
+const getProjectTaskStatusLabel = (status: ProjectTaskStatus | undefined, isZh: boolean) => {
+  const option = PROJECT_TASK_STATUS_OPTIONS.find((item) => item.id === status) || PROJECT_TASK_STATUS_OPTIONS[0];
+  return isZh ? option.zh : option.en;
+};
 
 const normalizeProjectDocText = (value?: string) => (value || '').replace(/\r\n/g, '\n').trim();
 
@@ -124,6 +162,10 @@ const ProjectsPage = () => {
   const [editingInstructions, setEditingInstructions] = useState(false);
   const [instructionsText, setInstructionsText] = useState('');
   const [projectDocDraft, setProjectDocDraft] = useState<ProjectDocDraft>(createEmptyProjectDocDraft);
+  const [projectMetaDraft, setProjectMetaDraft] = useState<ProjectMetaDraft>(createEmptyProjectMetaDraft);
+  const [savingProjectMeta, setSavingProjectMeta] = useState(false);
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskDescription, setNewTaskDescription] = useState('');
   const [uploading, setUploading] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [editingName, setEditingName] = useState(false);
@@ -158,7 +200,16 @@ const ProjectsPage = () => {
     setInstructionsText(buildProjectDocument(parsed));
   }, []);
 
-  // Model selector state — load from self-hosted config or use defaults
+  const hydrateProjectMetaEditor = useCallback((projectData: any) => {
+    setProjectMetaDraft({
+      status: (projectData?.status || 'active') as ProjectStatus,
+      owner: projectData?.owner || '',
+      milestone: projectData?.milestone || '',
+      nextAction: projectData?.next_action || '',
+    });
+  }, []);
+
+  // Model selector state 鈥?load from self-hosted config or use defaults
   const isSelfHostedMode = localStorage.getItem('user_mode') === 'selfhosted';
   const selectorModels = useMemo<SelectableModel[]>(() => {
     if (isSelfHostedMode) {
@@ -246,9 +297,10 @@ const ProjectsPage = () => {
       const data = await getProject(id);
       setCurrentProject(data);
       hydrateProjectDocEditor(data);
+      hydrateProjectMetaEditor(data);
       setGithubError(null);
     } catch (_) { }
-  }, [hydrateProjectDocEditor]);
+  }, [hydrateProjectDocEditor, hydrateProjectMetaEditor]);
 
   useEffect(() => {
     const projectId = new URLSearchParams(location.search).get('project');
@@ -340,6 +392,67 @@ const ProjectsPage = () => {
     await updateProject(currentProject.id, { instructions: nextInstructions });
     setEditingInstructions(false);
     loadProject(currentProject.id);
+  };
+
+  const handleSaveProjectMeta = async (patch?: Partial<ProjectMetaDraft>) => {
+    if (!currentProject) return;
+    const nextMeta = { ...projectMetaDraft, ...(patch || {}) };
+    setSavingProjectMeta(true);
+    try {
+      await updateProject(currentProject.id, {
+        status: nextMeta.status,
+        owner: nextMeta.owner.trim(),
+        milestone: nextMeta.milestone.trim(),
+        next_action: nextMeta.nextAction.trim(),
+      });
+      setProjectMetaDraft(nextMeta);
+      await loadProject(currentProject.id);
+      await loadProjects();
+    } finally {
+      setSavingProjectMeta(false);
+    }
+  };
+
+  const persistProjectTasks = async (nextTasks: ProjectTask[]) => {
+    if (!currentProject) return;
+    await updateProject(currentProject.id, { tasks: nextTasks });
+    await loadProject(currentProject.id);
+    await loadProjects();
+  };
+
+  const addProjectTask = async () => {
+    if (!currentProject || !newTaskTitle.trim()) return;
+    const now = new Date().toISOString();
+    const nextTasks: ProjectTask[] = [
+      {
+        id: `project-task-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+        title: newTaskTitle.trim(),
+        description: newTaskDescription.trim(),
+        status: 'todo',
+        source: 'project',
+        updated_at: now,
+      },
+      ...((currentProject.tasks || []) as ProjectTask[]),
+    ];
+    setNewTaskTitle('');
+    setNewTaskDescription('');
+    await persistProjectTasks(nextTasks);
+  };
+
+  const moveProjectTask = async (taskId: string, status: ProjectTaskStatus) => {
+    if (!currentProject) return;
+    const nextTasks = ((currentProject.tasks || []) as ProjectTask[]).map((task) => (
+      task.id === taskId
+        ? { ...task, status, updated_at: new Date().toISOString() }
+        : task
+    ));
+    await persistProjectTasks(nextTasks);
+  };
+
+  const deleteProjectTask = async (taskId: string) => {
+    if (!currentProject) return;
+    const nextTasks = ((currentProject.tasks || []) as ProjectTask[]).filter((task) => task.id !== taskId);
+    await persistProjectTasks(nextTasks);
   };
 
   const handleFileUpload = async (files: FileList | File[]) => {
@@ -458,13 +571,88 @@ const ProjectsPage = () => {
     [currentProject?.instructions, currentProject?.description],
   );
 
+  const currentProjectTasks = useMemo<ProjectTask[]>(
+    () => Array.isArray(currentProject?.tasks) ? currentProject.tasks : [],
+    [currentProject?.tasks],
+  );
+
+  const enhancedProjectActivityItems = useMemo(() => {
+    if (!currentProject) return [];
+    const parsedDoc = parseProjectDocument(currentProject.instructions || currentProject.description || '');
+    const projectDoc = currentProject.instructions || currentProject.description;
+    const items = [{
+      id: `project-meta-${currentProject.id}`,
+      type: 'project',
+      title: projectDoc ? (isZh ? '项目文档已更新' : 'Project doc updated') : (isZh ? '项目状态已同步' : 'Project status synced'),
+      detail: projectDoc
+        ? (parsedDoc.goals || parsedDoc.overview || (isZh ? '继续补目标、约束和常用命令。' : 'Keep enriching goals, constraints, and commands.'))
+        : `${getProjectStatusLabel(currentProject.status, isZh)}${currentProject.next_action ? ` 路 ${currentProject.next_action}` : ''}`,
+      at: currentProject.updated_at,
+    }];
+
+    currentProjectTasks.forEach((task) => {
+      items.push({
+        id: `project-task-${task.id}`,
+        type: 'project',
+        title: task.title,
+      detail: `${isZh ? '项目任务' : 'Project task'} 路 ${getProjectTaskStatusLabel(task.status, isZh)}`,
+        at: task.updated_at,
+      });
+    });
+
+    (currentProject.conversations || []).forEach((conv: any) => {
+        items.push({
+          id: `project-conv-${conv.id}`,
+          type: 'chat',
+          title: conv.title || (isZh ? '未命名聊天' : 'Untitled chat'),
+        detail: isZh ? '项目聊天' : 'Project chat',
+          at: conv.created_at,
+        });
+    });
+
+    (currentProject.files || []).forEach((file: ProjectFile) => {
+      items.push({
+        id: `project-file-${file.id}`,
+        type: 'file',
+        title: file.file_name,
+        detail: file.source_type === 'github' ? 'GitHub file' : (isZh ? '项目文件' : 'Project file'),
+        at: file.created_at,
+      });
+    });
+
+    (currentProject.github_sources || []).forEach((source: ProjectGithubSource) => {
+      items.push({
+        id: `project-source-${source.id}`,
+        type: 'github',
+        title: source.repo_full_name,
+        detail: isZh ? `同步到 ${source.ref}` : `Synced to ${source.ref}`,
+        at: source.last_synced_at || source.added_at,
+      });
+    });
+
+    return items
+      .filter((item) => item.at)
+      .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+      .slice(0, 12);
+  }, [currentProject, currentProjectTasks, isZh]);
+
+  const projectTaskColumns = useMemo(
+    () => PROJECT_TASK_STATUS_OPTIONS.map((option) => ({
+      key: option.id,
+      title: isZh ? option.zh : option.en,
+      icon: option.id === 'todo' ? Circle : option.id === 'doing' ? Clock3 : option.id === 'blocked' ? AlertCircle : CheckCircle2,
+      tasks: currentProjectTasks.filter((task) => task.status === option.id),
+    })),
+    [currentProjectTasks, isZh],
+  );
+
   const projectDocSections = useMemo(() => {
     const sectionLabels: Record<keyof ProjectDocDraft, string> = {
       overview: isZh ? '项目概览' : 'Overview',
-      goals: isZh ? '目标' : 'Goals',
+      goals: isZh ? '鐩爣' : 'Goals',
       stack: isZh ? '技术栈' : 'Tech stack',
-      constraints: isZh ? '约束' : 'Constraints',
-      commands: isZh ? '常用命令' : 'Commands',
+      constraints: isZh ? '绾︽潫' : 'Constraints',
+      commands: isZh ? '甯哥敤鍛戒护' : 'Commands',
       notes: isZh ? '补充备注' : 'Notes',
     };
 
@@ -481,7 +669,7 @@ const ProjectsPage = () => {
 
   const groupedProjectTimeline = useMemo(() => {
     const groups: Array<{ label: string; items: typeof projectActivityItems }> = [];
-    projectActivityItems.forEach((item) => {
+    enhancedProjectActivityItems.forEach((item) => {
       const label = getTimelineDayLabel(item.at, isZh);
       const existing = groups.find((group) => group.label === label);
       if (existing) {
@@ -491,7 +679,7 @@ const ProjectsPage = () => {
       }
     });
     return groups;
-  }, [projectActivityItems, isZh]);
+  }, [enhancedProjectActivityItems, isZh]);
 
   const handleProjectGithubImport = async (payload: GithubAddPayload) => {
     if (!currentProject) return;
@@ -691,14 +879,14 @@ const ProjectsPage = () => {
       await loadProject(currentProject.id);
       await loadProjects();
       setConversationActionMenuId(null);
-      showProjectActionResult('success', isZh ? '已移出项目聊天分组' : 'Conversation removed from project');
+        showProjectActionResult('success', isZh ? '已移出项目聊天分组' : 'Conversation removed from project');
     } catch (error: any) {
       console.error(error);
       showProjectActionResult('error', error?.message || (isZh ? '移出项目失败' : 'Failed to remove conversation from project'));
     }
   };
 
-  // ═══ Project Detail View ═══
+  // 鈺愨晲鈺?Project Detail View 鈺愨晲鈺?
   if (currentProject) {
     return (
       <div className="flex-1 h-full bg-claude-bg overflow-y-auto">
@@ -868,14 +1056,150 @@ const ProjectsPage = () => {
                   disabled={derivingProjectId === currentProject.id}
                   className="rounded-lg border border-claude-border px-3 py-1.5 text-claude-text transition-colors hover:bg-claude-hover disabled:opacity-50"
                 >
-                  {derivingProjectId === currentProject.id ? (isZh ? '派生中...' : 'Deriving...') : (isZh ? '派生到新工作树' : 'New worktree')}
+                  {derivingProjectId === currentProject.id ? (isZh ? '派生中…' : 'Deriving...') : (isZh ? '派生到新工作树' : 'New worktree')}
                 </button>
               </div>
             </div>
           </div>
 
+          <div className="mb-4 rounded-[16px] border border-claude-border bg-transparent px-4 py-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-[12px] uppercase tracking-[0.08em] text-claude-textSecondary">{isZh ? '项目状态与任务' : 'Project status and tasks'}</div>
+                <div className="mt-2 text-[13px] leading-6 text-claude-textSecondary">
+                  {isZh ? '这部分开始承接 P1 的项目推进闭环：谁在负责、当前里程碑、下一步动作，以及项目下的待办与阻塞。' : 'This is the P1 project-ops layer: owner, milestone, next action, and task flow inside the project.'}
+                </div>
+              </div>
+              <button
+                onClick={() => handleSaveProjectMeta()}
+                disabled={savingProjectMeta}
+                className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-text transition-colors hover:bg-claude-hover disabled:opacity-50"
+              >
+                {savingProjectMeta ? (isZh ? '保存中…' : 'Saving...') : (isZh ? '保存状态' : 'Save')}
+              </button>
+            </div>
+
+            <div className="mt-4 grid grid-cols-4 gap-3">
+              <div className="rounded-[14px] border border-claude-border bg-claude-bg px-3 py-3">
+                <div className="text-[11px] uppercase tracking-[0.08em] text-claude-textSecondary">{isZh ? '当前阶段' : 'Stage'}</div>
+                <select
+                  value={projectMetaDraft.status}
+                  onChange={(e) => setProjectMetaDraft((prev) => ({ ...prev, status: e.target.value as ProjectStatus }))}
+                  className="mt-2 w-full rounded-lg border border-claude-border bg-transparent px-3 py-2 text-[13px] text-claude-text outline-none"
+                >
+                  {PROJECT_STATUS_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>{isZh ? option.zh : option.en}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="rounded-[14px] border border-claude-border bg-claude-bg px-3 py-3">
+                <div className="text-[11px] uppercase tracking-[0.08em] text-claude-textSecondary">{isZh ? '负责人' : 'Owner'}</div>
+                <input
+                  value={projectMetaDraft.owner}
+                  onChange={(e) => setProjectMetaDraft((prev) => ({ ...prev, owner: e.target.value }))}
+                  placeholder={isZh ? '例如：你自己' : 'e.g. yourself'}
+                  className="mt-2 w-full rounded-lg border border-claude-border bg-transparent px-3 py-2 text-[13px] text-claude-text outline-none"
+                />
+              </div>
+              <div className="rounded-[14px] border border-claude-border bg-claude-bg px-3 py-3">
+                <div className="text-[11px] uppercase tracking-[0.08em] text-claude-textSecondary">{isZh ? '里程碑' : 'Milestone'}</div>
+                <input
+                  value={projectMetaDraft.milestone}
+                  onChange={(e) => setProjectMetaDraft((prev) => ({ ...prev, milestone: e.target.value }))}
+                  placeholder={isZh ? '例如：v1.6.26' : 'e.g. v1.6.26'}
+                  className="mt-2 w-full rounded-lg border border-claude-border bg-transparent px-3 py-2 text-[13px] text-claude-text outline-none"
+                />
+              </div>
+              <div className="rounded-[14px] border border-claude-border bg-claude-bg px-3 py-3">
+                <div className="text-[11px] uppercase tracking-[0.08em] text-claude-textSecondary">{isZh ? '涓嬩竴鍔ㄤ綔' : 'Next action'}</div>
+                <textarea
+                  value={projectMetaDraft.nextAction}
+                  onChange={(e) => setProjectMetaDraft((prev) => ({ ...prev, nextAction: e.target.value }))}
+                  placeholder={isZh ? '这个项目下一步最该推进什么？' : 'What should happen next?'}
+                  className="mt-2 h-[76px] w-full resize-none rounded-lg border border-claude-border bg-transparent px-3 py-2 text-[13px] text-claude-text outline-none"
+                />
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-[1fr_1fr_auto] gap-3">
+              <input
+                value={newTaskTitle}
+                onChange={(e) => setNewTaskTitle(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    addProjectTask();
+                  }
+                }}
+                placeholder={isZh ? '新增任务，例如：补齐项目状态卡' : 'Add a task, e.g. finish project status cards'}
+                className="rounded-lg border border-claude-border bg-claude-bg px-3 py-2 text-[13px] text-claude-text outline-none"
+              />
+              <input
+                value={newTaskDescription}
+                onChange={(e) => setNewTaskDescription(e.target.value)}
+                placeholder={isZh ? '补充说明，可选' : 'Optional note'}
+                className="rounded-lg border border-claude-border bg-claude-bg px-3 py-2 text-[13px] text-claude-text outline-none"
+              />
+              <button
+                onClick={addProjectTask}
+                disabled={!newTaskTitle.trim()}
+                className="rounded-lg bg-claude-text px-4 py-2 text-[13px] font-medium text-claude-bg disabled:opacity-50"
+              >
+                {isZh ? '添加任务' : 'Add task'}
+              </button>
+            </div>
+
+            <div className="mt-4 grid grid-cols-4 gap-3">
+              {projectTaskColumns.map((column) => {
+                const Icon = column.icon;
+                return (
+                  <div key={column.key} className="rounded-[14px] border border-claude-border bg-claude-bg p-3">
+                    <div className="mb-3 flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-[13px] font-medium text-claude-text">
+                        <Icon size={14} className="text-claude-textSecondary" />
+                        {column.title}
+                      </div>
+                      <span className="rounded-full bg-claude-hover px-2 py-0.5 text-[11px] text-claude-textSecondary">{column.tasks.length}</span>
+                    </div>
+                    <div className="space-y-2">
+                      {column.tasks.length > 0 ? column.tasks.map((task) => (
+                        <div key={task.id} className="rounded-lg border border-claude-border bg-claude-input px-3 py-3">
+                          <div className="text-[13px] font-medium text-claude-text">{task.title}</div>
+                          {task.description && (
+                            <div className="mt-1 text-[12px] leading-5 text-claude-textSecondary">{task.description}</div>
+                          )}
+                          <div className="mt-3 flex flex-wrap items-center gap-1.5">
+                            {PROJECT_TASK_STATUS_OPTIONS.filter((option) => option.id !== task.status).map((target) => (
+                              <button
+                                key={target.id}
+                                onClick={() => moveProjectTask(task.id, target.id)}
+                                className="rounded border border-claude-border px-2 py-1 text-[10px] text-claude-textSecondary hover:bg-claude-hover hover:text-claude-text"
+                              >
+                                {isZh ? target.zh : target.en}
+                              </button>
+                            ))}
+                            <button
+                              onClick={() => deleteProjectTask(task.id)}
+                              className="ml-auto rounded border border-red-500/30 px-2 py-1 text-[10px] text-[#E05A5A] hover:bg-red-500/10"
+                            >
+                              {isZh ? '删除' : 'Delete'}
+                            </button>
+                          </div>
+                        </div>
+                      )) : (
+                        <div className="rounded-lg border border-dashed border-claude-border px-3 py-6 text-center text-[12px] leading-6 text-claude-textSecondary">
+                          {isZh ? '这一列暂时为空。' : 'Nothing here yet.'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           <div className="space-y-4">
-            {/* Chat Input Container — matches MainContent new chat input */}
+            {/* Chat Input Container 鈥?matches MainContent new chat input */}
             <div
               className="bg-claude-input border border-claude-border dark:border-[#3a3a38] shadow-[0_2px_8px_rgba(0,0,0,0.02)] hover:shadow-[0_2px_8px_rgba(0,0,0,0.08)] hover:border-[#CCC] dark:hover:border-[#5a5a58] focus-within:shadow-[0_2px_8px_rgba(0,0,0,0.08)] focus-within:border-[#CCC] dark:focus-within:border-[#5a5a58] transition-all duration-200 flex flex-col max-h-[60vh] font-sans rounded-2xl"
             >
@@ -885,7 +1209,7 @@ const ProjectsPage = () => {
                     ref={textareaRef}
                     className="w-full pl-5 pr-4 pt-5 pb-1 placeholder:text-claude-textSecondary text-[16px] outline-none resize-none overflow-hidden bg-transparent font-sans font-[350] text-claude-text"
                     style={{ minHeight: '48px', borderRadius: '16px 16px 0 0' }}
-                    placeholder={selectedSkill ? `Describe what you want ${selectedSkill.name} to do...` : "How can I help you today?"}
+                    placeholder={selectedSkill ? (isZh ? `描述你想让 ${selectedSkill.name} 做什么…` : `Describe what you want ${selectedSkill.name} to do...`) : (isZh ? '今天想让我帮你做什么？' : 'How can I help you today?')}
                     value={message}
                     onChange={(e) => {
                       setMessage(e.target.value);
@@ -974,7 +1298,7 @@ const ProjectsPage = () => {
               <div className="mt-2 grid grid-cols-[1.2fr_0.8fr] gap-4">
                 <div className="border border-claude-border rounded-[16px] overflow-hidden bg-transparent">
                   <div className="px-5 py-3 text-[13px] font-medium text-claude-textSecondary border-b border-claude-border">
-                    {isZh ? `项目聊天 ${currentProject.conversations.length}` : `${currentProject.conversations.length} project conversations`}
+                          {isZh ? `项目聊天 ${currentProject.conversations.length}` : `${currentProject.conversations.length} project conversations`}
                   </div>
                   <div className="divide-y divide-claude-border">
                     {groupedProjectConversations.map((group) => (
@@ -1038,7 +1362,7 @@ const ProjectsPage = () => {
                   </div>
                 </div>
                 <div className="rounded-[16px] border border-claude-border bg-transparent px-4 py-4">
-                  <div className="text-[13px] font-medium text-claude-textSecondary">{isZh ? '项目时间线' : 'Project timeline'}</div>
+                    <div className="text-[13px] font-medium text-claude-textSecondary">{isZh ? '项目时间线' : 'Project timeline'}</div>
                   <div className="mt-3 space-y-3">
                     {groupedProjectTimeline.map((group) => (
                       <div key={group.label} className="rounded-[12px] border border-claude-border px-3 py-3">
@@ -1084,7 +1408,7 @@ const ProjectsPage = () => {
                 {false && <div className="rounded-[16px] border border-claude-border bg-transparent px-4 py-4">
                   <div className="text-[13px] font-medium text-claude-textSecondary">{isZh ? '最近活动' : 'Recent activity'}</div>
                   <div className="mt-3 space-y-3">
-                    {projectActivityItems.map((item) => (
+                    {enhancedProjectActivityItems.map((item) => (
                       <div key={item.id} className="rounded-[12px] border border-claude-border px-3 py-3">
                         <div className="text-[13px] font-medium text-claude-text">{item.title}</div>
                         <div className="mt-1 text-[12px] text-claude-textSecondary">{item.detail}</div>
@@ -1195,7 +1519,7 @@ const ProjectsPage = () => {
                           <textarea
                             value={projectDocDraft.goals}
                             onChange={e => updateProjectDocField('goals', e.target.value)}
-                            placeholder={isZh ? '例如：补齐 P1、修复预览稳定性、准备下一版发版。' : 'Example: finish P1, harden preview stability, prepare the next release.'}
+                            placeholder={isZh ? '例如：补齐 P1、修复预览稳定性、准备下一版发布。' : 'Example: finish P1, harden preview stability, prepare the next release.'}
                             className="h-[112px] w-full rounded-[12px] border border-claude-border bg-claude-bg px-4 py-3 text-[14px] text-claude-text outline-none transition-colors focus:border-[#3A7ADA] focus:ring-1 focus:ring-[#3A7ADA]"
                           />
                         </div>
@@ -1218,7 +1542,7 @@ const ProjectsPage = () => {
                           />
                         </div>
                         <div>
-                          <label className="mb-2 block text-[13px] font-medium text-claude-textSecondary">{isZh ? '常用命令' : 'Common commands'}</label>
+                          <label className="mb-2 block text-[13px] font-medium text-claude-textSecondary">{isZh ? '甯哥敤鍛戒护' : 'Common commands'}</label>
                           <textarea
                             value={projectDocDraft.commands}
                             onChange={e => updateProjectDocField('commands', e.target.value)}
@@ -1252,7 +1576,7 @@ const ProjectsPage = () => {
                           }}
                           className="px-4 py-2 text-[14px] font-medium text-claude-text hover:bg-white/5 border border-transparent hover:border-claude-border rounded-xl transition-all"
                         >
-                          {isZh ? '取消' : 'Cancel'}
+                          {isZh ? '鍙栨秷' : 'Cancel'}
                         </button>
                         <button
                           onClick={handleSaveInstructions}
@@ -1293,7 +1617,7 @@ const ProjectsPage = () => {
                           onClick={() => { setEditingInstructions(false); setInstructionsText(currentProject.instructions || ''); }}
                           className="px-4 py-2 text-[14px] font-medium text-claude-text hover:bg-white/5 border border-transparent hover:border-claude-border rounded-xl transition-all"
                         >
-                          {isZh ? '取消' : 'Cancel'}
+                          {isZh ? '鍙栨秷' : 'Cancel'}
                         </button>
                         <button
                           onClick={handleSaveInstructions}
@@ -1319,7 +1643,7 @@ const ProjectsPage = () => {
                       className="flex items-center gap-2 px-3 py-1.5 text-[12.5px] font-medium text-claude-text border border-claude-border rounded-lg hover:bg-claude-hover transition-colors"
                     >
                       <Github size={14} />
-                      从 GitHub 添加
+                  从 GitHub 添加
                     </button>
                     <button
                       onClick={() => fileInputRef.current?.click()}
@@ -1358,7 +1682,7 @@ const ProjectsPage = () => {
                         <div className="flex-1 min-w-0">
                           <div className="text-[13.5px] text-claude-text font-medium truncate">{source.repo_full_name}</div>
                           <div className="text-[11.5px] text-[#A1A1AA]">
-                            {source.file_count} 个文件 · 引用 {source.ref} · 同步于 {new Date(source.last_synced_at).toLocaleString()}
+                        {source.file_count} 个文件 · 引用 {source.ref} · 同步于 {new Date(source.last_synced_at).toLocaleString()}
                           </div>
                         </div>
                         <button
@@ -1443,8 +1767,7 @@ const ProjectsPage = () => {
                       </div>
                     </div>
                     <span className="text-[13px] text-[#A1A1AA] text-center max-w-[200px] leading-relaxed">
-                      添加 PDF、文档或其他文本文件，让这个项目在后续对话里持续引用。
-                    </span>
+                      添加 PDF、文档或其他文本文件，让这个项目在后续对话里持续引用。                    </span>
                     <button
                       onClick={(e) => { e.stopPropagation(); setEditingGithubSource(null); setShowGithubModal(true); }}
                       className="mt-4 flex items-center gap-2 px-3 py-1.5 text-[12.5px] font-medium text-claude-text border border-claude-border rounded-lg hover:bg-claude-hover transition-colors"
@@ -1476,31 +1799,31 @@ const ProjectsPage = () => {
     );
   }
 
-  // ═══ Create View ═══
+  // 鈺愨晲鈺?Create View 鈺愨晲鈺?
   if (isCreating) {
     return (
       <div className="flex-1 h-full bg-claude-bg overflow-y-auto">
         <div className="max-w-[560px] mx-auto px-8 pt-12 pb-8">
           <h1 className="font-[Spectral] text-[32px] text-claude-text mb-6" style={{ fontWeight: 600 }}>
-            Create a personal project
+            {isZh ? '创建个人项目' : 'Create a personal project'}
           </h1>
 
           <div className="bg-[#EFEEE7] dark:bg-[#2A2928] rounded-2xl p-6 mb-6 border border-transparent dark:border-white/5">
-            <h3 className="font-semibold text-claude-text text-[15.5px] mb-2 text-[#403A35] dark:text-[#E3E0D8]">How to use projects</h3>
+            <h3 className="font-semibold text-claude-text text-[15.5px] mb-2 text-[#403A35] dark:text-[#E3E0D8]">{isZh ? '如何使用项目' : 'How to use projects'}</h3>
             <p className="text-[14.5px] leading-relaxed text-[#564E48] dark:text-[#A8A096] mb-3">
-              Projects help organize your work and leverage knowledge across multiple conversations. Upload docs, code, and files to create themed collections that Claude can reference again and again.
+              {isZh ? '项目能把你的工作、资料和多段聊天串起来。上传文档、代码和文件后，Claude 就能反复复用这些上下文。' : 'Projects help organize your work and leverage knowledge across multiple conversations. Upload docs, code, and files to create themed collections that Claude can reference again and again.'}
             </p>
             <p className="text-[14.5px] leading-relaxed text-[#564E48] dark:text-[#A8A096]">
-              Start by creating a memorable title and description to organize your project. You can always edit it later.
+              {isZh ? '先给项目起一个清晰的标题和描述，后面随时都可以再改。' : 'Start by creating a memorable title and description to organize your project. You can always edit it later.'}
             </p>
           </div>
 
           <div className="space-y-5">
             <div>
-              <label className="block text-[15px] font-medium text-claude-textSecondary mb-2">What are you working on?</label>
+              <label className="block text-[15px] font-medium text-claude-textSecondary mb-2">{isZh ? '你现在在做什么？' : 'What are you working on?'}</label>
               <input
                 type="text"
-                placeholder="Name your project"
+                placeholder={isZh ? '给项目起个名字' : 'Name your project'}
                 value={projectName}
                 onChange={e => setProjectName(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && projectName.trim()) handleCreate(); }}
@@ -1508,9 +1831,9 @@ const ProjectsPage = () => {
               />
             </div>
             <div>
-              <label className="block text-[15px] font-medium text-claude-textSecondary mb-2">What are you trying to achieve?</label>
+              <label className="block text-[15px] font-medium text-claude-textSecondary mb-2">{isZh ? '你想达成什么目标？' : 'What are you trying to achieve?'}</label>
               <textarea
-                placeholder="Describe your project, goals, subject, etc..."
+                placeholder={isZh ? '描述一下项目背景、目标和主题…' : 'Describe your project, goals, subject, etc...'}
                 rows={3}
                 value={projectDescription}
                 onChange={e => setProjectDescription(e.target.value)}
@@ -1524,14 +1847,14 @@ const ProjectsPage = () => {
               onClick={() => { setIsCreating(false); setProjectName(''); setProjectDescription(''); }}
               className="px-5 py-2.5 text-[15px] font-medium text-claude-text bg-white dark:bg-claude-bg border border-gray-300 dark:border-claude-border hover:bg-gray-50 dark:hover:bg-claude-hover rounded-xl transition-colors"
             >
-              Cancel
+              {isZh ? '取消' : 'Cancel'}
             </button>
             <button
               onClick={handleCreate}
               disabled={!projectName.trim()}
               className="px-5 py-2.5 text-[15px] font-medium text-claude-bg bg-black dark:bg-white dark:text-black hover:opacity-90 rounded-xl transition-opacity disabled:opacity-40"
             >
-              Create project
+              {isZh ? '创建项目' : 'Create project'}
             </button>
           </div>
         </div>
@@ -1539,19 +1862,19 @@ const ProjectsPage = () => {
     );
   }
 
-  // ═══ Projects List View ═══
+  // 鈺愨晲鈺?Projects List View 鈺愨晲鈺?
   return (
     <div className="flex-1 h-full bg-claude-bg overflow-y-auto">
       <div className="max-w-[800px] mx-auto px-8 py-12">
         <div className="flex items-center justify-between mb-8">
-          <h1 className="font-[Spectral] text-[32px] text-claude-text" style={{ fontWeight: 500 }}>Projects</h1>
+          <h1 className="font-[Spectral] text-[32px] text-claude-text" style={{ fontWeight: 500 }}>{isZh ? '项目' : 'Projects'}</h1>
           <button
             onClick={() => setIsCreating(true)}
             className="flex items-center gap-2 px-3.5 py-1.5 bg-claude-text text-claude-bg hover:opacity-90 rounded-lg transition-opacity font-medium"
             style={{ fontSize: '14px' }}
           >
             <Plus size={16} strokeWidth={2.5} />
-            New project
+            {isZh ? '新建项目' : 'New project'}
           </button>
         </div>
 
@@ -1563,7 +1886,7 @@ const ProjectsPage = () => {
               </div>
               <input
                 type="text"
-                placeholder="Search projects..."
+                placeholder={isZh ? '搜索项目…' : 'Search projects...'}
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 className="w-full pl-10 pr-4 py-3 bg-white dark:bg-claude-input border border-gray-200 dark:border-claude-border rounded-xl text-claude-text placeholder-claude-textSecondary focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-[15px]"
@@ -1572,12 +1895,12 @@ const ProjectsPage = () => {
 
             <div className="flex justify-end mb-6">
               <div className="flex items-center gap-3 text-[14.5px] text-[#A1A1AA] relative">
-                <span>Sort by</span>
+                <span>{isZh ? '排序方式' : 'Sort by'}</span>
                 <button
                   onClick={() => setSortMenuOpen(!sortMenuOpen)}
                   className={`flex items-center gap-2 text-claude-text border border-[#3A3A3A] hover:border-[#4A4A4A] dark:border-claude-border dark:hover:bg-claude-hover rounded-[10px] px-3.5 py-1.5 transition-colors ${sortMenuOpen ? 'bg-claude-hover' : ''}`}
                 >
-                  {sortBy === 'activity' ? 'Activity' : sortBy === 'edited' ? 'Last edited' : 'Date created'}
+                  {sortBy === 'activity' ? (isZh ? '最近活动' : 'Activity') : sortBy === 'edited' ? (isZh ? '最近编辑' : 'Last edited') : (isZh ? '创建时间' : 'Date created')}
                   <ChevronDown size={14} className="text-claude-textSecondary" />
                 </button>
                 {sortMenuOpen && (
@@ -1585,9 +1908,9 @@ const ProjectsPage = () => {
                     <div className="fixed inset-0 z-40" onClick={() => setSortMenuOpen(false)} />
                     <div className="absolute top-full right-0 mt-1.5 w-[200px] bg-white dark:bg-[#2A2928] border border-gray-200 dark:border-claude-border rounded-[14px] shadow-lg py-1.5 z-50">
                       {[
-                        { id: 'activity', label: 'Recent activity' },
-                        { id: 'edited', label: 'Last edited' },
-                        { id: 'created', label: 'Date created' },
+                        { id: 'activity', label: isZh ? '最近活动' : 'Recent activity' },
+                        { id: 'edited', label: isZh ? '最近编辑' : 'Last edited' },
+                        { id: 'created', label: isZh ? '创建时间' : 'Date created' },
                       ].map(opt => (
                         <button
                           key={opt.id}
@@ -1610,7 +1933,7 @@ const ProjectsPage = () => {
         )}
 
         {loading ? (
-          <div className="text-center text-claude-textSecondary text-[14px] mt-12">Loading...</div>
+          <div className="text-center text-claude-textSecondary text-[14px] mt-12">{isZh ? '加载中…' : 'Loading...'}</div>
         ) : filteredProjects.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {filteredProjects.map(p => (
@@ -1689,15 +2012,18 @@ const ProjectsPage = () => {
                 </div>
 
                 <p className="text-[14px] text-claude-textSecondary line-clamp-3 leading-relaxed flex-1">
-                  {p.description || "No description provided."}
+                  {p.description || (isZh ? '还没有项目描述。' : 'No description provided.')}
                 </p>
 
                 <div className="mt-4 pt-1 flex items-center gap-4 text-[12px] text-claude-textSecondary/80">
-                  <span>Updated {new Date(p.updated_at).toLocaleDateString()}</span>
-                  {(p.file_count ?? 0) > 0 && <span>• {p.file_count} files</span>}
-                  {(p.chat_count ?? 0) > 0 && <span>• {p.chat_count} chats</span>}
+                  <span>{isZh ? '更新于' : 'Updated'} {new Date(p.updated_at).toLocaleDateString()}</span>
+                  {(p.file_count ?? 0) > 0 && <span>{isZh ? `${p.file_count} 个文件` : `${p.file_count} files`}</span>}
+                  {(p.chat_count ?? 0) > 0 && <span>{isZh ? `${p.chat_count} 条聊天` : `${p.chat_count} chats`}</span>}
                 </div>
                 <div className="mt-3 flex items-center gap-2 text-[11px] text-claude-textSecondary">
+                  <span className="rounded-full border border-claude-border px-2 py-1">
+                    {getProjectStatusLabel(p.status, isZh)}
+                  </span>
                   <span className="rounded-full border border-claude-border px-2 py-1">
                     {p.workspace_path ? (isZh ? '已绑定工作区' : 'Workspace linked') : (isZh ? '未绑定工作区' : 'No workspace')}
                   </span>
@@ -1713,16 +2039,16 @@ const ProjectsPage = () => {
         ) : (
           <div className="flex flex-col items-center justify-center mt-12">
             <img src={startProjectsImg} alt="Start a project" className="w-[100px] h-auto mb-6 dark:invert opacity-90" />
-            <h2 className="text-[17px] font-medium text-claude-text mb-3">Looking to start a project?</h2>
+            <h2 className="text-[17px] font-medium text-claude-text mb-3">{isZh ? '准备开始一个项目？' : 'Looking to start a project?'}</h2>
             <p className="text-[15px] text-claude-textSecondary text-center max-w-[400px] leading-relaxed mb-6">
-              Upload materials, set custom instructions, and organize conversations in one space.
+              {isZh ? '把资料传进来，补上项目说明，再把聊天都归到同一个空间里。' : 'Upload materials, set custom instructions, and organize conversations in one space.'}
             </p>
             <button
               onClick={() => setIsCreating(true)}
               className="flex items-center gap-2 px-4 py-2 bg-transparent border border-claude-border hover:bg-claude-hover rounded-xl text-claude-text transition-colors text-[14.5px] font-medium"
             >
               <Plus size={18} strokeWidth={2.5} />
-              New project
+              {isZh ? '新建项目' : 'New project'}
             </button>
           </div>
         )}
@@ -1732,9 +2058,9 @@ const ProjectsPage = () => {
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-claude-input w-[460px] rounded-[16px] flex flex-col shadow-2xl relative border border-claude-border overflow-hidden">
             <div className="px-6 pt-6 pb-4 text-left">
-              <h3 className="text-[19px] font-semibold text-claude-text mb-3">Delete project</h3>
+              <h3 className="text-[19px] font-semibold text-claude-text mb-3">{isZh ? '删除项目' : 'Delete project'}</h3>
               <p className="text-[15px] text-claude-textSecondary leading-relaxed pr-4">
-                确定要删除项目「{projectToDelete.name}」吗？所有关联的文件和对话也会被删除。
+                {isZh ? `确定要删除项目「${projectToDelete.name}」吗？所有关联的文件和对话也会被删除。` : `Are you sure you want to delete “${projectToDelete.name}”? All linked files and conversations will also be removed.`}
               </p>
             </div>
             <div className="px-5 pb-5 pt-2 flex justify-end gap-3 mt-4">
@@ -1742,13 +2068,13 @@ const ProjectsPage = () => {
                 onClick={() => setProjectToDelete(null)}
                 className="px-5 py-2 text-[14.5px] font-medium text-claude-text border border-claude-border hover:bg-claude-hover rounded-[8px] transition-colors"
               >
-                Cancel
+                {isZh ? '取消' : 'Cancel'}
               </button>
               <button
                 onClick={() => handleDeleteProject(projectToDelete)}
                 className="px-5 py-2 text-[14.5px] font-medium text-white bg-[#E05A5A] hover:bg-[#E86B6B] rounded-[8px] transition-colors"
               >
-                Delete
+                {isZh ? '删除' : 'Delete'}
               </button>
             </div>
           </div>
@@ -1759,11 +2085,11 @@ const ProjectsPage = () => {
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
           <div className="bg-claude-input w-[460px] rounded-[16px] flex flex-col shadow-2xl relative border border-claude-border overflow-hidden">
             <div className="px-6 pt-6 pb-4 text-left">
-              <h3 className="text-[19px] font-semibold text-claude-text mb-5">Edit details</h3>
+              <h3 className="text-[19px] font-semibold text-claude-text mb-5">{isZh ? '编辑详情' : 'Edit details'}</h3>
 
               <div className="space-y-4">
                 <div>
-                  <label className="block text-[14px] text-claude-textSecondary mb-2 font-medium">Name</label>
+                  <label className="block text-[14px] text-claude-textSecondary mb-2 font-medium">{isZh ? '名称' : 'Name'}</label>
                   <input
                     type="text"
                     value={editDetailsName}
@@ -1773,7 +2099,7 @@ const ProjectsPage = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-[14px] text-claude-textSecondary mb-2 font-medium">Description</label>
+                  <label className="block text-[14px] text-claude-textSecondary mb-2 font-medium">{isZh ? '描述' : 'Description'}</label>
                   <textarea
                     value={editDetailsDesc}
                     onChange={(e) => setEditDetailsDesc(e.target.value)}
@@ -1789,13 +2115,13 @@ const ProjectsPage = () => {
                 onClick={() => setProjectToEdit(null)}
                 className="px-5 py-2.5 text-[14.5px] font-medium text-claude-text border border-claude-border hover:bg-claude-hover rounded-[8px] transition-colors"
               >
-                Cancel
+                {isZh ? '取消' : 'Cancel'}
               </button>
               <button
                 onClick={handleSaveEditDetails}
                 className="px-5 py-2.5 text-[14.5px] font-medium bg-claude-text text-claude-bg hover:opacity-90 rounded-[8px] transition-opacity"
               >
-                Save
+                {isZh ? '保存' : 'Save'}
               </button>
             </div>
           </div>
@@ -1806,3 +2132,4 @@ const ProjectsPage = () => {
 };
 
 export default ProjectsPage;
+

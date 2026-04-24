@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+﻿import React, { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   ArrowRight,
@@ -20,7 +20,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-import { getAgentConfig, getGithubStatus, getProject, getProjects, Project } from '../api';
+import { getAgentConfig, getGithubStatus, getProject, getProjects, Project, ProjectStatus, ProjectTask } from '../api';
 import { getStoredUiLanguage } from '../utils/chineseClientText';
 
 const formatPermissionLabel = (permissionMode?: string, isZh = true): string => {
@@ -31,10 +31,10 @@ const formatPermissionLabel = (permissionMode?: string, isZh = true): string => 
     return 'Unknown';
   }
 
-  if (permissionMode === 'workspace_write') return '安全模式';
+  if (permissionMode === 'workspace_write') return '瀹夊叏妯″紡';
   if (permissionMode === 'project') return '项目权限';
-  if (permissionMode === 'full_access') return '完全访问';
-  return '未知';
+  if (permissionMode === 'full_access') return '瀹屽叏璁块棶';
+  return '鏈煡';
 };
 
 type CoworkTaskStatus = 'todo' | 'doing' | 'done';
@@ -61,6 +61,11 @@ type ProjectActivityItem = {
 type ProjectDocSummary = {
   projectId: string;
   projectName: string;
+  status?: ProjectStatus;
+  owner?: string;
+  milestone?: string;
+  nextAction?: string;
+  taskCounts?: Record<'todo' | 'doing' | 'blocked' | 'done', number>;
   overview: string;
   goals: string;
   constraints: string;
@@ -70,6 +75,13 @@ type ProjectDocSummary = {
   fileCount: number;
   githubCount: number;
   updatedAt: string;
+};
+
+const getProjectStatusLabel = (status: ProjectStatus | undefined, isZh: boolean) => {
+  if (status === 'blocked') return isZh ? '阻塞' : 'Blocked';
+  if (status === 'ready_to_release') return isZh ? '待发布' : 'Ready to release';
+  if (status === 'done') return isZh ? '已完成' : 'Done';
+  return isZh ? '进行中' : 'In progress';
 };
 
 const normalizeProjectDocText = (value?: string) => (value || '').replace(/\r\n/g, '\n').trim();
@@ -116,8 +128,8 @@ const getTimelineGroupLabel = (value: string, isZh: boolean) => {
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const startOfTarget = new Date(target.getFullYear(), target.getMonth(), target.getDate()).getTime();
   const diffDays = Math.floor((startOfToday - startOfTarget) / (24 * 60 * 60 * 1000));
-  if (diffDays <= 0) return isZh ? '今天' : 'Today';
-  if (diffDays === 1) return isZh ? '昨天' : 'Yesterday';
+  if (diffDays <= 0) return isZh ? '浠婂ぉ' : 'Today';
+  if (diffDays === 1) return isZh ? '鏄ㄥぉ' : 'Yesterday';
   return target.toLocaleDateString();
 };
 
@@ -131,7 +143,7 @@ const createSeedTasks = (isZh: boolean, workspacePath: string): CoworkTask[] => 
     {
       id: makeTaskId(),
       title: isZh ? '确认当前工作区' : 'Confirm current workspace',
-      description: workspacePath || (isZh ? '进入 Code 页选择项目目录。' : 'Open Code and choose a project folder.'),
+      description: workspacePath || (isZh ? '进入 Code 页面选择项目目录。' : 'Open Code and choose a project folder.'),
       status: workspacePath ? 'done' : 'todo',
       source: 'Code',
       updatedAt: now,
@@ -147,7 +159,7 @@ const createSeedTasks = (isZh: boolean, workspacePath: string): CoworkTask[] => 
     {
       id: makeTaskId(),
       title: isZh ? '整理下一轮产品功能' : 'Plan the next product slice',
-      description: isZh ? '继续围绕工作区、命令执行、权限、预览稳定性推进。' : 'Continue around workspace, command execution, permissions, and preview stability.',
+      description: isZh ? '继续围绕工作区、命令执行、权限和预览稳定性推进。' : 'Continue around workspace, command execution, permissions, and preview stability.',
       status: 'todo',
       source: 'Product',
       updatedAt: now,
@@ -192,6 +204,25 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
     () => projects.filter((project) => Number(project.is_archived) !== 1).slice(0, 6),
     [projects],
   );
+  const enhancedProjectDocSummaries = useMemo(() => (
+    projectDocSummaries.map((summary) => {
+      const project = projects.find((item) => item.id === summary.projectId);
+      const tasks: ProjectTask[] = Array.isArray(project?.tasks) ? project!.tasks : [];
+      return {
+        ...summary,
+        status: project?.status || 'active',
+        owner: project?.owner || '',
+        milestone: project?.milestone || '',
+        nextAction: project?.next_action || '',
+        taskCounts: {
+          todo: tasks.filter((task) => task.status === 'todo').length,
+          doing: tasks.filter((task) => task.status === 'doing').length,
+          blocked: tasks.filter((task) => task.status === 'blocked').length,
+          done: tasks.filter((task) => task.status === 'done').length,
+        },
+      };
+    })
+  ), [projectDocSummaries, projects]);
 
   const formatActivityTime = (value?: string) => {
     if (!value) return '';
@@ -285,7 +316,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
           type: 'project',
           projectId: project.id,
           projectName: project.name,
-          title: isZh ? '项目文档已准备' : 'Project doc ready',
+          title: isZh ? '项目文档已就绪' : 'Project doc ready',
           detail: parsedDoc.goals || parsedDoc.overview || (isZh ? '继续补项目约束和常用命令。' : 'Keep enriching goals, constraints, and commands.'),
           at: detail.updated_at || project.updated_at,
         });
@@ -296,7 +327,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
             projectId: project.id,
             projectName: project.name,
             title: conversation.title || (isZh ? '未命名聊天' : 'Untitled chat'),
-            detail: isZh ? '项目聊天' : 'Project chat',
+        detail: isZh ? '项目聊天' : 'Project chat',
             at: conversation.created_at,
           });
         });
@@ -307,7 +338,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
             projectId: project.id,
             projectName: project.name,
             title: file.file_name,
-            detail: file.source_type === 'github' ? 'GitHub file' : (isZh ? '项目文件' : 'Project file'),
+        detail: file.source_type === 'github' ? 'GitHub file' : (isZh ? '项目文件' : 'Project file'),
             at: file.created_at,
           });
         });
@@ -318,7 +349,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
             projectId: project.id,
             projectName: project.name,
             title: source.repo_full_name,
-            detail: isZh ? `同步到 ${source.ref}` : `Synced to ${source.ref}`,
+        detail: isZh ? `同步到 ${source.ref}` : `Synced to ${source.ref}`,
             at: source.last_synced_at || source.added_at,
           });
         });
@@ -434,9 +465,9 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
     {
       title: isZh ? '继续做项目' : 'Continue with projects',
       description: isZh
-        ? '去 Projects 管理知识库、GitHub 来源、文件和项目对话。'
+        ? '去项目页管理知识文件、GitHub 来源、项目文件和项目对话。'
         : 'Manage knowledge files, GitHub sources, files, and project conversations in Projects.',
-      action: isZh ? '打开 Projects' : 'Open Projects',
+      action: isZh ? '打开项目' : 'Open Projects',
       onClick: () => navigate('/projects'),
       icon: LayoutGrid,
     },
@@ -449,7 +480,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
         : isZh
           ? '先选一个本地目录，随后就能看文件、跑命令、看 Git 状态。'
           : 'Choose a local folder first, then browse files, run commands, and inspect Git.',
-      action: isZh ? '打开 Code' : 'Open Code',
+      action: isZh ? '打开代码' : 'Open Code',
       onClick: () => navigate('/code'),
       icon: FolderOpen,
     },
@@ -473,7 +504,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
         : isZh
           ? '还没有绑定目录。先去 Code 里选择一个项目文件夹。'
           : 'No directory is linked yet. Choose a project folder in Code first.',
-      action: isZh ? '去 Code' : 'Go to Code',
+      action: isZh ? '去代码页' : 'Go to Code',
       onClick: () => navigate('/code'),
     },
     {
@@ -505,16 +536,16 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
           : isZh
             ? '还没有活跃项目。建议先从一个项目开始，把文件和仓库来源挂进去。'
             : 'There are no active projects yet. Start with one project and attach files and repository sources.',
-      action: isZh ? '去 Projects' : 'Open Projects',
+      action: isZh ? '去项目页' : 'Open Projects',
       onClick: () => navigate('/projects'),
     },
   ];
 
   const workflowPanels = [
     {
-      title: isZh ? '现在该去哪里用' : 'Where to work right now',
+      title: isZh ? '现在该去哪里做' : 'Where to work right now',
       text: isZh
-        ? '如果你是要选目录、看文件、跑命令、看 Git，就去“代码”页；如果你要整理资料、连接仓库、维护项目上下文，就去“项目”页。'
+        ? '如果你要选目录、看文件、跑命令、看 Git，就去代码页；如果你要整理资料、连接仓库、维护项目上下文，就去项目页。'
         : 'Use Code for folders, files, commands, and Git. Use Projects for repository sources, knowledge files, and project context.',
       icon: Wrench,
     },
@@ -561,7 +592,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
             </h1>
             <p className="mt-2 max-w-[800px] text-[14px] leading-7 text-claude-textSecondary">
               {isZh
-                ? '这里不再只是一个空白占位页了。现在它会把项目、GitHub、权限和代码工作区的关键状态收拢到一起，适合用来做总览、跳转和下一步决策。'
+                ? '这里不再只是一个空白占位页了。现在它会把项目、GitHub、权限和代码工作区的关键信号收拢到一起，适合用来做总览、跳转和下一步决策。'
                 : 'This is no longer a placeholder. It now gathers the most important project, GitHub, permission, and code-workspace signals into one place for overview, routing, and next-step decisions.'}
             </p>
           </div>
@@ -627,12 +658,12 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
               onClick={() => navigate('/projects')}
               className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-text transition-colors hover:bg-claude-hover"
             >
-              {isZh ? '打开 Projects' : 'Open Projects'}
+              {isZh ? '打开项目' : 'Open Projects'}
             </button>
           </div>
 
           <div className="mt-5 grid grid-cols-2 gap-4">
-            {projectDocSummaries.length > 0 ? projectDocSummaries.map((summary) => (
+            {enhancedProjectDocSummaries.length > 0 ? enhancedProjectDocSummaries.map((summary) => (
               <button
                 key={summary.projectId}
                 type="button"
@@ -647,9 +678,32 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
                   <ArrowRight size={16} className="shrink-0 text-claude-textSecondary" />
                 </div>
 
+                <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-claude-textSecondary">
+                  <span className="rounded-full border border-claude-border px-2.5 py-1">
+                    {getProjectStatusLabel(summary.status, isZh)}
+                  </span>
+                  {summary.owner ? (
+                    <span className="rounded-full border border-claude-border px-2.5 py-1">
+                      {isZh ? `负责人 ${summary.owner}` : `Owner ${summary.owner}`}
+                    </span>
+                  ) : null}
+                  {summary.milestone ? (
+                    <span className="rounded-full border border-claude-border px-2.5 py-1">
+                      {isZh ? `里程碑 ${summary.milestone}` : `Milestone ${summary.milestone}`}
+                    </span>
+                  ) : null}
+                </div>
+
                 <div className="mt-4 rounded-xl border border-claude-border px-4 py-3 text-[13px] leading-6 text-claude-textSecondary">
                   {summary.overview}
                 </div>
+
+                {summary.nextAction ? (
+                  <div className="mt-3 rounded-xl border border-claude-border px-4 py-3">
+                    <div className="text-[11px] uppercase tracking-[0.08em] text-claude-textSecondary">{isZh ? '下一步动作' : 'Next action'}</div>
+                    <div className="mt-1 text-[12px] leading-6 text-claude-text">{summary.nextAction}</div>
+                  </div>
+                ) : null}
 
                 <div className="mt-4 grid grid-cols-3 gap-2 text-[11px]">
                   <div className="rounded-xl border border-claude-border px-3 py-2">
@@ -665,6 +719,27 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
                     <div className="mt-1 text-[15px] font-semibold text-claude-text">{summary.githubCount}</div>
                   </div>
                 </div>
+
+                {summary.taskCounts ? (
+                  <div className="mt-3 grid grid-cols-4 gap-2 text-[11px]">
+                    <div className="rounded-xl border border-claude-border px-3 py-2">
+                      <div className="text-claude-textSecondary">{isZh ? '待处理' : 'To do'}</div>
+                      <div className="mt-1 text-[15px] font-semibold text-claude-text">{summary.taskCounts.todo}</div>
+                    </div>
+                    <div className="rounded-xl border border-claude-border px-3 py-2">
+                      <div className="text-claude-textSecondary">{isZh ? '进行中' : 'Doing'}</div>
+                      <div className="mt-1 text-[15px] font-semibold text-claude-text">{summary.taskCounts.doing}</div>
+                    </div>
+                    <div className="rounded-xl border border-claude-border px-3 py-2">
+                      <div className="text-claude-textSecondary">{isZh ? '阻塞' : 'Blocked'}</div>
+                      <div className="mt-1 text-[15px] font-semibold text-claude-text">{summary.taskCounts.blocked}</div>
+                    </div>
+                    <div className="rounded-xl border border-claude-border px-3 py-2">
+                      <div className="text-claude-textSecondary">{isZh ? '已完成' : 'Done'}</div>
+                      <div className="mt-1 text-[15px] font-semibold text-claude-text">{summary.taskCounts.done}</div>
+                    </div>
+                  </div>
+                ) : null}
 
                 <div className="mt-4 space-y-2">
                   {summary.goals && (
@@ -688,7 +763,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
                     </span>
                   )) : (
                     <span className="rounded-full border border-dashed border-claude-border px-2.5 py-1 text-[11px] text-claude-textSecondary">
-                      {isZh ? '还没写常用命令' : 'No commands yet'}
+                      {isZh ? '还没有常用命令' : 'No commands yet'}
                     </span>
                   )}
                 </div>
@@ -700,7 +775,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
             )) : (
               <div className="col-span-2 rounded-2xl border border-dashed border-claude-border px-5 py-10 text-center text-[13px] leading-7 text-claude-textSecondary">
                 {isZh
-                  ? '项目文档摘要会在这里显示。先去 Projects 给项目补概览、目标和常用命令。'
+                  ? '项目文档摘要会显示在这里。先去项目页补上概览、目标和常用命令。'
                   : 'Project doc snapshots will appear here once projects have overviews, goals, and commands.'}
               </div>
             )}
@@ -713,7 +788,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
               <div className="flex items-center gap-3">
                 <UsersRound size={18} className="text-claude-textSecondary" />
                 <h2 className="text-[17px] font-semibold text-claude-text">
-                  {isZh ? '任务看板' : 'Task board'}
+                  {isZh ? '浠诲姟鐪嬫澘' : 'Task board'}
                 </h2>
               </div>
               <p className="mt-2 text-[13px] leading-6 text-claude-textSecondary">
@@ -727,7 +802,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
               onClick={resetBoardTasks}
               className="rounded-lg border border-claude-border px-3 py-1.5 text-[12px] text-claude-textSecondary hover:bg-claude-hover hover:text-claude-text"
             >
-              {isZh ? '重置模板' : 'Reset'}
+              {isZh ? '閲嶇疆妯℃澘' : 'Reset'}
             </button>
           </div>
 
@@ -847,14 +922,14 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
               <div className="flex items-center gap-3">
                 <FolderGit2 size={18} className="text-claude-textSecondary" />
                 <h2 className="text-[17px] font-semibold text-claude-text">
-                  {isZh ? '最近活跃项目' : 'Recently active projects'}
+                    {isZh ? '最近活跃项目' : 'Recently active projects'}
                 </h2>
               </div>
               <div className="mt-4 space-y-3">
                 {activeProjects.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-claude-border px-4 py-5 text-[13px] leading-6 text-claude-textSecondary">
                     {isZh
-                      ? '还没有活跃项目。你可以先去 Projects 创建一个项目，或者先从 GitHub 接一个仓库来源进来。'
+                      ? '还没有活跃项目。你可以先去项目页创建一个项目，或者先从 GitHub 接一个仓库来源进来。'
                       : 'There are no active projects yet. Start in Projects by creating one, or bring in a repository source from GitHub first.'}
                   </div>
                 ) : (
@@ -980,7 +1055,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
               <div className="flex items-center gap-3">
                 <Link2 size={18} className="text-claude-textSecondary" />
                 <h2 className="text-[17px] font-semibold text-claude-text">
-                  {isZh ? '当前工作方式' : 'Current workflow'}
+            {isZh ? '当前工作方式' : 'Current workflow'}
                 </h2>
               </div>
               <div className="mt-4 space-y-3 text-[13px] leading-7 text-claude-textSecondary">
@@ -994,7 +1069,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
                 </div>
                 <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-3">
                   <div className="text-[12px] uppercase tracking-[0.08em] text-claude-textSecondary/80">
-                    {isZh ? 'GitHub 连接' : 'GitHub connection'}
+            {isZh ? 'GitHub 连接' : 'GitHub connection'}
                   </div>
                   <div className="mt-1 text-claude-text">
                     {githubConnected === null
@@ -1003,20 +1078,20 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
                         : 'Checking…'
                       : githubConnected
                         ? isZh
-                          ? '已连接，可继续补仓库来源和文件上下文。'
+                          ? '已连接，可以继续补仓库来源和文件上下文。'
                           : 'Connected, ready for repository sources and file context.'
                         : isZh
-                          ? '还没连接，适合先去设置里完成授权。'
+                          ? '还没有连接，适合先去设置里完成授权。'
                           : 'Not connected yet. Completing auth in Settings is the next good step.'}
                   </div>
                 </div>
                 <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-3">
                   <div className="text-[12px] uppercase tracking-[0.08em] text-claude-textSecondary/80">
-                    {isZh ? '推荐路线' : 'Recommended path'}
+                    {isZh ? '鎺ㄨ崘璺嚎' : 'Recommended path'}
                   </div>
                   <div className="mt-1 text-claude-text">
                     {isZh
-                      ? '选目录、看文件、跑命令、看 Git 状态时，直接去“代码”页；整理资料、维护项目和仓库来源时，去“项目”页。'
+                      ? '选目录、看文件、跑命令、看 Git 状态时，直接去代码页；整理资料、维护项目和仓库来源时，去项目页。'
                       : 'Go to Code for folders, files, commands, and Git status. Go to Projects for source management and project context.'}
                   </div>
                 </div>
@@ -1030,3 +1105,4 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
 };
 
 export default CoworkPage;
+

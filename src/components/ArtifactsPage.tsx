@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+﻿import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { ArrowLeft, Copy, Check, ExternalLink, RefreshCw, Loader2, FileCode, MessageSquare } from 'lucide-react';
 import inspirationsData from '../data/inspirations.json';
 import { buildArtifactHtml, loadArtifactCode } from '../utils/artifactRenderer';
@@ -50,13 +50,75 @@ const CATEGORY_LABELS: Record<string, string> = {
   'touch-grass': 'Touch grass',
 };
 
+const CATEGORY_LABELS_ZH: Record<string, string> = {
+  all: '全部',
+  learn: '学点东西',
+  'life-hacks': '生活技巧',
+  games: '玩个游戏',
+  creative: '创意灵感',
+  'touch-grass': '回到生活',
+};
+
+const ITEM_ZH_TEXT: Record<string, { name: string; description: string }> = {};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 const CATEGORY_ORDER = ['all', 'learn', 'life-hacks', 'games', 'creative', 'touch-grass'];
+
+const ITEM_ZH_TEXT_CLEAN: Record<string, { name: string; description: string }> = {
+  'f7347722-1c2a-4161-bc39-dc7cdf18d134': { name: '写作编辑器', description: '获得语法、拼写和表达方面的反馈，提升文字的清晰度与可读性。' },
+  '7ee4281a-fb3f-43ef-b73f-9290b666d323': { name: '抽认卡', description: '上传自己的文本，或描述一个主题来生成抽认卡。' },
+  '54712751-5505-4766-a641-7805e747ba4d': { name: 'Anthropic 办公室模拟器', description: '在 3D 办公室环境里与 Anthropic 联创互动。' },
+  'd97d3176-6ef1-45ff-a8b0-2a710af24cd8': { name: 'CodeVerter 代码转换器', description: '在任意编程语言之间翻译代码。' },
+  'd7605d97-cac1-4170-9df8-4a418a2a621e': { name: 'PyLingo', description: '通过循序渐进的教程学习 Python。' },
+  'f10e0521-431a-4251-8542-9db1fe6b12cf': { name: '分子工作室', description: '通过这个交互式分子可视化工具学习化学。' },
+  '3e8b55fc-9c84-4b81-9eed-6cd910d04c7b': { name: '二维码生成器', description: '为任意 URL 或文本生成二维码。' },
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 interface ArtifactsPageProps {
   onTryPrompt?: (prompt: string) => void;
 }
 
 const ArtifactsPage: React.FC<ArtifactsPageProps> = ({ onTryPrompt }) => {
+  const isZh = localStorage.getItem('ui_language') === 'zh-CN';
   const [activeTab, setActiveTab] = useState<'inspiration' | 'your_artifacts'>('inspiration');
   const [activeFilter, setActiveFilter] = useState('all');
   const [selectedItem, setSelectedItem] = useState<InspirationItem | null>(null);
@@ -116,6 +178,14 @@ const ArtifactsPage: React.FC<ArtifactsPageProps> = ({ onTryPrompt }) => {
   };
 
   const items = inspirationsData.items as InspirationItem[];
+  const getLocalizedItem = (item: InspirationItem) => {
+    if (!isZh) return item;
+    const translated = ITEM_ZH_TEXT_CLEAN[item.artifact_id] || ITEM_ZH_TEXT[item.artifact_id];
+    return translated ? { ...item, ...translated } : item;
+  };
+  const getCategoryLabel = (category: string) =>
+    isZh ? (CATEGORY_LABELS_ZH[category] || category) : (CATEGORY_LABELS[category] || category);
+  const localizedSelectedItem = selectedItem ? getLocalizedItem(selectedItem) : null;
 
   const filteredItems = useMemo(() => {
     if (activeFilter === 'all') return items;
@@ -135,6 +205,7 @@ const ArtifactsPage: React.FC<ArtifactsPageProps> = ({ onTryPrompt }) => {
   };
 
   const handleCustomize = async (item: InspirationItem) => {
+    const localizedItem = getLocalizedItem(item);
     // Load the artifact code
     let artifactCode: any = null;
     if (item.code_file) {
@@ -146,8 +217,8 @@ const ArtifactsPage: React.FC<ArtifactsPageProps> = ({ onTryPrompt }) => {
 
     // Store artifact data for MainContent to pick up
     sessionStorage.setItem('artifact_remix', JSON.stringify({
-      name: item.name,
-      description: item.description,
+      name: localizedItem.name,
+      description: localizedItem.description,
       code: artifactCode,
       prompt: item.starting_prompt,
     }));
@@ -158,7 +229,7 @@ const ArtifactsPage: React.FC<ArtifactsPageProps> = ({ onTryPrompt }) => {
   };
 
   // Detail view
-  if (selectedItem) {
+  if (selectedItem && localizedSelectedItem) {
     return (
       <div className="flex-1 h-full bg-claude-bg overflow-y-auto">
         <div className="max-w-[800px] mx-auto px-4 py-6 md:px-8 md:py-10">
@@ -168,7 +239,7 @@ const ArtifactsPage: React.FC<ArtifactsPageProps> = ({ onTryPrompt }) => {
             className="flex items-center gap-1.5 text-claude-textSecondary hover:text-claude-text transition-colors mb-5"
           >
             <ArrowLeft size={16} />
-            <span className="text-[14px]">Back</span>
+            <span className="text-[14px]">{isZh ? '返回' : 'Back'}</span>
           </button>
 
           {/* Creator badge */}
@@ -184,15 +255,15 @@ const ArtifactsPage: React.FC<ArtifactsPageProps> = ({ onTryPrompt }) => {
           {/* Title + description + Customize button row */}
           <div className="flex items-start justify-between gap-6 mb-6">
             <div className="flex-1 min-w-0">
-              <h1 className="text-[20px] font-semibold text-claude-text mb-1.5">{selectedItem.name}</h1>
-              <p className="text-[14px] text-claude-textSecondary leading-relaxed">{selectedItem.description}</p>
+              <h1 className="text-[20px] font-semibold text-claude-text mb-1.5">{localizedSelectedItem.name}</h1>
+              <p className="text-[14px] text-claude-textSecondary leading-relaxed">{localizedSelectedItem.description}</p>
             </div>
             <button
               onClick={() => handleCustomize(selectedItem)}
               className="flex items-center gap-2 px-4 py-2 bg-white text-[#1a1a1a] border border-white/80 rounded-xl text-[13px] font-medium hover:bg-gray-100 transition-colors flex-shrink-0 mt-1"
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="6" cy="6" r="3" /><circle cx="6" cy="18" r="3" /><line x1="20" y1="4" x2="8.12" y2="15.88" /><line x1="14.47" y1="14.48" x2="20" y2="20" /><line x1="8.12" y1="8.12" x2="12" y2="12" /></svg>
-              Customize
+              {isZh ? '自定义' : 'Customize'}
             </button>
           </div>
 
@@ -203,7 +274,7 @@ const ArtifactsPage: React.FC<ArtifactsPageProps> = ({ onTryPrompt }) => {
               <button
                 onClick={handleRefreshArtifact}
                 className="w-6 h-6 rounded flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/10 transition-colors"
-                title="Refresh"
+                title={isZh ? '刷新' : 'Refresh'}
               >
                 <RefreshCw size={13} />
               </button>
@@ -216,7 +287,7 @@ const ArtifactsPage: React.FC<ArtifactsPageProps> = ({ onTryPrompt }) => {
                   }
                 }}
                 className="w-6 h-6 rounded flex items-center justify-center text-gray-500 hover:text-white hover:bg-white/10 transition-colors"
-                title="Open in new window"
+                title={isZh ? '在新窗口打开' : 'Open in new window'}
               >
                 <ExternalLink size={13} />
               </button>
@@ -227,11 +298,11 @@ const ArtifactsPage: React.FC<ArtifactsPageProps> = ({ onTryPrompt }) => {
                 <Loader2 size={24} className="animate-spin text-claude-textSecondary" />
               </div>
             ) : artifactHtml ? (
-              <ArtifactIframe ref={iframeRef} html={artifactHtml} title={selectedItem.name} />
+              <ArtifactIframe ref={iframeRef} html={artifactHtml} title={localizedSelectedItem.name} />
             ) : (
               <img
                 src={`./artifacts/previews/${selectedItem.img_src}`}
-                alt={selectedItem.name}
+                alt={localizedSelectedItem.name}
                 className="w-full object-cover"
                 style={{ minHeight: '360px' }}
                 onError={(e) => {
@@ -246,10 +317,10 @@ const ArtifactsPage: React.FC<ArtifactsPageProps> = ({ onTryPrompt }) => {
           <div className="flex gap-10 flex-wrap">
             {/* About - left */}
             <div className="flex-1 min-w-[300px]">
-              <h2 className="text-[16px] font-semibold text-claude-text mb-4">About</h2>
+              <h2 className="text-[16px] font-semibold text-claude-text mb-4">{isZh ? '关于' : 'About'}</h2>
               <div className="bg-[#f5f5f4] dark:bg-[#121212] border border-black/[0.06] dark:border-white/[0.06] rounded-xl p-5">
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-[14px] font-semibold text-claude-text">Starting prompt</h3>
+                  <h3 className="text-[14px] font-semibold text-claude-text">{isZh ? '起始提示词' : 'Starting prompt'}</h3>
                   <button
                     onClick={() => handleCopyPrompt(selectedItem.starting_prompt)}
                     className="p-1.5 rounded-md text-claude-textSecondary hover:bg-claude-hover hover:text-claude-text transition-colors"
@@ -266,13 +337,13 @@ const ArtifactsPage: React.FC<ArtifactsPageProps> = ({ onTryPrompt }) => {
 
             {/* Keep learning - right */}
             <div className="w-[200px] flex-shrink-0">
-              <h2 className="text-[16px] font-semibold text-claude-text mb-4">Keep learning</h2>
+              <h2 className="text-[16px] font-semibold text-claude-text mb-4">{isZh ? '继续探索' : 'Keep learning'}</h2>
               <div className="flex flex-col gap-2">
                 <button
                   onClick={() => handleTryIt(selectedItem.starting_prompt)}
                   className="flex items-center justify-between w-full px-4 py-2.5 border border-claude-border rounded-xl text-[13px] font-medium text-claude-text hover:bg-claude-hover transition-colors"
                 >
-                  <span>View full chat</span>
+                  <span>{isZh ? '鏌ョ湅瀹屾暣鑱婂ぉ' : 'View full chat'}</span>
                   <ExternalLink size={13} className="text-claude-textSecondary" />
                 </button>
                 <a
@@ -281,7 +352,7 @@ const ArtifactsPage: React.FC<ArtifactsPageProps> = ({ onTryPrompt }) => {
                   rel="noopener noreferrer"
                   className="flex items-center justify-between w-full px-4 py-2.5 border border-claude-border rounded-xl text-[13px] font-medium text-claude-text hover:bg-claude-hover transition-colors"
                 >
-                  <span>Artifacts guide</span>
+                  <span>{isZh ? 'Artifacts 鎸囧崡' : 'Artifacts guide'}</span>
                   <ExternalLink size={13} className="text-claude-textSecondary" />
                 </a>
               </div>
@@ -301,14 +372,14 @@ const ArtifactsPage: React.FC<ArtifactsPageProps> = ({ onTryPrompt }) => {
             className="font-[Spectral] text-[32px] text-claude-text"
             style={{ fontWeight: 500, WebkitTextStroke: '0.5px currentColor' }}
           >
-            Artifacts
+            {isZh ? '作品' : 'Artifacts'}
           </h1>
           <button
             onClick={() => handleTryIt('Create a new interactive artifact.')}
             className="flex items-center gap-2 px-3.5 py-1.5 bg-claude-text text-claude-bg hover:opacity-90 rounded-lg transition-opacity font-medium"
             style={{ fontSize: '14px' }}
           >
-            New artifact
+            {isZh ? '新建作品' : 'New artifact'}
           </button>
         </div>
 
@@ -318,13 +389,13 @@ const ArtifactsPage: React.FC<ArtifactsPageProps> = ({ onTryPrompt }) => {
             onClick={() => setActiveTab('inspiration')}
             className={`pb-3 text-[14px] font-medium transition-colors border-b-2 ${activeTab === 'inspiration' ? 'text-claude-text border-claude-text' : 'text-claude-textSecondary border-transparent hover:text-claude-text'}`}
           >
-            Inspiration
+            {isZh ? '灵感' : 'Inspiration'}
           </button>
           <button
             onClick={() => setActiveTab('your_artifacts')}
             className={`pb-3 text-[14px] font-medium transition-colors border-b-2 ${activeTab === 'your_artifacts' ? 'text-claude-text border-claude-text' : 'text-claude-textSecondary border-transparent hover:text-claude-text'}`}
           >
-            Your artifacts
+            {isZh ? '你的作品' : 'Your artifacts'}
           </button>
         </div>
 
@@ -341,18 +412,27 @@ const ArtifactsPage: React.FC<ArtifactsPageProps> = ({ onTryPrompt }) => {
                     : 'text-claude-textSecondary hover:bg-black/5 dark:hover:bg-white/5'
                     }`}
                 >
-                  {CATEGORY_LABELS[id]}
+                  {getCategoryLabel(id)}
+
+
+
+
+
+
+
                 </button>
               ))}
             </div>
 
             {/* Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
-              {filteredItems.map(item => (
+              {filteredItems.map(rawItem => {
+                const item = getLocalizedItem(rawItem);
+                return (
                 <div
                   key={item.artifact_id}
                   className="group cursor-pointer"
-                  onClick={() => setSelectedItem(item)}
+                  onClick={() => setSelectedItem(rawItem)}
                 >
                   <div className="w-full aspect-[4/3] rounded-[16px] overflow-hidden mb-3 border border-transparent group-hover:border-[#262624] relative bg-claude-input transition-colors duration-200">
                     <img
@@ -374,7 +454,7 @@ const ArtifactsPage: React.FC<ArtifactsPageProps> = ({ onTryPrompt }) => {
                     {item.description}
                   </p>
                 </div>
-              ))}
+              )})}
             </div>
           </>
         ) : (
@@ -388,8 +468,8 @@ const ArtifactsPage: React.FC<ArtifactsPageProps> = ({ onTryPrompt }) => {
               <div className="w-16 h-16 rounded-2xl bg-claude-hover flex items-center justify-center mb-4">
                 <FileCode size={24} className="opacity-40" />
               </div>
-              <p className="text-[15px] font-medium text-claude-text mb-1">No artifacts yet</p>
-              <p className="text-[13px]">HTML files created by Claude will appear here.</p>
+              <p className="text-[15px] font-medium text-claude-text mb-1">{isZh ? '还没有作品' : 'No artifacts yet'}</p>
+              <p className="text-[13px]">{isZh ? 'Claude 创建的 HTML 作品会显示在这里。' : 'HTML files created by Claude will appear here.'}</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">

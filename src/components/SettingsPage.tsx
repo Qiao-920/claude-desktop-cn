@@ -31,10 +31,20 @@ import {
 } from 'lucide-react';
 import {
   changePassword,
+  activateComputerUseWindow,
   callMcpServerTool,
+  captureComputerUseScreenshot,
   CodeGitStatusResult,
+  ComputerUseAuditEntry,
+  ComputerUseConfig,
+  ComputerUseScreenshotResult,
+  ComputerUseSession,
+  ComputerUseWindowInfo,
   deleteSession,
   disconnectGithub,
+  getComputerUseAudit,
+  getComputerUseConfig,
+  getComputerUseSession,
   getCodeGitStatus,
   getAgentConfig,
   getConversations,
@@ -51,10 +61,15 @@ import {
   getUserUsage,
   logout,
   logoutOtherSessions,
+  runComputerUseAction,
   McpToolAuditEntry,
   McpToolInfo,
   McpServerConfig,
+  listComputerUseWindows,
+  startComputerUseSession,
+  stopComputerUseSession,
   updateAgentConfig,
+  updateComputerUseConfig,
   createMcpServer,
   deleteMcpServer,
   discoverMcpServerTools,
@@ -89,6 +104,7 @@ type SettingsSection =
   | 'models'
   | 'personalization'
   | 'permissions'
+  | 'computerUse'
   | 'git'
   | 'mcp'
   | 'skills'
@@ -119,6 +135,22 @@ type SkillItem = {
 
 type SkillDescriptionLanguage = 'zh-CN' | 'en';
 type McpServerFilter = 'all' | 'enabled' | 'healthy' | 'issues';
+type ComputerUseCoordinateMode = 'screen' | 'window';
+type ComputerUseActionType = 'move' | 'click' | 'double_click' | 'right_click' | 'scroll' | 'type' | 'hotkey';
+
+type ComputerUseSequenceStep = {
+  id: string;
+  action: ComputerUseActionType;
+  coordinateMode: ComputerUseCoordinateMode;
+  x?: number;
+  y?: number;
+  delta?: number;
+  text?: string;
+  keys?: string[];
+  label?: string;
+};
+
+const COMPUTER_USE_SEQUENCE_STORAGE_KEY = 'computer_use_sequences_v1';
 
 const SKILL_DESCRIPTION_ZH: Record<string, string> = {
   'code-review': '代码审查助手。重点检查 bug、安全风险、性能问题、可维护性和缺少测试，适合在提交前做最后一轮质量把关。',
@@ -446,6 +478,7 @@ const SETTING_NAV_META: Record<SettingsSection, { label: string; icon: React.Com
   models: { label: '模型', icon: Bot },
   personalization: { label: '个性化', icon: UserRound },
   permissions: { label: '权限', icon: ShieldCheck },
+  computerUse: { label: 'Computer Use', icon: AppWindow, badge: 'P2' },
   git: { label: 'Git', icon: GitBranch },
   mcp: { label: 'MCP 服务器', icon: PlugZap },
   skills: { label: 'Skills', icon: ListChecks },
@@ -710,6 +743,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
       'models',
       'personalization',
       'permissions',
+      'computerUse',
       'git',
       'mcp',
       'skills',
@@ -776,6 +810,45 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const [mcpBusy, setMcpBusy] = useState('');
   const [mcpEditingEnvId, setMcpEditingEnvId] = useState('');
   const [mcpEditingEnv, setMcpEditingEnv] = useState('');
+  const [computerUseConfig, setComputerUseConfig] = useState<ComputerUseConfig>({
+    enabled: false,
+    trustedMode: false,
+    sessionDurationMinutes: 15,
+    foregroundOnly: true,
+    allowMouse: true,
+    allowKeyboard: true,
+    allowHotkeys: true,
+    allowScroll: true,
+    allowClipboardTyping: true,
+    allowedApps: [],
+    blockedApps: [],
+  });
+  const [computerUseSession, setComputerUseSession] = useState<ComputerUseSession>({ active: false });
+  const [computerUseWindows, setComputerUseWindows] = useState<ComputerUseWindowInfo[]>([]);
+  const [computerUseAudit, setComputerUseAudit] = useState<ComputerUseAuditEntry[]>([]);
+  const [selectedComputerUseWindowHandle, setSelectedComputerUseWindowHandle] = useState('');
+  const [computerUseBusy, setComputerUseBusy] = useState('');
+  const [computerUseScreenshot, setComputerUseScreenshot] = useState<ComputerUseScreenshotResult | null>(null);
+  const [computerUseActionDraft, setComputerUseActionDraft] = useState({
+    coordinateMode: 'window' as ComputerUseCoordinateMode,
+    x: '',
+    y: '',
+    delta: '240',
+    text: '',
+    hotkey: 'ctrl,l',
+  });
+  const [computerUseAppDraft, setComputerUseAppDraft] = useState({
+    allowedApps: '',
+    blockedApps: '',
+  });
+  const [computerUseSequence, setComputerUseSequence] = useState<ComputerUseSequenceStep[]>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(COMPUTER_USE_SEQUENCE_STORAGE_KEY) || '[]');
+      return Array.isArray(raw) ? raw : [];
+    } catch {
+      return [];
+    }
+  });
   const [codeCommandTimeout, setCodeCommandTimeout] = useState(localStorage.getItem('code_command_timeout_ms') || '120000');
   const [persistCommandHistory, setPersistCommandHistory] = useState(localStorage.getItem('code_persist_command_history') !== '0');
   const [rememberWorkspace, setRememberWorkspace] = useState(localStorage.getItem('code_remember_workspace') !== '0');
@@ -812,6 +885,28 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     setMcpServers(list);
     setSelectedMcpServerId((prev) => (prev && list.some((item) => item.id === prev) ? prev : list[0]?.id || ''));
     return list;
+  };
+
+  const applyComputerUseConfigPayload = (config?: Partial<ComputerUseConfig> | null) => {
+    const next: ComputerUseConfig = {
+      enabled: config?.enabled === true,
+      trustedMode: config?.trustedMode === true,
+      sessionDurationMinutes: Math.max(1, Math.min(120, Number(config?.sessionDurationMinutes || 15))),
+      foregroundOnly: config?.foregroundOnly !== false,
+      allowMouse: config?.allowMouse !== false,
+      allowKeyboard: config?.allowKeyboard !== false,
+      allowHotkeys: config?.allowHotkeys !== false,
+      allowScroll: config?.allowScroll !== false,
+      allowClipboardTyping: config?.allowClipboardTyping !== false,
+      allowedApps: Array.isArray(config?.allowedApps) ? config.allowedApps.map(String) : [],
+      blockedApps: Array.isArray(config?.blockedApps) ? config.blockedApps.map(String) : [],
+    };
+    setComputerUseConfig(next);
+    setComputerUseAppDraft({
+      allowedApps: next.allowedApps.join('\n'),
+      blockedApps: next.blockedApps.join('\n'),
+    });
+    return next;
   };
 
   const [fullName, setFullName] = useState('');
@@ -956,6 +1051,41 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
       } catch {
         setMcpToolAudit([]);
       }
+
+      try {
+        const data = await getComputerUseConfig();
+        applyComputerUseConfigPayload(data?.config || null);
+      } catch {
+        applyComputerUseConfigPayload(null);
+      }
+
+      try {
+        const data = await getComputerUseSession();
+        setComputerUseSession(data?.session || { active: false });
+      } catch {
+        setComputerUseSession({ active: false });
+      }
+
+      try {
+        const data = await listComputerUseWindows();
+        const windows = Array.isArray(data?.windows) ? data.windows : [];
+        setComputerUseWindows(windows);
+        setSelectedComputerUseWindowHandle((prev) =>
+          prev && windows.some((item) => item.handle === prev)
+            ? prev
+            : windows.find((item) => item.isForeground)?.handle || windows[0]?.handle || '',
+        );
+      } catch {
+        setComputerUseWindows([]);
+        setSelectedComputerUseWindowHandle('');
+      }
+
+      try {
+        const data = await getComputerUseAudit();
+        setComputerUseAudit(Array.isArray(data?.entries) ? data.entries : []);
+      } catch {
+        setComputerUseAudit([]);
+      }
     };
 
     load();
@@ -968,6 +1098,10 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   useEffect(() => {
     document.documentElement.setAttribute('data-chat-font', chatFont);
   }, [chatFont]);
+
+  useEffect(() => {
+    localStorage.setItem(COMPUTER_USE_SEQUENCE_STORAGE_KEY, JSON.stringify(computerUseSequence));
+  }, [computerUseSequence]);
 
   useEffect(() => {
     if (!selectedSkillId) {
@@ -1020,6 +1154,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
       ...(isSelfHosted ? [{ key: 'models', label: '模型' as const }] : []),
       { key: 'personalization', label: '个性化' },
       { key: 'permissions', label: '权限' },
+      { key: 'computerUse', label: 'Computer Use' },
       { key: 'git', label: 'Git' },
       { key: 'mcp', label: 'MCP 服务器' },
       { key: 'skills', label: 'Skills' },
@@ -1577,6 +1712,248 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const selectedMcpAudit = selectedMcpServer
     ? mcpToolAudit.filter((entry) => entry.serverId === selectedMcpServer.id)
     : [];
+  const selectedComputerUseWindow =
+    computerUseWindows.find((item) => item.handle === selectedComputerUseWindowHandle) ||
+    computerUseWindows.find((item) => item.handle === computerUseSession.targetWindowHandle) ||
+    computerUseWindows.find((item) => item.isForeground) ||
+    computerUseWindows[0] ||
+    null;
+  const activeComputerUseAudit = selectedComputerUseWindow
+    ? computerUseAudit.filter((entry) => !entry.processName || entry.processName === selectedComputerUseWindow.processName)
+    : computerUseAudit;
+  const parseComputerUseNumber = (value: string) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  const buildComputerUseActionPayload = (action: ComputerUseActionType) => {
+    const payload: Record<string, any> = {
+      action,
+      handle: selectedComputerUseWindow?.handle,
+    };
+    if (action === 'move' || action === 'click' || action === 'double_click' || action === 'right_click') {
+      payload.coordinateMode = computerUseActionDraft.coordinateMode;
+      payload.x = parseComputerUseNumber(computerUseActionDraft.x);
+      payload.y = parseComputerUseNumber(computerUseActionDraft.y);
+    }
+    if (action === 'scroll') {
+      payload.delta = parseComputerUseNumber(computerUseActionDraft.delta);
+    }
+    if (action === 'type') {
+      payload.text = computerUseActionDraft.text;
+    }
+    if (action === 'hotkey') {
+      payload.keys = computerUseActionDraft.hotkey
+        .split(/[,+]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+    return payload;
+  };
+
+  const createComputerUseSequenceStep = (action: ComputerUseActionType): ComputerUseSequenceStep => {
+    const payload = buildComputerUseActionPayload(action);
+    return {
+      id: `cu-step-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+      action,
+      coordinateMode: payload.coordinateMode || 'screen',
+      x: payload.x,
+      y: payload.y,
+      delta: payload.delta,
+      text: payload.text,
+      keys: payload.keys,
+      label:
+        action === 'type'
+          ? (payload.text || '').slice(0, 28)
+          : action === 'hotkey'
+            ? (payload.keys || []).join(' + ')
+            : action === 'scroll'
+              ? `delta ${payload.delta || 0}`
+              : payload.x !== undefined && payload.y !== undefined
+                ? `${payload.coordinateMode || 'screen'} (${payload.x}, ${payload.y})`
+                : action,
+    };
+  };
+
+  const reloadComputerUseWindows = async () => {
+    const data = await listComputerUseWindows();
+    const windows = Array.isArray(data?.windows) ? data.windows : [];
+    setComputerUseWindows(windows);
+    setSelectedComputerUseWindowHandle((prev) =>
+      prev && windows.some((item) => item.handle === prev)
+        ? prev
+        : windows.find((item) => item.handle === computerUseSession.targetWindowHandle)?.handle ||
+          windows.find((item) => item.isForeground)?.handle ||
+          windows[0]?.handle ||
+          '',
+    );
+    return windows;
+  };
+
+  const reloadComputerUseAudit = async () => {
+    const data = await getComputerUseAudit();
+    setComputerUseAudit(Array.isArray(data?.entries) ? data.entries : []);
+  };
+
+  const reloadComputerUseSession = async () => {
+    const data = await getComputerUseSession();
+    setComputerUseSession(data?.session || { active: false });
+  };
+
+  const persistComputerUseConfig = async (patch: Partial<ComputerUseConfig>) => {
+    setComputerUseBusy('config');
+    try {
+      const data = await updateComputerUseConfig(patch);
+      applyComputerUseConfigPayload(data?.config || patch);
+      await reloadComputerUseAudit();
+    } finally {
+      setComputerUseBusy('');
+    }
+  };
+
+  const parseComputerUseAppDraft = (value: string) =>
+    value
+      .split(/\r?\n|,/)
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean);
+
+  const saveComputerUseAppLists = async () => {
+    await persistComputerUseConfig({
+      allowedApps: parseComputerUseAppDraft(computerUseAppDraft.allowedApps),
+      blockedApps: parseComputerUseAppDraft(computerUseAppDraft.blockedApps),
+    });
+  };
+
+  const handleStartComputerUseSession = async () => {
+    setComputerUseBusy('session:start');
+    try {
+      const data = await startComputerUseSession({
+        targetWindowHandle: selectedComputerUseWindow?.handle,
+      });
+      setComputerUseSession(data?.session || { active: false });
+      await Promise.all([reloadComputerUseWindows(), reloadComputerUseAudit()]);
+    } finally {
+      setComputerUseBusy('');
+    }
+  };
+
+  const handleStopComputerUseSession = async () => {
+    setComputerUseBusy('session:stop');
+    try {
+      const data = await stopComputerUseSession();
+      setComputerUseSession(data?.session || { active: false });
+      await reloadComputerUseAudit();
+    } finally {
+      setComputerUseBusy('');
+    }
+  };
+
+  const handleActivateComputerUseWindow = async () => {
+    if (!selectedComputerUseWindow?.handle) return;
+    setComputerUseBusy('window:activate');
+    try {
+      const data = await activateComputerUseWindow(selectedComputerUseWindow.handle);
+      if (data?.window?.handle) {
+        setSelectedComputerUseWindowHandle(data.window.handle);
+      }
+      await Promise.all([reloadComputerUseWindows(), reloadComputerUseAudit()]);
+    } finally {
+      setComputerUseBusy('');
+    }
+  };
+
+  const handleCaptureComputerUseScreenshot = async (scope: 'window' | 'screen') => {
+    setComputerUseBusy(`screenshot:${scope}`);
+    try {
+      const data = await captureComputerUseScreenshot({
+        handle: scope === 'window' ? selectedComputerUseWindow?.handle : undefined,
+        scope,
+      });
+      setComputerUseScreenshot(data?.screenshot || null);
+      await reloadComputerUseAudit();
+    } finally {
+      setComputerUseBusy('');
+    }
+  };
+
+  const ensureComputerUseWindowActive = async () => {
+    if (!selectedComputerUseWindow?.handle) return;
+    await activateComputerUseWindow(selectedComputerUseWindow.handle);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+  };
+
+  const handleComputerUseScreenshotPick = (event: React.MouseEvent<HTMLImageElement>) => {
+    if (!computerUseScreenshot) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const scaleX = computerUseScreenshot.width / rect.width;
+    const scaleY = computerUseScreenshot.height / rect.height;
+    const rawX = Math.max(0, Math.min(computerUseScreenshot.width, (event.clientX - rect.left) * scaleX));
+    const rawY = Math.max(0, Math.min(computerUseScreenshot.height, (event.clientY - rect.top) * scaleY));
+    if (computerUseScreenshot.scope === 'window') {
+      setComputerUseActionDraft((prev) => ({
+        ...prev,
+        coordinateMode: 'window',
+        x: String(Math.round(rawX)),
+        y: String(Math.round(rawY)),
+      }));
+      return;
+    }
+    const origin = computerUseScreenshot.origin || { x: 0, y: 0 };
+    setComputerUseActionDraft((prev) => ({
+      ...prev,
+      coordinateMode: 'screen',
+      x: String(Math.round(origin.x + rawX)),
+      y: String(Math.round(origin.y + rawY)),
+    }));
+  };
+
+  const handleRunComputerUseAction = async (action: ComputerUseActionType) => {
+    setComputerUseBusy(`action:${action}`);
+    try {
+      await ensureComputerUseWindowActive();
+      await runComputerUseAction(buildComputerUseActionPayload(action) as any);
+      await Promise.all([reloadComputerUseWindows(), reloadComputerUseAudit(), reloadComputerUseSession()]);
+    } finally {
+      setComputerUseBusy('');
+    }
+  };
+
+  const addComputerUseSequenceStep = (action: ComputerUseActionType) => {
+    setComputerUseSequence((prev) => [...prev, createComputerUseSequenceStep(action)]);
+  };
+
+  const removeComputerUseSequenceStep = (id: string) => {
+    setComputerUseSequence((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const clearComputerUseSequence = () => {
+    setComputerUseSequence([]);
+  };
+
+  const replayComputerUseSequence = async () => {
+    if (!computerUseSession.active || computerUseSequence.length === 0) return;
+    setComputerUseBusy('sequence:replay');
+    try {
+      await ensureComputerUseWindowActive();
+      for (const step of computerUseSequence) {
+        await runComputerUseAction({
+          action: step.action,
+          handle: selectedComputerUseWindow?.handle,
+          coordinateMode: step.coordinateMode,
+          x: step.x,
+          y: step.y,
+          delta: step.delta,
+          text: step.text,
+          keys: step.keys,
+        } as any);
+        await new Promise((resolve) => setTimeout(resolve, 240));
+      }
+      await Promise.all([reloadComputerUseWindows(), reloadComputerUseAudit(), reloadComputerUseSession()]);
+    } finally {
+      setComputerUseBusy('');
+    }
+  };
 
   const currentSection = (() => {
     switch (section) {
@@ -2037,6 +2414,406 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                     </button>
                   );
                 })}
+              </div>
+            </SectionCard>
+          </div>
+        );
+
+      case 'computerUse':
+        return (
+          <div className="space-y-5">
+            <SectionCard
+              title={isZh ? 'Computer Use 桌面控制' : 'Computer Use'}
+              subtitle={
+                isZh
+                  ? '这一版先做工作区级完全访问：会话启动后，允许在白名单窗口内做截图、激活、点击、输入和热键，同时保留前台约束、会话时限和审计。'
+                  : 'This first version provides workspace-level full access inside allowlisted windows with screenshot, activation, click, typing, hotkeys, audit, and session limits.'
+              }
+            >
+              <div className="grid grid-cols-4 gap-4">
+                <InfoStat
+                  label={isZh ? '当前状态' : 'Status'}
+                  value={computerUseSession.active ? (isZh ? '会话运行中' : 'Session active') : (isZh ? '未启动' : 'Idle')}
+                  hint={computerUseSession.active ? `${formatTime(computerUseSession.startedAt)} → ${formatTime(computerUseSession.expiresAt)}` : (isZh ? '先选窗口，再启动会话。' : 'Select a window, then start a session.')}
+                />
+                <InfoStat
+                  label={isZh ? '目标窗口' : 'Target window'}
+                  value={selectedComputerUseWindow?.processName || (isZh ? '未选择' : 'Not selected')}
+                  hint={selectedComputerUseWindow?.title || (isZh ? '当前没有可用桌面窗口。' : 'No desktop windows detected.')}
+                />
+                <InfoStat
+                  label={isZh ? '白名单应用' : 'Allowlisted apps'}
+                  value={computerUseConfig.allowedApps.length}
+                  hint={isZh ? '只有这些进程能进入桌控会话。' : 'Only these processes can enter Computer Use sessions.'}
+                />
+                <InfoStat
+                  label={isZh ? '审计记录' : 'Audit entries'}
+                  value={computerUseAudit.length}
+                  hint={isZh ? '所有会话、截图和动作都会写入审计。' : 'Every session, screenshot, and action is audited.'}
+                />
+              </div>
+
+              <div className="mt-4 grid grid-cols-[minmax(320px,0.94fr)_minmax(420px,1.06fr)] gap-4">
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                    <div className="mb-3 text-[14px] font-medium text-claude-text">{isZh ? '权限开关' : 'Access gates'}</div>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-3 rounded-lg border border-claude-border px-3 py-3">
+                        <div>
+                          <div className="text-[13px] font-medium text-claude-text">{isZh ? '启用桌面控制' : 'Enable Computer Use'}</div>
+                          <div className="mt-1 text-[12px] leading-6 text-claude-textSecondary">{isZh ? '关闭后会拒绝窗口枚举、截图和动作执行。' : 'When off, window listing, screenshots, and actions are denied.'}</div>
+                        </div>
+                        <ToggleSwitch checked={computerUseConfig.enabled} disabled={computerUseBusy === 'config'} onChange={() => persistComputerUseConfig({ enabled: !computerUseConfig.enabled })} />
+                      </div>
+                      <div className="flex items-center justify-between gap-3 rounded-lg border border-claude-border px-3 py-3">
+                        <div>
+                          <div className="text-[13px] font-medium text-claude-text">{isZh ? '受信任模式' : 'Trusted mode'}</div>
+                          <div className="mt-1 text-[12px] leading-6 text-claude-textSecondary">{isZh ? '打开后才允许启动桌控会话，体验上最接近你说的 Codex 完全访问。' : 'Required before a Computer Use session can start.'}</div>
+                        </div>
+                        <ToggleSwitch checked={computerUseConfig.trustedMode} disabled={computerUseBusy === 'config'} onChange={() => persistComputerUseConfig({ trustedMode: !computerUseConfig.trustedMode })} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        {[
+                          { key: 'foregroundOnly', label: isZh ? '仅限前台窗口' : 'Foreground only' },
+                          { key: 'allowMouse', label: isZh ? '允许鼠标动作' : 'Allow mouse' },
+                          { key: 'allowKeyboard', label: isZh ? '允许键盘输入' : 'Allow typing' },
+                          { key: 'allowHotkeys', label: isZh ? '允许热键' : 'Allow hotkeys' },
+                          { key: 'allowScroll', label: isZh ? '允许滚动' : 'Allow scroll' },
+                          { key: 'allowClipboardTyping', label: isZh ? '输入优先用粘贴' : 'Prefer clipboard typing' },
+                        ].map((item) => (
+                          <div key={item.key} className="flex items-center justify-between rounded-lg border border-claude-border px-3 py-2">
+                            <div className="text-[12px] text-claude-text">{item.label}</div>
+                            <ToggleSwitch
+                              checked={Boolean((computerUseConfig as any)[item.key])}
+                              disabled={computerUseBusy === 'config'}
+                              onChange={() => persistComputerUseConfig({ [item.key]: !(computerUseConfig as any)[item.key] } as Partial<ComputerUseConfig>)}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                      <div className="rounded-lg border border-claude-border px-3 py-3">
+                        <div className="mb-2 flex items-center justify-between gap-3">
+                          <div className="text-[13px] font-medium text-claude-text">{isZh ? '会话时长' : 'Session duration'}</div>
+                          <div className="text-[12px] text-claude-textSecondary">{computerUseConfig.sessionDurationMinutes} min</div>
+                        </div>
+                        <input
+                          type="range"
+                          min={1}
+                          max={120}
+                          step={1}
+                          value={computerUseConfig.sessionDurationMinutes}
+                          onChange={(event) => applyComputerUseConfigPayload({ ...computerUseConfig, sessionDurationMinutes: Number(event.target.value) })}
+                          onMouseUp={() => persistComputerUseConfig({ sessionDurationMinutes: computerUseConfig.sessionDurationMinutes })}
+                          onTouchEnd={() => persistComputerUseConfig({ sessionDurationMinutes: computerUseConfig.sessionDurationMinutes })}
+                          className="w-full accent-[#C6613F]"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                    <div className="mb-3 text-[14px] font-medium text-claude-text">{isZh ? '应用白名单 / 黑名单' : 'Allowlist / blocklist'}</div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <div className="mb-2 text-[12px] text-claude-textSecondary">{isZh ? '允许应用，每行一个 exe' : 'Allowlist, one exe per line'}</div>
+                        <textarea
+                          value={computerUseAppDraft.allowedApps}
+                          onChange={(event) => setComputerUseAppDraft((prev) => ({ ...prev, allowedApps: event.target.value }))}
+                          rows={7}
+                          className="w-full resize-none rounded-lg border border-claude-border bg-claude-input px-3 py-2 font-mono text-[12px] leading-5 text-claude-text outline-none"
+                        />
+                      </div>
+                      <div>
+                        <div className="mb-2 text-[12px] text-claude-textSecondary">{isZh ? '阻止应用，每行一个 exe' : 'Blocklist, one exe per line'}</div>
+                        <textarea
+                          value={computerUseAppDraft.blockedApps}
+                          onChange={(event) => setComputerUseAppDraft((prev) => ({ ...prev, blockedApps: event.target.value }))}
+                          rows={7}
+                          className="w-full resize-none rounded-lg border border-claude-border bg-claude-input px-3 py-2 font-mono text-[12px] leading-5 text-claude-text outline-none"
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-3 flex justify-end">
+                      <InlineActionButton onClick={saveComputerUseAppLists}>{computerUseBusy === 'config' ? (isZh ? '保存中...' : 'Saving...') : (isZh ? '保存应用列表' : 'Save lists')}</InlineActionButton>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div className="text-[14px] font-medium text-claude-text">{isZh ? '桌面窗口' : 'Desktop windows'}</div>
+                      <InlineActionButton onClick={reloadComputerUseWindows}>{isZh ? '刷新窗口' : 'Refresh windows'}</InlineActionButton>
+                    </div>
+                    <div className="max-h-[340px] space-y-2 overflow-y-auto pr-1">
+                      {computerUseWindows.length > 0 ? computerUseWindows.map((item) => (
+                        <button
+                          key={item.handle}
+                          type="button"
+                          onClick={() => setSelectedComputerUseWindowHandle(item.handle)}
+                          className={`w-full rounded-lg border px-3 py-3 text-left transition-colors ${
+                            selectedComputerUseWindow?.handle === item.handle
+                              ? 'border-[#C6613F]/35 bg-[#C6613F]/10'
+                              : 'border-claude-border bg-claude-input hover:bg-claude-hover'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className="truncate text-[13px] font-medium text-claude-text">{item.processName}</div>
+                            {item.isForeground && (
+                              <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-300">
+                                {isZh ? '前台' : 'Foreground'}
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-1 truncate text-[12px] text-claude-textSecondary">{item.title}</div>
+                          <div className="mt-2 font-mono text-[10px] text-claude-textSecondary">
+                            {item.handle} · {item.bounds.width}×{item.bounds.height} · ({item.bounds.x}, {item.bounds.y})
+                          </div>
+                        </button>
+                      )) : (
+                        <div className="rounded-lg border border-dashed border-claude-border px-3 py-4 text-[12px] text-claude-textSecondary">
+                          {isZh ? '当前没有检测到可控桌面窗口。' : 'No controllable desktop windows were detected.'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[14px] font-medium text-claude-text">{isZh ? '会话与目标窗口' : 'Session and target'}</div>
+                        <div className="mt-1 text-[12px] leading-6 text-claude-textSecondary">
+                          {computerUseSession.active
+                            ? (isZh ? '会话已经开启。动作会优先落到当前目标窗口。' : 'The session is active. Actions target the current window first.')
+                            : (isZh ? '先在左侧选窗口，再启动会话。' : 'Pick a window on the left, then start a session.')}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <InlineActionButton onClick={handleStartComputerUseSession} disabled={!selectedComputerUseWindow || computerUseBusy === 'session:start'}>
+                          {computerUseBusy === 'session:start' ? (isZh ? '启动中...' : 'Starting...') : (isZh ? '启动会话' : 'Start session')}
+                        </InlineActionButton>
+                        <InlineActionButton onClick={handleStopComputerUseSession} disabled={!computerUseSession.active || computerUseBusy === 'session:stop'}>
+                          {computerUseBusy === 'session:stop' ? (isZh ? '停止中...' : 'Stopping...') : (isZh ? '停止会话' : 'Stop session')}
+                        </InlineActionButton>
+                        <InlineActionButton onClick={handleActivateComputerUseWindow} disabled={!selectedComputerUseWindow || computerUseBusy === 'window:activate'}>
+                          {computerUseBusy === 'window:activate' ? (isZh ? '激活中...' : 'Activating...') : (isZh ? '激活窗口' : 'Activate')}
+                        </InlineActionButton>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-3">
+                      <InfoStat label={isZh ? '句柄' : 'Handle'} value={selectedComputerUseWindow?.handle || '—'} />
+                      <InfoStat label={isZh ? '进程' : 'Process'} value={selectedComputerUseWindow?.processName || '—'} />
+                      <InfoStat label={isZh ? '会话到期' : 'Expires'} value={computerUseSession.active ? formatTime(computerUseSession.expiresAt) : '—'} />
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div className="text-[14px] font-medium text-claude-text">{isZh ? '截图预览' : 'Screenshot preview'}</div>
+                      <div className="flex flex-wrap gap-2">
+                        <InlineActionButton onClick={() => handleCaptureComputerUseScreenshot('window')} disabled={!selectedComputerUseWindow || computerUseBusy === 'screenshot:window'}>
+                          {computerUseBusy === 'screenshot:window' ? (isZh ? '截图中...' : 'Capturing...') : (isZh ? '截取窗口' : 'Capture window')}
+                        </InlineActionButton>
+                        <InlineActionButton onClick={() => handleCaptureComputerUseScreenshot('screen')} disabled={computerUseBusy === 'screenshot:screen'}>
+                          {computerUseBusy === 'screenshot:screen' ? (isZh ? '截图中...' : 'Capturing...') : (isZh ? '截取全屏' : 'Capture screen')}
+                        </InlineActionButton>
+                      </div>
+                    </div>
+                    {computerUseScreenshot ? (
+                      <div className="overflow-hidden rounded-xl border border-claude-border bg-black/10">
+                        <img
+                          src={computerUseScreenshot.dataUrl}
+                          alt="Computer Use screenshot"
+                          onClick={handleComputerUseScreenshotPick}
+                          className="max-h-[320px] w-full cursor-crosshair object-contain"
+                        />
+                        <div className="border-t border-claude-border px-3 py-2 text-[11px] text-claude-textSecondary">
+                          {isZh
+                            ? `点击截图可回填坐标。当前截图：${computerUseScreenshot.scope === 'window' ? '窗口坐标' : '屏幕坐标'} ${computerUseScreenshot.width}×${computerUseScreenshot.height}`
+                            : `Click the screenshot to fill coordinates. Current scope: ${computerUseScreenshot.scope} ${computerUseScreenshot.width}×${computerUseScreenshot.height}`}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-dashed border-claude-border px-3 py-10 text-center text-[12px] text-claude-textSecondary">
+                        {isZh ? '还没有截图，先截一张看看目标窗口状态。' : 'No screenshot yet. Capture one to inspect the target window.'}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                    <div className="mb-3 text-[14px] font-medium text-claude-text">{isZh ? '动作控制台' : 'Action console'}</div>
+                    <div className="mb-3 grid grid-cols-[180px_1fr] gap-3">
+                      <select
+                        value={computerUseActionDraft.coordinateMode}
+                        onChange={(event) =>
+                          setComputerUseActionDraft((prev) => ({
+                            ...prev,
+                            coordinateMode: event.target.value as ComputerUseCoordinateMode,
+                          }))
+                        }
+                        className="h-10 rounded-lg border border-claude-border bg-claude-input px-3 text-[13px] text-claude-text outline-none"
+                      >
+                        <option value="window">{isZh ? '相对窗口坐标' : 'Relative to window'}</option>
+                        <option value="screen">{isZh ? '绝对屏幕坐标' : 'Absolute screen'}</option>
+                      </select>
+                      <div className="rounded-lg border border-claude-border bg-claude-input px-3 py-2 text-[12px] leading-6 text-claude-textSecondary">
+                        {computerUseActionDraft.coordinateMode === 'window'
+                          ? (isZh ? '点击、双击、右键和移动会以当前目标窗口左上角为原点。' : 'Pointer actions use the target window top-left as the origin.')
+                          : (isZh ? '点击、双击、右键和移动会直接使用屏幕绝对坐标。' : 'Pointer actions use absolute screen coordinates.')}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <input
+                        value={computerUseActionDraft.x}
+                        onChange={(event) => setComputerUseActionDraft((prev) => ({ ...prev, x: event.target.value }))}
+                        placeholder="x"
+                        className="h-10 rounded-lg border border-claude-border bg-claude-input px-3 font-mono text-[13px] text-claude-text outline-none"
+                      />
+                      <input
+                        value={computerUseActionDraft.y}
+                        onChange={(event) => setComputerUseActionDraft((prev) => ({ ...prev, y: event.target.value }))}
+                        placeholder="y"
+                        className="h-10 rounded-lg border border-claude-border bg-claude-input px-3 font-mono text-[13px] text-claude-text outline-none"
+                      />
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <InlineActionButton onClick={() => handleRunComputerUseAction('move')} disabled={!computerUseSession.active || computerUseBusy === 'action:move'}>{isZh ? '移动鼠标' : 'Move mouse'}</InlineActionButton>
+                      <InlineActionButton onClick={() => handleRunComputerUseAction('click')} disabled={!computerUseSession.active || computerUseBusy === 'action:click'}>{isZh ? '单击' : 'Click'}</InlineActionButton>
+                      <InlineActionButton onClick={() => handleRunComputerUseAction('double_click')} disabled={!computerUseSession.active || computerUseBusy === 'action:double_click'}>{isZh ? '双击' : 'Double click'}</InlineActionButton>
+                      <InlineActionButton onClick={() => handleRunComputerUseAction('right_click')} disabled={!computerUseSession.active || computerUseBusy === 'action:right_click'}>{isZh ? '右键' : 'Right click'}</InlineActionButton>
+                      <InlineActionButton onClick={() => addComputerUseSequenceStep('click')} disabled={computerUseBusy === 'sequence:replay'}>{isZh ? '加入单击序列' : 'Queue click'}</InlineActionButton>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-[minmax(0,1fr)_180px] gap-3">
+                      <textarea
+                        value={computerUseActionDraft.text}
+                        onChange={(event) => setComputerUseActionDraft((prev) => ({ ...prev, text: event.target.value }))}
+                        rows={4}
+                        placeholder={isZh ? '要输入的文字' : 'Text to type'}
+                        className="w-full resize-none rounded-lg border border-claude-border bg-claude-input px-3 py-2 text-[12px] leading-5 text-claude-text outline-none"
+                      />
+                      <div className="space-y-3">
+                        <InlineActionButton onClick={() => handleRunComputerUseAction('type')} disabled={!computerUseSession.active || !computerUseActionDraft.text.trim() || computerUseBusy === 'action:type'}>
+                          {computerUseBusy === 'action:type' ? (isZh ? '输入中...' : 'Typing...') : (isZh ? '输入文字' : 'Type text')}
+                        </InlineActionButton>
+                        <InlineActionButton onClick={() => addComputerUseSequenceStep('type')} disabled={!computerUseActionDraft.text.trim() || computerUseBusy === 'sequence:replay'}>
+                          {isZh ? '加入输入序列' : 'Queue type'}
+                        </InlineActionButton>
+                        <input
+                          value={computerUseActionDraft.hotkey}
+                          onChange={(event) => setComputerUseActionDraft((prev) => ({ ...prev, hotkey: event.target.value }))}
+                          placeholder="ctrl,l"
+                          className="h-10 w-full rounded-lg border border-claude-border bg-claude-input px-3 font-mono text-[12px] text-claude-text outline-none"
+                        />
+                        <InlineActionButton onClick={() => handleRunComputerUseAction('hotkey')} disabled={!computerUseSession.active || !computerUseActionDraft.hotkey.trim() || computerUseBusy === 'action:hotkey'}>
+                          {computerUseBusy === 'action:hotkey' ? (isZh ? '发送中...' : 'Sending...') : (isZh ? '发送热键' : 'Send hotkey')}
+                        </InlineActionButton>
+                        <InlineActionButton onClick={() => addComputerUseSequenceStep('hotkey')} disabled={!computerUseActionDraft.hotkey.trim() || computerUseBusy === 'sequence:replay'}>
+                          {isZh ? '加入热键序列' : 'Queue hotkey'}
+                        </InlineActionButton>
+                      </div>
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-[1fr_auto] gap-3">
+                      <input
+                        value={computerUseActionDraft.delta}
+                        onChange={(event) => setComputerUseActionDraft((prev) => ({ ...prev, delta: event.target.value }))}
+                        placeholder="240"
+                        className="h-10 rounded-lg border border-claude-border bg-claude-input px-3 font-mono text-[13px] text-claude-text outline-none"
+                      />
+                      <InlineActionButton onClick={() => handleRunComputerUseAction('scroll')} disabled={!computerUseSession.active || computerUseBusy === 'action:scroll'}>
+                        {computerUseBusy === 'action:scroll' ? (isZh ? '滚动中...' : 'Scrolling...') : (isZh ? '滚动' : 'Scroll')}
+                      </InlineActionButton>
+                    </div>
+                    <div className="mt-2">
+                      <InlineActionButton onClick={() => addComputerUseSequenceStep('scroll')} disabled={computerUseBusy === 'sequence:replay'}>
+                        {isZh ? '加入滚动序列' : 'Queue scroll'}
+                      </InlineActionButton>
+                    </div>
+                  </div>
+
+                  <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[14px] font-medium text-claude-text">{isZh ? '动作序列 / 回放' : 'Action sequence / replay'}</div>
+                        <div className="mt-1 text-[12px] leading-6 text-claude-textSecondary">
+                          {isZh ? '把当前动作草稿加入序列，后面可以一键回放整串动作。' : 'Queue the current draft into a reusable sequence and replay it in order.'}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <InlineActionButton onClick={replayComputerUseSequence} disabled={!computerUseSession.active || computerUseSequence.length === 0 || computerUseBusy === 'sequence:replay'}>
+                          {computerUseBusy === 'sequence:replay' ? (isZh ? '回放中...' : 'Replaying...') : (isZh ? '回放序列' : 'Replay')}
+                        </InlineActionButton>
+                        <InlineActionButton onClick={clearComputerUseSequence} disabled={computerUseSequence.length === 0 || computerUseBusy === 'sequence:replay'}>
+                          {isZh ? '清空序列' : 'Clear'}
+                        </InlineActionButton>
+                      </div>
+                    </div>
+                    {computerUseSequence.length > 0 ? (
+                      <div className="space-y-2">
+                        {computerUseSequence.map((step, index) => (
+                          <div key={step.id} className="flex items-center justify-between gap-3 rounded-lg border border-claude-border bg-claude-input px-3 py-3">
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="rounded border border-claude-border px-1.5 py-0.5 text-[10px] text-claude-textSecondary">#{index + 1}</span>
+                                <span className="text-[12px] font-medium text-claude-text">{step.action}</span>
+                                {(step.action === 'click' || step.action === 'double_click' || step.action === 'right_click' || step.action === 'move') && (
+                                  <span className="rounded border border-claude-border px-1.5 py-0.5 text-[10px] text-claude-textSecondary">{step.coordinateMode}</span>
+                                )}
+                              </div>
+                              <div className="mt-1 truncate text-[11px] text-claude-textSecondary">{step.label || step.action}</div>
+                            </div>
+                            <InlineActionButton tone="danger" onClick={() => removeComputerUseSequenceStep(step.id)}>
+                              {isZh ? '移除' : 'Remove'}
+                            </InlineActionButton>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-dashed border-claude-border px-3 py-4 text-[12px] text-claude-textSecondary">
+                        {isZh ? '序列还是空的。先把点击、输入、热键或滚动加入队列。' : 'The sequence is empty. Queue clicks, typing, hotkeys, or scroll steps first.'}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div className="text-[14px] font-medium text-claude-text">{isZh ? '审计日志' : 'Audit trail'}</div>
+                      <InlineActionButton onClick={reloadComputerUseAudit}>{isZh ? '刷新审计' : 'Refresh audit'}</InlineActionButton>
+                    </div>
+                    {activeComputerUseAudit.length > 0 ? (
+                      <div className="max-h-[280px] space-y-2 overflow-y-auto pr-1">
+                        {activeComputerUseAudit.slice(0, 12).map((entry) => (
+                          <div key={entry.id} className="rounded-lg border border-claude-border bg-claude-input px-3 py-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="rounded border border-claude-border px-1.5 py-0.5 text-[10px] text-claude-textSecondary">{entry.action}</span>
+                              <span className={`rounded border px-1.5 py-0.5 text-[10px] ${
+                                entry.decision === 'allowed' || entry.decision === 'session_started'
+                                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                                  : entry.decision === 'session_stopped'
+                                    ? 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                                    : 'border-rose-500/30 bg-rose-500/10 text-rose-300'
+                              }`}>
+                                {entry.decision}
+                              </span>
+                            </div>
+                            <div className="mt-2 text-[12px] text-claude-text">{entry.summary || (isZh ? '没有额外摘要。' : 'No summary.')}</div>
+                            {entry.detail && (
+                              <div className="mt-1 whitespace-pre-wrap break-words font-mono text-[10px] leading-5 text-claude-textSecondary">{entry.detail}</div>
+                            )}
+                            <div className="mt-2 text-[10px] text-claude-textSecondary">
+                              {formatTime(entry.createdAt)}{entry.processName ? ` · ${entry.processName}` : ''}{entry.windowTitle ? ` · ${entry.windowTitle}` : ''}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-dashed border-claude-border px-3 py-4 text-[12px] text-claude-textSecondary">
+                        {isZh ? '还没有桌面控制审计记录。' : 'There are no Computer Use audit entries yet.'}
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             </SectionCard>
           </div>

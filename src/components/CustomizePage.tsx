@@ -198,6 +198,7 @@ const FileTreeNode: React.FC<FileTreeNodeProps> = ({
 
 const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void }) => {
   const navigate = useNavigate();
+  const isZh = localStorage.getItem('ui_language') === 'zh-CN';
   const [tab, setTab] = useState<'overview' | 'skills' | 'connectors'>('overview');
   const [examples, setExamples] = useState<Skill[]>([]);
   const [mySkills, setMySkills] = useState<Skill[]>([]);
@@ -463,19 +464,19 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
           }}
             className="flex items-center gap-2 text-claude-text font-medium hover:text-claude-text/80 transition-colors">
             <ArrowLeft size={20} />
-            <span className="text-lg font-semibold">Customize</span>
+            <span className="text-lg font-semibold">{isZh ? '自定义' : 'Customize'}</span>
           </button>
         </div>
         <nav className="flex-1 px-2 space-y-1">
           <button onClick={() => setTab('skills')}
             className={`w-full flex items-center gap-3 px-3 py-2 text-[15px] font-medium rounded-lg transition-colors ${tab === 'skills' ? 'bg-claude-hover text-claude-text' : 'text-claude-text hover:bg-claude-hover'}`}>
             <img src={skillsImg} alt="" className="w-[22px] h-[22px] dark:invert" />
-            Skills
+            {isZh ? '技能' : 'Skills'}
           </button>
           <button onClick={() => setTab('connectors')}
             className={`w-full flex items-center gap-3 px-3 py-2 text-[15px] font-medium rounded-lg transition-colors ${tab === 'connectors' ? 'bg-claude-hover text-claude-text' : 'text-claude-text hover:bg-claude-hover'}`}>
             <img src={connectorsImg} alt="" className="w-[22px] h-[22px] dark:invert" />
-            Connectors
+            {isZh ? '连接器' : 'Connectors'}
           </button>
         </nav>
       </div>
@@ -485,7 +486,7 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
         <div className="w-[300px] border-r border-claude-border flex flex-col flex-shrink-0 bg-claude-bg">
           {/* Header */}
           <div className="h-14 px-4 flex items-center justify-between border-b border-claude-border">
-            <span className="font-semibold text-claude-text">Skills</span>
+            <span className="font-semibold text-claude-text">{isZh ? '技能' : 'Skills'}</span>
             <div className="flex items-center gap-2 relative">
               <button
                 onClick={() => setShowSearchInput(!showSearchInput)}
@@ -506,11 +507,11 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
                     <div className="absolute top-full right-0 mt-2 w-64 bg-white dark:bg-[#202020] rounded-[16px] shadow-[0_4px_24px_rgba(0,0,0,0.15)] border border-claude-border py-2 z-50">
                       <button className="w-full flex items-center gap-3.5 px-4 py-3 text-[14.5px] font-medium text-claude-text hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left" onClick={() => { setShowPlusMenu(false); onCreateWithClaude?.(); }}>
                         <MessageSquare size={18} className="text-claude-textSecondary" />
-                        Create with Claude
+                        {isZh ? '用 Claude 创建' : 'Create with Claude'}
                       </button>
                       <button className="w-full flex items-center gap-3.5 px-4 py-3 text-[14.5px] font-medium text-claude-text hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left" onClick={() => { setShowPlusMenu(false); startCreate(); }}>
                         <ClipboardList size={18} className="text-claude-textSecondary" />
-                        Write skill instructions
+                        {isZh ? '编写技能说明' : 'Write skill instructions'}
                       </button>
                       <button className="w-full flex items-center gap-3.5 px-4 py-3 text-[14.5px] font-medium text-claude-text hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left" onClick={() => { setShowPlusMenu(false); setShowUploadModal(true); }}>
                         <Upload size={18} className="text-claude-textSecondary" />
@@ -546,7 +547,7 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
                   className="w-full flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-claude-textSecondary hover:text-claude-text uppercase tracking-wider"
                 >
                   <ChevronDown size={14} className={`transition-transform ${expandedSections.has('examples') ? '' : '-rotate-90'}`} />
-                  Examples
+                  {isZh ? '示例技能' : 'Examples'}
                 </button>
 
                 {expandedSections.has('examples') && (
@@ -579,7 +580,7 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
                   className="w-full flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-claude-textSecondary hover:text-claude-text uppercase tracking-wider"
                 >
                   <ChevronDown size={14} className={`transition-transform ${expandedSections.has('myskills') ? '' : '-rotate-90'}`} />
-                  My Skills
+                  {isZh ? '我的技能' : 'My Skills'}
                 </button>
 
                 {expandedSections.has('myskills') && (
@@ -610,7 +611,7 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
 
             {!filteredExamples.length && !filteredMy.length && (
               <div className="p-4 text-center text-sm text-claude-textSecondary">
-                No skills found
+                {isZh ? '没有找到技能' : 'No skills found'}
               </div>
             )}
           </div>
@@ -618,7 +619,7 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
       ) : tab === 'connectors' ? (
         <div className="w-[300px] border-r border-claude-border flex flex-col flex-shrink-0 bg-claude-bg">
           <div className="h-14 px-4 flex items-center justify-between border-b border-claude-border">
-            <span className="font-semibold text-claude-text">Connectors</span>
+            <span className="font-semibold text-claude-text">{isZh ? '连接器' : 'Connectors'}</span>
           </div>
           <div className="flex-1 overflow-y-auto pt-4 px-2">
             {/* Connected section */}
@@ -634,7 +635,7 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
                     className={`flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer transition-colors ${selectedConnector === 'github' ? 'bg-claude-hover' : 'hover:bg-claude-hover/50'}`}
                   >
                     <Github size={20} className="fill-current stroke-none opacity-80" />
-                    <span className="truncate text-[14px] text-claude-text font-medium">GitHub Integration</span>
+                    <span className="truncate text-[14px] text-claude-text font-medium">{isZh ? 'GitHub 集成' : 'GitHub Integration'}</span>
                     <div className="ml-auto w-2 h-2 rounded-full bg-green-500 flex-shrink-0" />
                   </div>
                 </div>
@@ -645,7 +646,7 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
               <div className="mb-2">
                 <button className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium text-claude-textSecondary/80 uppercase tracking-wider">
                   <ChevronDown size={14} className="stroke-[2px] opacity-70" />
-                  {githubConnected ? 'Available' : 'Not connected'}
+                  {githubConnected ? (isZh ? '可用' : 'Available') : (isZh ? '未连接' : 'Not connected')}
                 </button>
                 <div className="mt-1 px-1 space-y-1">
                   {!githubConnected && (
@@ -654,7 +655,7 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
                       className={`flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer transition-colors ${selectedConnector === 'github' ? 'bg-claude-hover' : 'hover:bg-claude-hover/50'}`}
                     >
                       <Github size={20} className="fill-current stroke-none opacity-80" />
-                      <span className={`truncate text-[14px] ${selectedConnector === 'github' ? 'text-claude-text font-medium' : 'text-claude-textSecondary'}`}>GitHub Integration</span>
+                      <span className={`truncate text-[14px] ${selectedConnector === 'github' ? 'text-claude-text font-medium' : 'text-claude-textSecondary'}`}>{isZh ? 'GitHub 集成' : 'GitHub Integration'}</span>
                     </div>
                   )}
                   <div
@@ -681,7 +682,7 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
               <img src={customizeMainImg} alt="Customize" className="w-[140px] h-auto dark:invert opacity-90" />
             </div>
             <div className="text-center mb-12">
-              <h2 className="text-xl font-medium text-claude-text mb-2">Customize and manage the context and tools you are giving Claude.</h2>
+              <h2 className="text-xl font-medium text-claude-text mb-2">{isZh ? '在这里自定义并管理你提供给 Claude 的上下文与工具。' : 'Customize and manage the context and tools you are giving Claude.'}</h2>
             </div>
 
             <div className="w-full space-y-4">
@@ -693,8 +694,8 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
                   <img src={connectorsImg} className="w-7 h-7 dark:invert opacity-70" alt="Connectors" />
                 </div>
                 <div>
-                  <div className="font-medium text-claude-text text-[15.5px]">Connect your apps</div>
-                  <div className="text-sm text-claude-textSecondary">Integrate with the tools you use to complete your tasks</div>
+                  <div className="font-medium text-claude-text text-[15.5px]">{isZh ? '连接你的应用' : 'Connect your apps'}</div>
+                  <div className="text-sm text-claude-textSecondary">{isZh ? '把你常用的工具接进来，帮助完成任务' : 'Integrate with the tools you use to complete your tasks'}</div>
                 </div>
                 <div className="ml-auto pr-2">
                   <ArrowLeft size={16} className="rotate-180 text-claude-textSecondary" />
@@ -712,8 +713,8 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
                   <img src={createSkillsImg} className="w-7 h-7 dark:invert opacity-70" alt="Skills" />
                 </div>
                 <div>
-                  <div className="font-medium text-claude-text text-[15.5px]">Create new skills</div>
-                  <div className="text-sm text-claude-textSecondary">Teach Claude your processes, team norms, and expertise</div>
+                  <div className="font-medium text-claude-text text-[15.5px]">{isZh ? '创建新技能' : 'Create new skills'}</div>
+                  <div className="text-sm text-claude-textSecondary">{isZh ? '把你的流程、团队规范和专长教给 Claude' : 'Teach Claude your processes, team norms, and expertise'}</div>
                 </div>
                 <div className="ml-auto pr-2">
                   <ArrowLeft size={16} className="rotate-180 text-claude-textSecondary" />
@@ -730,10 +731,10 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
                   <div className="flex items-center justify-between px-8 py-5 border-b border-claude-border">
                     <div className="flex items-center gap-3">
                       <Github size={22} className="fill-current stroke-none text-claude-text" />
-                      <span className="text-[17px] font-semibold text-claude-text">GitHub Integration</span>
+                      <span className="text-[17px] font-semibold text-claude-text">{isZh ? 'GitHub 集成' : 'GitHub Integration'}</span>
                     </div>
                     <button onClick={handleGithubDisconnect} className="px-4 py-1.5 text-[13px] font-medium text-claude-textSecondary border border-claude-border rounded-lg hover:bg-claude-hover transition-colors">
-                      Disconnect
+                      {isZh ? '断开连接' : 'Disconnect'}
                     </button>
                   </div>
                   {/* Content */}
@@ -776,7 +777,7 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
                 <div className="w-[68px] h-[68px] bg-black/[0.03] dark:bg-white/[0.04] border border-claude-border rounded-[18px] flex items-center justify-center mb-6 shadow-sm">
                   <img src="https://upload.wikimedia.org/wikipedia/commons/1/12/Google_Drive_icon_%282020%29.svg" className="w-9 h-9" alt="" />
                 </div>
-                <p className="text-[14px] text-claude-textSecondary mb-6 font-normal">Google Drive integration coming soon.</p>
+              <p className="text-[14px] text-claude-textSecondary mb-6 font-normal">{isZh ? 'Google Drive 集成即将推出。' : 'Google Drive integration coming soon.'}</p>
               </div>
             )}
           </div>
@@ -842,18 +843,18 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
               <div className="space-y-4">
                 {detail.is_example && (
                   <div className="text-sm">
-                    <span className="text-claude-textSecondary">Added by</span>
+                    <span className="text-claude-textSecondary">{isZh ? '来源' : 'Added by'}</span>
                     <div className="font-medium text-claude-text mt-0.5">Anthropic</div>
                   </div>
                 )}
 
                 <div>
                   <div className="flex items-center gap-1.5 text-sm text-claude-textSecondary mb-1">
-                    Description
+                    {isZh ? '说明' : 'Description'}
                     <Info size={14} />
                   </div>
                   <p className="text-sm text-claude-text leading-relaxed">
-                    {detail.description || "No description provided."}
+                    {detail.description || (isZh ? '暂时还没有说明。' : 'No description provided.')}
                   </p>
                 </div>
               </div>
@@ -868,7 +869,7 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
                     className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-claude-textSecondary hover:bg-claude-hover rounded-md transition-colors"
                   >
                     {viewMode === 'preview' ? <Code size={14} /> : <Eye size={14} />}
-                    {viewMode === 'preview' ? 'Code' : 'Preview'}
+                    {viewMode === 'preview' ? (isZh ? '代码' : 'Code') : (isZh ? '预览' : 'Preview')}
                   </button>
                 </div>
 

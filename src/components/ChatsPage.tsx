@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 import { IconProjects } from './Icons';
 
 const RenameModal = ({ isOpen, onClose, onSave, initialTitle }: { isOpen: boolean; onClose: () => void; onSave: (newTitle: string) => void; initialTitle: string; }) => {
+  const isZh = localStorage.getItem('ui_language') === 'zh-CN';
   const [title, setTitle] = useState(initialTitle);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -29,7 +30,7 @@ const RenameModal = ({ isOpen, onClose, onSave, initialTitle }: { isOpen: boolea
         className="bg-claude-input rounded-2xl shadow-xl w-[400px] p-6 animate-fade-in"
         onClick={e => e.stopPropagation()}
       >
-        <h3 className="text-[18px] font-semibold text-claude-text mb-4">Rename chat</h3>
+        <h3 className="text-[18px] font-semibold text-claude-text mb-4">{isZh ? '重命名聊天' : 'Rename chat'}</h3>
         <input
           ref={inputRef}
           type="text"
@@ -50,7 +51,7 @@ const RenameModal = ({ isOpen, onClose, onSave, initialTitle }: { isOpen: boolea
             onClick={onClose}
             className="px-4 py-2 text-[14px] font-medium text-claude-text hover:bg-claude-hover rounded-lg transition-colors"
           >
-            Cancel
+            {isZh ? '取消' : 'Cancel'}
           </button>
           <button
             onClick={() => {
@@ -59,7 +60,7 @@ const RenameModal = ({ isOpen, onClose, onSave, initialTitle }: { isOpen: boolea
             disabled={!title.trim()}
             className="px-4 py-2 text-[14px] font-medium text-white bg-[#333333] hover:bg-[#1a1a1a] dark:bg-[#FFFFFF] dark:text-black dark:hover:bg-[#e5e5e5] rounded-lg transition-colors disabled:opacity-50"
           >
-            Save
+            {isZh ? '保存' : 'Save'}
           </button>
         </div>
       </div>
@@ -70,6 +71,7 @@ const RenameModal = ({ isOpen, onClose, onSave, initialTitle }: { isOpen: boolea
 
 const ChatsPage = () => {
   const navigate = useNavigate();
+  const isZh = localStorage.getItem('ui_language') === 'zh-CN';
   const [chats, setChats] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -193,7 +195,7 @@ const ChatsPage = () => {
 
   const handleDeleteSelected = async () => {
     if (selectedChatIds.size === 0) return;
-    if (!confirm(`Delete ${selectedChatIds.size} chats?`)) return;
+    if (!confirm(isZh ? `删除这 ${selectedChatIds.size} 条聊天吗？` : `Delete ${selectedChatIds.size} chats?`)) return;
 
     try {
       await Promise.all(Array.from(selectedChatIds).map(id => deleteConversation(id)));
@@ -242,7 +244,7 @@ const ChatsPage = () => {
   };
 
   const filteredChats = chats.filter(chat =>
-    (chat.title || 'New Chat').toLowerCase().includes(searchQuery.toLowerCase())
+    (chat.title || (isZh ? '新聊天' : 'New Chat')).toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const formatTimeAgo = (dateStr: string) => {
@@ -251,10 +253,10 @@ const ChatsPage = () => {
     const now = new Date();
     const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
 
-    if (diffInSeconds < 60) return 'just now';
-    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)} minutes ago`;
-    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)} hours ago`;
-    if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)} days ago`;
+    if (diffInSeconds < 60) return isZh ? '刚刚' : 'just now';
+    if (diffInSeconds < 3600) return isZh ? `${Math.floor(diffInSeconds / 60)} 分钟前` : `${Math.floor(diffInSeconds / 60)} minutes ago`;
+    if (diffInSeconds < 86400) return isZh ? `${Math.floor(diffInSeconds / 3600)} 小时前` : `${Math.floor(diffInSeconds / 3600)} hours ago`;
+    if (diffInSeconds < 604800) return isZh ? `${Math.floor(diffInSeconds / 86400)} 天前` : `${Math.floor(diffInSeconds / 86400)} days ago`;
     return date.toLocaleDateString();
   };
 
@@ -269,7 +271,7 @@ const ChatsPage = () => {
               WebkitTextStroke: '0.5px currentColor'
             }}
           >
-            Chats
+            {isZh ? '聊天' : 'Chats'}
           </h1>
           <button
             onClick={() => navigate('/')}
@@ -277,7 +279,7 @@ const ChatsPage = () => {
             style={{ fontSize: '14px' }}
           >
             <Plus size={16} strokeWidth={2.5} />
-            New chat
+            {isZh ? '新建聊天' : 'New chat'}
           </button>
         </div>
 
@@ -287,7 +289,7 @@ const ChatsPage = () => {
           </div>
           <input
             type="text"
-            placeholder="Search your chats..."
+            placeholder={isZh ? '搜索你的聊天…' : 'Search your chats...'}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-10 pr-4 py-3 bg-white dark:bg-claude-input border border-gray-200 dark:border-claude-border rounded-xl text-claude-text placeholder-claude-textSecondary focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-[15px]"
@@ -311,13 +313,13 @@ const ChatsPage = () => {
                 )}
               </button>
               <span className="text-[13px] text-claude-textSecondary">
-                {selectedChatIds.size} selected
+                {selectedChatIds.size} {isZh ? '项已选中' : 'selected'}
               </span>
               <div className="flex items-center gap-2 ml-2">
                 <button
                   ref={projectBtnRef}
                   className="p-1 text-claude-textSecondary hover:text-claude-text transition-colors"
-                  title="Add to project"
+                  title={isZh ? '加入项目' : 'Add to project'}
                   onClick={handleAddToProject}
                 >
                   <IconProjects size={24} className="dark:invert" />
@@ -345,7 +347,7 @@ const ChatsPage = () => {
                 <button
                   onClick={handleDeleteSelected}
                   className="p-1 text-[#B9382C] hover:opacity-80 transition-opacity"
-                  title="Delete selected"
+                  title={isZh ? '删除选中' : 'Delete selected'}
                 >
                   <Trash size={18} />
                 </button>
@@ -360,16 +362,16 @@ const ChatsPage = () => {
           </div>
         ) : (
           <div className="flex items-center gap-2 mb-4 text-[13px] text-claude-textSecondary h-8">
-            <span>{chats.length} chats with Claude</span>
-            <button onClick={toggleSelectionMode} className="text-blue-600 hover:underline">Select</button>
+            <span>{isZh ? `${chats.length} 条 Claude 聊天` : `${chats.length} chats with Claude`}</span>
+            <button onClick={toggleSelectionMode} className="text-blue-600 hover:underline">{isZh ? '选择' : 'Select'}</button>
           </div>
         )}
 
         <div className="space-y-0">
           {loading ? (
-            <div className="py-8 text-center text-claude-textSecondary">Loading chats...</div>
+            <div className="py-8 text-center text-claude-textSecondary">{isZh ? '正在加载聊天…' : 'Loading chats...'}</div>
           ) : filteredChats.length === 0 ? (
-            <div className="py-8 text-center text-claude-textSecondary">No chats found</div>
+            <div className="py-8 text-center text-claude-textSecondary">{isZh ? '没有找到聊天' : 'No chats found'}</div>
           ) : (
             filteredChats.map((chat) => {
               const isSelected = selectedChatIds.has(chat.id);
@@ -417,11 +419,11 @@ const ChatsPage = () => {
                   <div className={`flex-1 transition-all duration-200 ${isSelectionMode ? 'pl-8' : 'pl-0 group-hover:pl-8'}`}>
                     <div className="flex justify-between items-baseline mb-1">
                       <h3 className="text-[16px] font-medium text-claude-text truncate pr-4 flex-1">
-                        {chat.title || 'Untitled'}
+                        {chat.title || (isZh ? '未命名' : 'Untitled')}
                       </h3>
                     </div>
                     <div className="text-[13px] text-claude-textSecondary">
-                      Last message {formatTimeAgo(chat.updated_at || chat.created_at)}
+                      {isZh ? '最后消息' : 'Last message'} {formatTimeAgo(chat.updated_at || chat.created_at)}
                     </div>
                   </div>
 
@@ -450,14 +452,14 @@ const ChatsPage = () => {
         >
           <button className="flex items-center gap-3 px-3 py-2 hover:bg-claude-hover text-left w-full transition-colors group">
             <Star size={16} className="text-claude-textSecondary group-hover:text-claude-text" />
-            <span className="text-[13px] text-claude-text">Star</span>
+            <span className="text-[13px] text-claude-text">{isZh ? '星标' : 'Star'}</span>
           </button>
           <button
             onClick={() => handleRenameClick(chats.find(c => c.id === activeMenuId))}
             className="flex items-center gap-3 px-3 py-2 hover:bg-claude-hover text-left w-full transition-colors group"
           >
             <Pencil size={16} className="text-claude-textSecondary group-hover:text-claude-text" />
-            <span className="text-[13px] text-claude-text">Rename</span>
+            <span className="text-[13px] text-claude-text">{isZh ? '重命名' : 'Rename'}</span>
           </button>
           <div className="h-[1px] bg-claude-border my-1 mx-3" />
           <button
@@ -465,7 +467,7 @@ const ChatsPage = () => {
             className="flex items-center gap-3 px-3 py-2 hover:bg-claude-hover text-left w-full transition-colors group"
           >
             <Trash size={16} className="text-[#B9382C]" />
-            <span className="text-[13px] text-[#B9382C]">Delete</span>
+            <span className="text-[13px] text-[#B9382C]">{isZh ? '删除' : 'Delete'}</span>
           </button>
         </div>
       )}

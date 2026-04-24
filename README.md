@@ -19,10 +19,10 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `1.6.25` |
-| Windows 安装包 | `Claude-Desktop-CN-Setup-1.6.25.exe` |
+| 当前版本 | `1.6.26` |
+| Windows 安装包 | `Claude-Desktop-CN-Setup-1.6.26.exe` |
 | 下载页面 | [GitHub Releases](https://github.com/Qiao-920/claude-desktop-cn/releases) |
-| 本轮更新说明 | [Claude Desktop CN v1.6.25](docs/releases/v1.6.25-cn.md) |
+| 本轮更新说明 | [Claude Desktop CN v1.6.26](docs/releases/v1.6.26-cn.md) |
 | 产品任务清单 | [cc-haha 能力对照与 Claude Desktop CN 产品任务清单](docs/cc-haha-capability-map.md) |
 
 默认安装路径通常是：
@@ -34,7 +34,7 @@ C:\Users\Administrator\AppData\Local\Programs\claude-desktop\
 ## 当前重点
 
 - `P0`：工作区、命令执行、权限、预览稳定性
-- `P1`：MCP 真功能化、Skills 中文化 / 防穿模
+- `P1`：MCP 真功能化、Skills 中文化 / 防穿模、Project / Cowork
 - 当前主线：`P0 + P1` 一起推进，按“整块迁移”做
 
 ## 已落地能力
@@ -64,6 +64,14 @@ C:\Users\Administrator\AppData\Local\Programs\claude-desktop\
 - 聊天菜单按当前项目优先推荐
 - 内置 Skill 来源脱敏，避免路径穿模
 
+### Project / Cowork
+
+- 项目列表、项目文档、项目聊天分组
+- 项目状态卡、负责人、里程碑、下一步动作
+- 项目任务板：待处理 / 进行中 / 阻塞 / 已完成
+- 项目时间线与 Cowork 首页摘要卡
+- 派生到本地 Code、派生到新工作树
+
 ### 预览
 
 - HTML / React Artifact 沙箱预览
@@ -80,7 +88,7 @@ npm run electron:build:win
 
 ## 文档
 
-- [v1.6.25 发布说明](docs/releases/v1.6.25-cn.md)
+- [v1.6.26 发布说明](docs/releases/v1.6.26-cn.md)
 - [能力对照与任务清单](docs/cc-haha-capability-map.md)
 
 ## 仓库

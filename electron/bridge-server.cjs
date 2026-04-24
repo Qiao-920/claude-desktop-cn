@@ -211,6 +211,8 @@ function initServer(mainWindow) {
     const mcpServersPath = path.join(userDataPath, 'mcp-servers.json');
     const mcpToolAuditPath = path.join(userDataPath, 'mcp-tool-audit.json');
     const commandAuditPath = path.join(userDataPath, 'code-command-audit.json');
+    const computerUseConfigPath = path.join(userDataPath, 'computer-use-config.json');
+    const computerUseAuditPath = path.join(userDataPath, 'computer-use-audit.json');
     setAccessConfigPath(agentConfigPath);
     const validPermissionModes = new Set(['workspace_write', 'project', 'full_access']);
     const defaultAgentConfig = {
@@ -250,6 +252,95 @@ function initServer(mainWindow) {
 
     const makeLocalId = (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
+    const normalizeAppList = (value, fallback = []) => {
+        const source = Array.isArray(value)
+            ? value
+            : typeof value === 'string'
+                ? value.split(/\r?\n|,/)
+                : [];
+        const normalized = source
+            .map((item) => String(item || '').trim())
+            .filter(Boolean)
+            .map((item) => item.toLowerCase());
+        return Array.from(new Set(normalized.length > 0 ? normalized : fallback.map((item) => String(item).toLowerCase())));
+    };
+
+    const defaultComputerUseConfig = {
+        enabled: false,
+        trustedMode: false,
+        sessionDurationMinutes: 15,
+        foregroundOnly: true,
+        allowMouse: true,
+        allowKeyboard: true,
+        allowHotkeys: true,
+        allowScroll: true,
+        allowClipboardTyping: true,
+        allowedApps: [
+            'claude desktop cn.exe',
+            'code.exe',
+            'codex.exe',
+            'cursor.exe',
+            'notepad.exe',
+            'explorer.exe',
+            'chrome.exe',
+            'msedge.exe',
+            'electron.exe',
+            'powershell.exe',
+            'windowsterminal.exe',
+            'wt.exe',
+            'cmd.exe',
+        ],
+        blockedApps: [
+            'taskmgr.exe',
+            'regedit.exe',
+            'systemsettings.exe',
+            'credentialuibroker.exe',
+            '1password.exe',
+            'wechat.exe',
+            'qq.exe',
+            'alipay.exe',
+        ],
+    };
+
+    const normalizeComputerUseConfig = (value) => {
+        const next = {
+            ...defaultComputerUseConfig,
+            ...(value && typeof value === 'object' ? value : {}),
+        };
+        next.enabled = next.enabled === true;
+        next.trustedMode = next.trustedMode === true;
+        next.sessionDurationMinutes = Math.max(1, Math.min(120, Number(next.sessionDurationMinutes || defaultComputerUseConfig.sessionDurationMinutes)));
+        next.foregroundOnly = next.foregroundOnly !== false;
+        next.allowMouse = next.allowMouse !== false;
+        next.allowKeyboard = next.allowKeyboard !== false;
+        next.allowHotkeys = next.allowHotkeys !== false;
+        next.allowScroll = next.allowScroll !== false;
+        next.allowClipboardTyping = next.allowClipboardTyping !== false;
+        next.allowedApps = normalizeAppList(next.allowedApps, defaultComputerUseConfig.allowedApps);
+        next.blockedApps = normalizeAppList(next.blockedApps, defaultComputerUseConfig.blockedApps);
+        return next;
+    };
+
+    const readComputerUseConfig = () => normalizeComputerUseConfig(readJsonFile(computerUseConfigPath, defaultComputerUseConfig));
+    const saveComputerUseConfig = (partial) => {
+        const next = normalizeComputerUseConfig({
+            ...readComputerUseConfig(),
+            ...(partial && typeof partial === 'object' ? partial : {}),
+        });
+        writeJsonFile(computerUseConfigPath, next);
+        return next;
+    };
+
+    let computerUseSession = {
+        active: false,
+        startedAt: '',
+        expiresAt: '',
+        targetWindowHandle: '',
+        targetWindowTitle: '',
+        targetProcessName: '',
+        trustLabel: '',
+    };
+
     // Workspace: use user-chosen path, or default to ~/Documents/Claude Desktop
     const defaultWorkspacesDir = path.join(app.getPath('documents'), 'Claude Desktop');
     // Read saved preference (set by onboarding or settings)
@@ -281,10 +372,36 @@ function initServer(mainWindow) {
             if (!db.projects) db.projects = [];
             if (!db.project_files) db.project_files = [];
             for (const project of db.projects) {
-                if (!Array.isArray(project.github_sources)) project.github_sources = [];
+                normalizeProjectRecord(project);
             }
         } catch (e) { }
     }
+    const PROJECT_STATUS_VALUES = new Set(['active', 'blocked', 'ready_to_release', 'done']);
+    const PROJECT_TASK_STATUS_VALUES = new Set(['todo', 'doing', 'blocked', 'done']);
+
+    const normalizeProjectTask = (task) => ({
+        id: task?.id || makeLocalId('project-task'),
+        title: String(task?.title || '').trim(),
+        description: String(task?.description || '').trim(),
+        status: PROJECT_TASK_STATUS_VALUES.has(task?.status) ? task.status : 'todo',
+        source: String(task?.source || '').trim(),
+        blocked_reason: String(task?.blocked_reason || '').trim(),
+        updated_at: task?.updated_at || new Date().toISOString(),
+    });
+
+    const normalizeProjectRecord = (project) => {
+        if (!project || typeof project !== 'object') return project;
+        if (!Array.isArray(project.github_sources)) project.github_sources = [];
+        project.status = PROJECT_STATUS_VALUES.has(project.status) ? project.status : 'active';
+        project.owner = String(project.owner || '').trim();
+        project.milestone = String(project.milestone || '').trim();
+        project.next_action = String(project.next_action || '').trim();
+        project.tasks = Array.isArray(project.tasks)
+            ? project.tasks.map(normalizeProjectTask).filter((task) => task.title)
+            : [];
+        return project;
+    };
+
     const saveDb = () => fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
 
     const slugifySegment = (value, fallback = 'project') => {
@@ -1279,6 +1396,7 @@ function initServer(mainWindow) {
             .sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at));
         // Attach counts
         const result = list.map(p => ({
+            ...normalizeProjectRecord(p),
             ...p,
             file_count: db.project_files.filter(f => f.project_id === p.id).length,
             chat_count: db.conversations.filter(c => c.project_id === p.id).length,
@@ -1297,6 +1415,11 @@ function initServer(mainWindow) {
         const project = {
             id, name: name.trim(), description: description.trim(),
             instructions: '', workspace_path: projectDir,
+            status: 'active',
+            owner: '',
+            milestone: '',
+            next_action: '',
+            tasks: [],
             github_sources: [],
             is_archived: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
         };
@@ -1314,7 +1437,7 @@ function initServer(mainWindow) {
         const conversations = db.conversations.filter(c => c.project_id === project.id)
             .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-        if (!Array.isArray(project.github_sources)) project.github_sources = [];
+        normalizeProjectRecord(project);
         res.json({ ...project, github_sources: project.github_sources, files, conversations });
     });
 
@@ -1322,9 +1445,25 @@ function initServer(mainWindow) {
         const project = db.projects.find(p => p.id === req.params.id);
         if (!project) return res.status(404).json({ error: 'Project not found' });
 
+        normalizeProjectRecord(project);
         if (req.body.name !== undefined) project.name = req.body.name.trim();
         if (req.body.description !== undefined) project.description = req.body.description;
         if (req.body.instructions !== undefined) project.instructions = req.body.instructions;
+        if (req.body.status !== undefined) {
+            if (!PROJECT_STATUS_VALUES.has(req.body.status)) {
+                return res.status(400).json({ error: 'Invalid project status' });
+            }
+            project.status = req.body.status;
+        }
+        if (req.body.owner !== undefined) project.owner = String(req.body.owner || '').trim();
+        if (req.body.milestone !== undefined) project.milestone = String(req.body.milestone || '').trim();
+        if (req.body.next_action !== undefined) project.next_action = String(req.body.next_action || '').trim();
+        if (req.body.tasks !== undefined) {
+            if (!Array.isArray(req.body.tasks)) {
+                return res.status(400).json({ error: 'Project tasks must be an array' });
+            }
+            project.tasks = req.body.tasks.map(normalizeProjectTask).filter((task) => task.title);
+        }
         if (req.body.is_archived !== undefined) project.is_archived = req.body.is_archived;
         if (req.body.workspace_path !== undefined) {
             try {
@@ -1333,7 +1472,7 @@ function initServer(mainWindow) {
                 return res.status(400).json({ error: error.message || 'Invalid workspace path' });
             }
         }
-        if (!Array.isArray(project.github_sources)) project.github_sources = [];
+        normalizeProjectRecord(project);
         project.updated_at = new Date().toISOString();
 
         saveDb();
@@ -3181,6 +3320,447 @@ function initServer(mainWindow) {
         return entry;
     }
 
+    function readComputerUseAudit() {
+        const raw = readJsonFile(computerUseAuditPath, []);
+        return Array.isArray(raw) ? raw : [];
+    }
+
+    function appendComputerUseAudit(payload) {
+        const entry = {
+            id: makeLocalId('computer_use_audit'),
+            createdAt: new Date().toISOString(),
+            action: payload.action || 'unknown',
+            decision: payload.decision || 'allowed',
+            processName: payload.processName || '',
+            windowTitle: payload.windowTitle || '',
+            summary: payload.summary || '',
+            detail: payload.detail || '',
+        };
+        const next = [entry, ...readComputerUseAudit()].slice(0, 160);
+        writeJsonFile(computerUseAuditPath, next);
+        return entry;
+    }
+
+    function ensureComputerUseSessionFresh() {
+        if (!computerUseSession.active || !computerUseSession.expiresAt) return;
+        const expiresAt = new Date(computerUseSession.expiresAt).getTime();
+        if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+            const previous = computerUseSession;
+            computerUseSession = {
+                active: false,
+                startedAt: '',
+                expiresAt: '',
+                targetWindowHandle: '',
+                targetWindowTitle: '',
+                targetProcessName: '',
+                trustLabel: '',
+            };
+            appendComputerUseAudit({
+                action: 'session_timeout',
+                decision: 'session_stopped',
+                processName: previous.targetProcessName,
+                windowTitle: previous.targetWindowTitle,
+                summary: 'Computer Use session expired automatically.',
+            });
+        }
+    }
+
+    function getComputerUseSessionState() {
+        ensureComputerUseSessionFresh();
+        return { ...computerUseSession };
+    }
+
+    function setComputerUseSessionState(next) {
+        computerUseSession = {
+            active: next.active === true,
+            startedAt: next.startedAt || '',
+            expiresAt: next.expiresAt || '',
+            targetWindowHandle: next.targetWindowHandle || '',
+            targetWindowTitle: next.targetWindowTitle || '',
+            targetProcessName: next.targetProcessName || '',
+            trustLabel: next.trustLabel || '',
+        };
+        return getComputerUseSessionState();
+    }
+
+    function parseWindowHandle(value) {
+        if (value === null || value === undefined || value === '') return null;
+        if (typeof value === 'number' && Number.isFinite(value)) return Math.trunc(value);
+        const raw = String(value).trim();
+        if (!raw) return null;
+        const parsed = raw.startsWith('0x') || raw.startsWith('0X')
+            ? parseInt(raw.slice(2), 16)
+            : parseInt(raw, 10);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function toWindowHandleString(value) {
+        const parsed = parseWindowHandle(value);
+        return parsed === null ? '' : `0x${parsed.toString(16).toUpperCase()}`;
+    }
+
+    function escapePowerShellSingleQuoted(value) {
+        return String(value || '').replace(/'/g, "''");
+    }
+
+    function runPowerShellJson(script, options = {}) {
+        const encoded = Buffer.from(String(script || ''), 'utf16le').toString('base64');
+        const stdout = execFileSync('powershell.exe', [
+            '-NoProfile',
+            '-NonInteractive',
+            '-ExecutionPolicy',
+            'Bypass',
+            '-EncodedCommand',
+            encoded,
+        ], {
+            encoding: 'utf8',
+            windowsHide: true,
+            timeout: Math.max(1000, Number(options.timeoutMs || 15000)),
+            maxBuffer: 32 * 1024 * 1024,
+        });
+        const text = String(stdout || '').trim();
+        if (!text) return null;
+        return JSON.parse(text);
+    }
+
+    const computerUseWin32Prelude = String.raw`
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+Add-Type @"
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public struct RECT {
+  public int Left;
+  public int Top;
+  public int Right;
+  public int Bottom;
+}
+public static class Win32ComputerUse {
+  public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+}
+"@
+function ConvertTo-SendKeysLiteral([string]$value) {
+  if ($null -eq $value) { return '' }
+  $builder = New-Object System.Text.StringBuilder
+  foreach ($char in $value.ToCharArray()) {
+    if ([int][char]$char -eq 13) { continue }
+    if ([int][char]$char -eq 10) { [void]$builder.Append('{ENTER}'); continue }
+    if ('+^%~(){}[]'.Contains([string]$char)) {
+      [void]$builder.Append('{').Append($char).Append('}')
+    } else {
+      [void]$builder.Append($char)
+    }
+  }
+  return $builder.ToString()
+}
+function ConvertTo-HotkeyLiteral([string[]]$keys) {
+  if (-not $keys -or $keys.Count -eq 0) { throw 'Hotkey keys are required' }
+  $modifierMap = @{
+    'ctrl' = '^'; 'control' = '^';
+    'shift' = '+';
+    'alt' = '%'
+  }
+  $keyMap = @{
+    'enter' = '{ENTER}'; 'tab' = '{TAB}'; 'esc' = '{ESC}'; 'escape' = '{ESC}';
+    'up' = '{UP}'; 'down' = '{DOWN}'; 'left' = '{LEFT}'; 'right' = '{RIGHT}';
+    'delete' = '{DELETE}'; 'backspace' = '{BACKSPACE}'; 'space' = ' ';
+    'f1' = '{F1}'; 'f2' = '{F2}'; 'f3' = '{F3}'; 'f4' = '{F4}'; 'f5' = '{F5}'; 'f6' = '{F6}';
+    'f7' = '{F7}'; 'f8' = '{F8}'; 'f9' = '{F9}'; 'f10' = '{F10}'; 'f11' = '{F11}'; 'f12' = '{F12}'
+  }
+  $mods = ''
+  $main = ''
+  foreach ($item in $keys) {
+    $token = [string]$item
+    $normalized = $token.Trim().ToLowerInvariant()
+    if ($modifierMap.ContainsKey($normalized)) {
+      $mods += $modifierMap[$normalized]
+      continue
+    }
+    if ($keyMap.ContainsKey($normalized)) {
+      $main = $keyMap[$normalized]
+      continue
+    }
+    if ($normalized.Length -eq 1) {
+      $main = ConvertTo-SendKeysLiteral $normalized
+      continue
+    }
+    $main = ConvertTo-SendKeysLiteral $token
+  }
+  if ([string]::IsNullOrWhiteSpace($main)) { throw 'A primary hotkey key is required' }
+  return $mods + $main
+}
+`;
+
+    function listComputerUseWindows() {
+        if (process.platform !== 'win32') return [];
+        const script = `${computerUseWin32Prelude}
+$foreground = [Win32ComputerUse]::GetForegroundWindow().ToInt64()
+$windows = New-Object System.Collections.ArrayList
+$callback = [Win32ComputerUse+EnumWindowsProc]{
+  param([IntPtr]$hWnd, [IntPtr]$lParam)
+  if (-not [Win32ComputerUse]::IsWindowVisible($hWnd)) { return $true }
+  $titleBuilder = New-Object System.Text.StringBuilder 1024
+  [void][Win32ComputerUse]::GetWindowText($hWnd, $titleBuilder, $titleBuilder.Capacity)
+  $title = $titleBuilder.ToString().Trim()
+  if ([string]::IsNullOrWhiteSpace($title)) { return $true }
+  $rect = New-Object RECT
+  [void][Win32ComputerUse]::GetWindowRect($hWnd, [ref]$rect)
+  $width = [Math]::Max(0, $rect.Right - $rect.Left)
+  $height = [Math]::Max(0, $rect.Bottom - $rect.Top)
+  if ($width -lt 80 -or $height -lt 60) { return $true }
+  [uint32]$processId = 0
+  [void][Win32ComputerUse]::GetWindowThreadProcessId($hWnd, [ref]$processId)
+  if ($processId -eq 0) { return $true }
+  try { $process = Get-Process -Id $processId -ErrorAction Stop } catch { return $true }
+  [void]$windows.Add([pscustomobject]@{
+    handle = ('0x{0:X}' -f $hWnd.ToInt64())
+    title = $title
+    processId = [int]$processId
+    processName = ($process.ProcessName + '.exe')
+    isForeground = ($hWnd.ToInt64() -eq $foreground)
+    bounds = [pscustomobject]@{
+      x = $rect.Left
+      y = $rect.Top
+      width = $width
+      height = $height
+    }
+  })
+  return $true
+}
+[Win32ComputerUse]::EnumWindows($callback, [IntPtr]::Zero) | Out-Null
+$windows | Sort-Object @{ Expression = 'isForeground'; Descending = $true }, processName, title | ConvertTo-Json -Depth 6 -Compress`;
+        const raw = runPowerShellJson(script, { timeoutMs: 8000 });
+        return Array.isArray(raw) ? raw : (raw ? [raw] : []);
+    }
+
+    function isComputerUseAppAllowed(config, processName) {
+        const normalized = String(processName || '').trim().toLowerCase();
+        if (!normalized) return false;
+        if (config.blockedApps.includes(normalized)) return false;
+        if (!Array.isArray(config.allowedApps) || config.allowedApps.length === 0) return true;
+        return config.allowedApps.includes(normalized);
+    }
+
+    function getComputerUseTargetWindow(handle) {
+        const windows = listComputerUseWindows();
+        const targetHandle = toWindowHandleString(handle || getComputerUseSessionState().targetWindowHandle);
+        const target = targetHandle
+            ? windows.find((item) => String(item.handle || '').toUpperCase() === targetHandle.toUpperCase()) || null
+            : windows.find((item) => item.isForeground) || null;
+        return { windows, target };
+    }
+
+    function ensureComputerUseReady(action, options = {}) {
+        if (process.platform !== 'win32') {
+            throw new Error('Computer Use is currently implemented for Windows only.');
+        }
+        const config = readComputerUseConfig();
+        if (!config.enabled) {
+            throw new Error('Computer Use is disabled. Enable it first in settings.');
+        }
+        if (!config.trustedMode) {
+            throw new Error('Trusted mode is off. Turn it on before starting a Computer Use session.');
+        }
+        const session = getComputerUseSessionState();
+        if (options.requireSession !== false && !session.active) {
+            throw new Error('Start a Computer Use session first.');
+        }
+        let { windows, target } = getComputerUseTargetWindow(options.handle);
+        if (!target) {
+            throw new Error('No target window is available.');
+        }
+        if (!isComputerUseAppAllowed(config, target.processName)) {
+            throw new Error(`Blocked by allowlist: ${target.processName}`);
+        }
+        if (config.foregroundOnly && options.requireForeground !== false && !target.isForeground && options.autoActivateForeground) {
+            activateComputerUseWindow(target.handle);
+            const refreshed = getComputerUseTargetWindow(target.handle);
+            windows = refreshed.windows;
+            target = refreshed.target || target;
+        }
+        if (config.foregroundOnly && options.requireForeground !== false && !target.isForeground) {
+            throw new Error('Foreground-only mode is enabled. Activate the target window first.');
+        }
+        return { config, session, windows, target };
+    }
+
+    function activateComputerUseWindow(handle) {
+        const numericHandle = parseWindowHandle(handle);
+        if (numericHandle === null) {
+            throw new Error('A valid window handle is required.');
+        }
+        const script = `${computerUseWin32Prelude}
+$handle = [IntPtr]::new(${numericHandle})
+[uint32]$processId = 0
+[void][Win32ComputerUse]::GetWindowThreadProcessId($handle, [ref]$processId)
+[Win32ComputerUse]::ShowWindowAsync($handle, 9) | Out-Null
+Start-Sleep -Milliseconds 120
+$wshell = New-Object -ComObject WScript.Shell
+if ($processId -gt 0) {
+  [void]$wshell.AppActivate([int]$processId)
+  Start-Sleep -Milliseconds 180
+}
+$ok = [Win32ComputerUse]::SetForegroundWindow($handle)
+Start-Sleep -Milliseconds 220
+$foreground = [Win32ComputerUse]::GetForegroundWindow().ToInt64()
+[pscustomobject]@{
+  ok = [bool]$ok
+  isForeground = ($foreground -eq $handle.ToInt64())
+} | ConvertTo-Json -Compress`;
+        return runPowerShellJson(script, { timeoutMs: 6000 });
+    }
+
+    function captureComputerUseScreenshot(handle, scope) {
+        const { target } = getComputerUseTargetWindow(handle);
+        const resolvedScope = scope === 'screen' || !target ? 'screen' : 'window';
+        let body = '';
+        let originX = 0;
+        let originY = 0;
+        if (resolvedScope === 'window' && target) {
+            const { x, y, width, height } = target.bounds || {};
+            originX = Number(x || 0);
+            originY = Number(y || 0);
+            body = `
+$x = ${Number(x || 0)}
+$y = ${Number(y || 0)}
+$width = ${Math.max(1, Number(width || 1))}
+$height = ${Math.max(1, Number(height || 1))}`;
+        } else {
+            body = `
+$virtualScreen = [System.Windows.Forms.SystemInformation]::VirtualScreen
+$x = $virtualScreen.Left
+$y = $virtualScreen.Top
+$width = [Math]::Max(1, $virtualScreen.Width)
+$height = [Math]::Max(1, $virtualScreen.Height)`;
+        }
+        const script = `${computerUseWin32Prelude}
+${body}
+$bitmap = New-Object System.Drawing.Bitmap $width, $height
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+$graphics.CopyFromScreen($x, $y, 0, 0, $bitmap.Size)
+$memory = New-Object System.IO.MemoryStream
+$bitmap.Save($memory, [System.Drawing.Imaging.ImageFormat]::Png)
+$data = [Convert]::ToBase64String($memory.ToArray())
+$graphics.Dispose()
+$bitmap.Dispose()
+$memory.Dispose()
+[pscustomobject]@{
+  x = $x
+  y = $y
+  width = $width
+  height = $height
+  dataUrl = ('data:image/png;base64,' + $data)
+} | ConvertTo-Json -Depth 4 -Compress`;
+        const result = runPowerShellJson(script, { timeoutMs: 12000 }) || {};
+        return {
+            scope: resolvedScope,
+            width: Number(result.width || 0),
+            height: Number(result.height || 0),
+            origin: resolvedScope === 'window'
+                ? { x: originX, y: originY }
+                : {
+                    x: Number(result.x || 0),
+                    y: Number(result.y || 0),
+                },
+            dataUrl: String(result.dataUrl || ''),
+            window: resolvedScope === 'window' ? target : null,
+            createdAt: new Date().toISOString(),
+        };
+    }
+
+    function runComputerUseAction(action, payload, config, target) {
+        const coordinateMode = payload.coordinateMode === 'window' ? 'window' : 'screen';
+        const x = Math.trunc(Number(payload.x || 0));
+        const y = Math.trunc(Number(payload.y || 0));
+        const delta = Math.trunc(Number(payload.delta || 0));
+        const text = String(payload.text || '');
+        const keys = Array.isArray(payload.keys) ? payload.keys.map((item) => String(item || '').trim()).filter(Boolean) : [];
+        const resolvedPoint = coordinateMode === 'window' && target && target.bounds
+            ? {
+                x: Math.trunc(Number(target.bounds.x || 0) + x),
+                y: Math.trunc(Number(target.bounds.y || 0) + y),
+            }
+            : { x, y };
+        let body = '';
+        if (action === 'move') {
+            body = `
+[Win32ComputerUse]::SetCursorPos(${resolvedPoint.x}, ${resolvedPoint.y}) | Out-Null
+[pscustomobject]@{
+  ok = $true;
+  movedTo = [pscustomobject]@{ x = ${resolvedPoint.x}; y = ${resolvedPoint.y} };
+  coordinateMode = '${coordinateMode}'
+} | ConvertTo-Json -Depth 4 -Compress`;
+        } else if (action === 'click' || action === 'double_click' || action === 'right_click') {
+            const downFlag = action === 'right_click' ? '0x0008' : '0x0002';
+            const upFlag = action === 'right_click' ? '0x0010' : '0x0004';
+            const clickCount = action === 'double_click' ? 2 : 1;
+            body = `
+[Win32ComputerUse]::SetCursorPos(${resolvedPoint.x}, ${resolvedPoint.y}) | Out-Null
+for ($i = 0; $i -lt ${clickCount}; $i++) {
+  [Win32ComputerUse]::mouse_event(${downFlag}, 0, 0, 0, [UIntPtr]::Zero)
+  Start-Sleep -Milliseconds 35
+  [Win32ComputerUse]::mouse_event(${upFlag}, 0, 0, 0, [UIntPtr]::Zero)
+  Start-Sleep -Milliseconds 65
+}
+[pscustomobject]@{
+  ok = $true;
+  clickedAt = [pscustomobject]@{ x = ${resolvedPoint.x}; y = ${resolvedPoint.y} };
+  coordinateMode = '${coordinateMode}';
+  clicks = ${clickCount}
+} | ConvertTo-Json -Depth 4 -Compress`;
+        } else if (action === 'scroll') {
+            body = `
+[Win32ComputerUse]::mouse_event(0x0800, 0, 0, ${delta}, [UIntPtr]::Zero)
+[pscustomobject]@{ ok = $true; delta = ${delta} } | ConvertTo-Json -Depth 4 -Compress`;
+        } else if (action === 'type') {
+            if (!config.allowKeyboard) {
+                throw new Error('Keyboard input is disabled in Computer Use settings.');
+            }
+            if (config.allowClipboardTyping) {
+                body = `
+$text = '${escapePowerShellSingleQuoted(text)}'
+$previous = ''
+try { $previous = Get-Clipboard -Raw -ErrorAction SilentlyContinue } catch {}
+Set-Clipboard -Value $text
+[System.Windows.Forms.SendKeys]::SendWait('^v')
+Start-Sleep -Milliseconds 120
+if ($null -ne $previous -and $previous -ne '') { Set-Clipboard -Value $previous }
+[pscustomobject]@{ ok = $true; mode = 'clipboard_paste'; length = $text.Length } | ConvertTo-Json -Depth 4 -Compress`;
+            } else {
+                body = `
+$text = '${escapePowerShellSingleQuoted(text)}'
+$literal = ConvertTo-SendKeysLiteral $text
+[System.Windows.Forms.SendKeys]::SendWait($literal)
+[pscustomobject]@{ ok = $true; mode = 'sendkeys'; length = $text.Length } | ConvertTo-Json -Depth 4 -Compress`;
+            }
+        } else if (action === 'hotkey') {
+            if (!config.allowHotkeys) {
+                throw new Error('Hotkeys are disabled in Computer Use settings.');
+            }
+            const quotedKeys = keys.map((item) => `'${escapePowerShellSingleQuoted(item)}'`).join(', ');
+            body = `
+$keys = @(${quotedKeys})
+$literal = ConvertTo-HotkeyLiteral $keys
+[System.Windows.Forms.SendKeys]::SendWait($literal)
+[pscustomobject]@{ ok = $true; mode = 'hotkey'; keys = $keys } | ConvertTo-Json -Depth 4 -Compress`;
+        } else {
+            throw new Error(`Unsupported Computer Use action: ${action}`);
+        }
+        return runPowerShellJson(`${computerUseWin32Prelude}\n${body}`, { timeoutMs: 10000 });
+    }
+
     async function runStdioMcpRequest(serverConfig, requestPayload, options = {}) {
         const timeoutMs = Number(options.timeoutMs || 12000);
         const startedAt = Date.now();
@@ -3473,6 +4053,190 @@ function initServer(mainWindow) {
             durationMs: response.durationMs || 0,
         };
     }
+
+    server.get('/api/computer-use/config', (_req, res) => {
+        res.json({ config: readComputerUseConfig() });
+    });
+
+    server.post('/api/computer-use/config', (req, res) => {
+        const config = saveComputerUseConfig(req.body || {});
+        res.json({ config });
+    });
+
+    server.get('/api/computer-use/session', (_req, res) => {
+        res.json({ session: getComputerUseSessionState() });
+    });
+
+    server.post('/api/computer-use/session/start', (req, res) => {
+        try {
+            const config = readComputerUseConfig();
+            if (process.platform !== 'win32') {
+                return res.status(400).json({ error: 'Computer Use currently supports Windows only.' });
+            }
+            if (!config.enabled) {
+                return res.status(400).json({ error: 'Computer Use is disabled in settings.' });
+            }
+            if (!config.trustedMode) {
+                return res.status(400).json({ error: 'Trusted mode is off. Turn it on before starting a session.' });
+            }
+            const requestedHandle = req.body && req.body.targetWindowHandle ? req.body.targetWindowHandle : '';
+            const { target } = getComputerUseTargetWindow(requestedHandle);
+            if (!target) {
+                return res.status(400).json({ error: 'Choose a target window before starting a session.' });
+            }
+            if (!isComputerUseAppAllowed(config, target.processName)) {
+                return res.status(403).json({ error: `Blocked by allowlist: ${target.processName}` });
+            }
+            const startedAt = new Date().toISOString();
+            const expiresAt = new Date(Date.now() + config.sessionDurationMinutes * 60 * 1000).toISOString();
+            const session = setComputerUseSessionState({
+                active: true,
+                startedAt,
+                expiresAt,
+                targetWindowHandle: target.handle,
+                targetWindowTitle: target.title,
+                targetProcessName: target.processName,
+                trustLabel: 'workspace_full',
+            });
+            appendComputerUseAudit({
+                action: 'session_start',
+                decision: 'session_started',
+                processName: target.processName,
+                windowTitle: target.title,
+                summary: `Session started for ${target.processName}`,
+                detail: `Target window ${target.handle}, expires at ${expiresAt}`,
+            });
+            res.json({ session });
+        } catch (error) {
+            res.status(400).json({ error: error.message || 'Failed to start Computer Use session' });
+        }
+    });
+
+    server.post('/api/computer-use/session/stop', (_req, res) => {
+        const previous = getComputerUseSessionState();
+        const session = setComputerUseSessionState({ active: false });
+        appendComputerUseAudit({
+            action: 'session_stop',
+            decision: 'session_stopped',
+            processName: previous.targetProcessName,
+            windowTitle: previous.targetWindowTitle,
+            summary: 'Computer Use session stopped.',
+        });
+        res.json({ session });
+    });
+
+    server.get('/api/computer-use/windows', (_req, res) => {
+        try {
+            res.json({ windows: listComputerUseWindows() });
+        } catch (error) {
+            res.status(500).json({ error: error.message || 'Failed to list windows' });
+        }
+    });
+
+    server.post('/api/computer-use/windows/activate', (req, res) => {
+        try {
+            const { config, target } = ensureComputerUseReady('activate_window', {
+                handle: req.body && req.body.handle,
+                requireSession: true,
+                requireForeground: false,
+            });
+            if (!config.allowMouse) {
+                return res.status(403).json({ error: 'Mouse actions are disabled in Computer Use settings.' });
+            }
+            activateComputerUseWindow(target.handle);
+            const refreshed = listComputerUseWindows().find((item) => item.handle === target.handle) || target;
+            appendComputerUseAudit({
+                action: 'activate_window',
+                decision: 'allowed',
+                processName: refreshed.processName,
+                windowTitle: refreshed.title,
+                summary: `Activated ${refreshed.processName}`,
+                detail: refreshed.handle,
+            });
+            res.json({ ok: true, window: refreshed });
+        } catch (error) {
+            appendComputerUseAudit({
+                action: 'activate_window',
+                decision: 'error',
+                summary: error.message || 'Failed to activate window',
+            });
+            res.status(400).json({ error: error.message || 'Failed to activate window' });
+        }
+    });
+
+    server.post('/api/computer-use/screenshot', (req, res) => {
+        try {
+            const config = readComputerUseConfig();
+            if (!config.enabled || !config.trustedMode) {
+                return res.status(400).json({ error: 'Enable Computer Use and trusted mode first.' });
+            }
+            const screenshot = captureComputerUseScreenshot(
+                req.body && req.body.handle,
+                req.body && req.body.scope === 'screen' ? 'screen' : 'window',
+            );
+            appendComputerUseAudit({
+                action: 'screenshot',
+                decision: 'allowed',
+                processName: screenshot.window && screenshot.window.processName,
+                windowTitle: screenshot.window && screenshot.window.title,
+                summary: `Captured ${screenshot.scope} screenshot`,
+                detail: `${screenshot.width}x${screenshot.height}`,
+            });
+            res.json({ screenshot });
+        } catch (error) {
+            appendComputerUseAudit({
+                action: 'screenshot',
+                decision: 'error',
+                summary: error.message || 'Failed to capture screenshot',
+            });
+            res.status(400).json({ error: error.message || 'Failed to capture screenshot' });
+        }
+    });
+
+    server.post('/api/computer-use/action', (req, res) => {
+        const action = String(req.body && req.body.action || '').trim();
+        try {
+            const { config, target } = ensureComputerUseReady(action, {
+                handle: req.body && req.body.handle,
+                requireSession: true,
+                requireForeground: action !== 'move',
+                autoActivateForeground: action !== 'move',
+            });
+            if ((action === 'move' || action === 'click' || action === 'double_click' || action === 'right_click') && !config.allowMouse) {
+                return res.status(403).json({ error: 'Mouse actions are disabled in Computer Use settings.' });
+            }
+            if (action === 'scroll' && !config.allowScroll) {
+                return res.status(403).json({ error: 'Scroll actions are disabled in Computer Use settings.' });
+            }
+            if (action === 'type' && !config.allowKeyboard) {
+                return res.status(403).json({ error: 'Keyboard input is disabled in Computer Use settings.' });
+            }
+            if (action === 'hotkey' && !config.allowHotkeys) {
+                return res.status(403).json({ error: 'Hotkeys are disabled in Computer Use settings.' });
+            }
+            const result = runComputerUseAction(action, req.body || {}, config, target) || { ok: true };
+            appendComputerUseAudit({
+                action,
+                decision: 'allowed',
+                processName: target.processName,
+                windowTitle: target.title,
+                summary: `Executed ${action} on ${target.processName}`,
+                detail: summarizeMcpValue(result, 220),
+            });
+            res.json({ ok: true, result });
+        } catch (error) {
+            appendComputerUseAudit({
+                action: action || 'unknown',
+                decision: 'error',
+                summary: error.message || 'Failed to execute action',
+            });
+            res.status(400).json({ error: error.message || 'Failed to execute Computer Use action' });
+        }
+    });
+
+    server.get('/api/computer-use/audit', (_req, res) => {
+        res.json({ entries: readComputerUseAudit().slice(0, 80) });
+    });
 
     server.get('/api/mcp/servers', (_req, res) => {
         res.json({ servers: readMcpServers() });

@@ -411,11 +411,30 @@ export interface Project {
   description: string;
   instructions: string;
   workspace_path: string;
+  status: ProjectStatus;
+  owner?: string;
+  milestone?: string;
+  next_action?: string;
+  tasks: ProjectTask[];
   is_archived: number;
   file_count?: number;
   chat_count?: number;
   github_sources?: ProjectGithubSource[];
   created_at: string;
+  updated_at: string;
+}
+
+export type ProjectStatus = 'active' | 'blocked' | 'ready_to_release' | 'done';
+
+export type ProjectTaskStatus = 'todo' | 'doing' | 'blocked' | 'done';
+
+export interface ProjectTask {
+  id: string;
+  title: string;
+  description?: string;
+  status: ProjectTaskStatus;
+  source?: string;
+  blocked_reason?: string;
   updated_at: string;
 }
 
@@ -474,7 +493,7 @@ export async function getProject(id: string) {
 
 export async function updateProject(
   id: string,
-  data: Partial<Pick<Project, 'name' | 'description' | 'instructions' | 'is_archived' | 'workspace_path'>>,
+  data: Partial<Pick<Project, 'name' | 'description' | 'instructions' | 'is_archived' | 'workspace_path' | 'status' | 'owner' | 'milestone' | 'next_action' | 'tasks'>>,
 ) {
   const res = await request(`/projects/${id}`, {
     method: 'PATCH',
@@ -1587,6 +1606,154 @@ export async function getMcpToolAudit(): Promise<{ entries: McpToolAuditEntry[] 
   const res = await request('/mcp/tool-audit');
   const data = await res.json();
   return { entries: Array.isArray(data.entries) ? data.entries : [] };
+}
+
+export interface ComputerUseConfig {
+  enabled: boolean;
+  trustedMode: boolean;
+  sessionDurationMinutes: number;
+  foregroundOnly: boolean;
+  allowMouse: boolean;
+  allowKeyboard: boolean;
+  allowHotkeys: boolean;
+  allowScroll: boolean;
+  allowClipboardTyping: boolean;
+  allowedApps: string[];
+  blockedApps: string[];
+}
+
+export interface ComputerUseSession {
+  active: boolean;
+  startedAt?: string;
+  expiresAt?: string;
+  targetWindowHandle?: string;
+  targetWindowTitle?: string;
+  targetProcessName?: string;
+  trustLabel?: string;
+}
+
+export interface ComputerUseWindowInfo {
+  handle: string;
+  title: string;
+  processId: number;
+  processName: string;
+  isForeground: boolean;
+  bounds: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+}
+
+export interface ComputerUseScreenshotResult {
+  scope: 'window' | 'screen';
+  width: number;
+  height: number;
+  origin?: {
+    x: number;
+    y: number;
+  };
+  dataUrl: string;
+  window?: ComputerUseWindowInfo | null;
+  createdAt: string;
+}
+
+export interface ComputerUseAuditEntry {
+  id: string;
+  createdAt: string;
+  action: string;
+  decision: 'allowed' | 'blocked' | 'error' | 'session_started' | 'session_stopped';
+  processName?: string;
+  windowTitle?: string;
+  summary?: string;
+  detail?: string;
+}
+
+export async function getComputerUseConfig(): Promise<{ config: ComputerUseConfig }> {
+  const res = await request('/computer-use/config');
+  return res.json();
+}
+
+export async function updateComputerUseConfig(
+  data: Partial<ComputerUseConfig>,
+): Promise<{ config: ComputerUseConfig }> {
+  const res = await request('/computer-use/config', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+export async function getComputerUseSession(): Promise<{ session: ComputerUseSession }> {
+  const res = await request('/computer-use/session');
+  return res.json();
+}
+
+export async function startComputerUseSession(data: {
+  targetWindowHandle?: string;
+}): Promise<{ session: ComputerUseSession }> {
+  const res = await request('/computer-use/session/start', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+export async function stopComputerUseSession(): Promise<{ session: ComputerUseSession }> {
+  const res = await request('/computer-use/session/stop', {
+    method: 'POST',
+  });
+  return res.json();
+}
+
+export async function listComputerUseWindows(): Promise<{ windows: ComputerUseWindowInfo[] }> {
+  const res = await request('/computer-use/windows');
+  return res.json();
+}
+
+export async function activateComputerUseWindow(handle: string): Promise<{
+  ok: boolean;
+  window: ComputerUseWindowInfo | null;
+}> {
+  const res = await request('/computer-use/windows/activate', {
+    method: 'POST',
+    body: JSON.stringify({ handle }),
+  });
+  return res.json();
+}
+
+export async function captureComputerUseScreenshot(data?: {
+  handle?: string;
+  scope?: 'window' | 'screen';
+}): Promise<{ screenshot: ComputerUseScreenshotResult }> {
+  const res = await request('/computer-use/screenshot', {
+    method: 'POST',
+    body: JSON.stringify(data || {}),
+  });
+  return res.json();
+}
+
+export async function runComputerUseAction(data: {
+  action: 'move' | 'click' | 'double_click' | 'right_click' | 'scroll' | 'type' | 'hotkey';
+  handle?: string;
+  coordinateMode?: 'screen' | 'window';
+  x?: number;
+  y?: number;
+  delta?: number;
+  text?: string;
+  keys?: string[];
+}): Promise<{ ok: boolean; result: any }> {
+  const res = await request('/computer-use/action', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+export async function getComputerUseAudit(): Promise<{ entries: ComputerUseAuditEntry[] }> {
+  const res = await request('/computer-use/audit');
+  return res.json();
 }
 
 // GitHub Connector
