@@ -6,7 +6,8 @@ const fs = require('fs');
 const os = require('os');
 const { v4: uuidv4 } = require('uuid');
 const { app } = require('electron');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
+const { createHash } = require('crypto');
 const { TOOL_DEFINITIONS, executeTool, setAccessConfigPath } = require('./tools.cjs');
 const { runResearchPipeline } = require('./research-orchestrator.cjs');
 
@@ -213,6 +214,291 @@ function initServer(mainWindow) {
     const commandAuditPath = path.join(userDataPath, 'code-command-audit.json');
     const computerUseConfigPath = path.join(userDataPath, 'computer-use-config.json');
     const computerUseAuditPath = path.join(userDataPath, 'computer-use-audit.json');
+    const computerUseRuntimeRoot = path.join(userDataPath, 'computer-use-runtime');
+    const computerUseVenvRoot = path.join(computerUseRuntimeRoot, 'venv');
+    const computerUseRequirementsPath = path.join(computerUseRuntimeRoot, 'requirements-win.txt');
+    const computerUseInstallStampPath = path.join(computerUseRuntimeRoot, 'requirements.sha256');
+    const computerUseVenvPythonPath = path.join(computerUseVenvRoot, 'Scripts', 'python.exe');
+    const computerUseRuntimeBridgePath = path.join(computerUseRuntimeRoot, 'computer_use_runtime.py');
+    const COMPUTER_USE_RUNTIME_REQUIREMENTS = [
+        'mss>=10.1.0',
+        'Pillow>=11.3.0',
+        'pyautogui>=0.9.54',
+        'pywin32>=306',
+        'psutil>=5.9.0',
+        'pyperclip>=1.8.2',
+        'screeninfo>=0.8.1',
+    ].join('\n') + '\n';
+    const COMPUTER_USE_PIP_INDEX_URL = 'https://pypi.tuna.tsinghua.edu.cn/simple/';
+    const COMPUTER_USE_PIP_TRUSTED_HOST = 'pypi.tuna.tsinghua.edu.cn';
+    const COMPUTER_USE_REQUIREMENTS_HASH = createHash('sha256')
+        .update(COMPUTER_USE_RUNTIME_REQUIREMENTS, 'utf8')
+        .digest('hex');
+    const COMPUTER_USE_RUNTIME_BRIDGE = String.raw`
+import base64
+import ctypes
+import io
+import json
+import sys
+import time
+import traceback
+
+from PIL import Image
+import mss
+import psutil
+import pyautogui
+import pyperclip
+import win32con
+import win32gui
+import win32process
+
+pyautogui.FAILSAFE = False
+pyautogui.PAUSE = 0
+USER32 = ctypes.windll.user32
+KERNEL32 = ctypes.windll.kernel32
+
+
+def emit(payload):
+    sys.stdout.write(json.dumps(payload, ensure_ascii=False))
+    sys.stdout.flush()
+
+
+def to_int(value, default=0):
+    try:
+        return int(value)
+    except Exception:
+        return int(default)
+
+
+def parse_handle(value):
+    if value in (None, ""):
+        return None
+    if isinstance(value, int):
+        return value
+    raw = str(value).strip()
+    if not raw:
+        return None
+    return int(raw, 16 if raw.lower().startswith("0x") else 10)
+
+
+def serialize_window(hwnd):
+    title = (win32gui.GetWindowText(hwnd) or "").strip()
+    if not title:
+        return None
+    if not win32gui.IsWindowVisible(hwnd):
+        return None
+    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    width = max(0, right - left)
+    height = max(0, bottom - top)
+    if width < 80 or height < 60:
+        return None
+    _, process_id = win32process.GetWindowThreadProcessId(hwnd)
+    if not process_id:
+        return None
+    try:
+        process_name = psutil.Process(process_id).name()
+    except Exception:
+        return None
+    return {
+        "handle": f"0x{int(hwnd):X}",
+        "title": title,
+        "processId": int(process_id),
+        "processName": process_name,
+        "isForeground": int(hwnd) == int(win32gui.GetForegroundWindow() or 0),
+        "bounds": {
+            "x": int(left),
+            "y": int(top),
+            "width": int(width),
+            "height": int(height),
+        },
+    }
+
+
+def list_windows(_payload):
+    windows = []
+
+    def callback(hwnd, _extra):
+        try:
+            serialized = serialize_window(hwnd)
+            if serialized:
+                windows.append(serialized)
+        except Exception:
+            pass
+        return True
+
+    win32gui.EnumWindows(callback, None)
+    windows.sort(key=lambda item: (0 if item["isForeground"] else 1, item["processName"].lower(), item["title"].lower()))
+    emit({
+        "ok": True,
+        "windows": windows,
+    })
+
+
+def activate_window(payload):
+    hwnd = parse_handle(payload.get("handle"))
+    if hwnd is None:
+        raise RuntimeError("A valid window handle is required")
+    if not win32gui.IsWindow(hwnd):
+        raise RuntimeError("Window handle is no longer valid")
+
+    try:
+        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+    except Exception:
+        pass
+
+    foreground = win32gui.GetForegroundWindow()
+    current_thread = KERNEL32.GetCurrentThreadId()
+    target_thread, _ = win32process.GetWindowThreadProcessId(hwnd)
+    foreground_thread = win32process.GetWindowThreadProcessId(foreground)[0] if foreground else 0
+
+    if foreground_thread and foreground_thread != current_thread:
+        USER32.AttachThreadInput(foreground_thread, current_thread, True)
+    if target_thread and target_thread != current_thread:
+        USER32.AttachThreadInput(target_thread, current_thread, True)
+
+    try:
+        USER32.keybd_event(win32con.VK_MENU, 0, 0, 0)
+        win32gui.BringWindowToTop(hwnd)
+        win32gui.SetForegroundWindow(hwnd)
+        win32gui.SetActiveWindow(hwnd)
+    finally:
+        USER32.keybd_event(win32con.VK_MENU, 0, win32con.KEYEVENTF_KEYUP, 0)
+        if target_thread and target_thread != current_thread:
+            USER32.AttachThreadInput(target_thread, current_thread, False)
+        if foreground_thread and foreground_thread != current_thread:
+            USER32.AttachThreadInput(foreground_thread, current_thread, False)
+
+    time.sleep(0.2)
+    serialized = serialize_window(hwnd)
+    emit({
+        "ok": True,
+        "isForeground": int(win32gui.GetForegroundWindow() or 0) == int(hwnd),
+        "window": serialized,
+    })
+
+
+def screenshot(payload):
+    scope = str(payload.get("scope") or "screen").strip().lower()
+    with mss.mss() as sct:
+        monitor = sct.monitors[0]
+        left = to_int(payload.get("x"), monitor["left"])
+        top = to_int(payload.get("y"), monitor["top"])
+        width = max(1, to_int(payload.get("width"), monitor["width"]))
+        height = max(1, to_int(payload.get("height"), monitor["height"]))
+        shot = sct.grab({
+            "left": left,
+            "top": top,
+            "width": width,
+            "height": height,
+        })
+        image = Image.frombytes("RGB", shot.size, shot.rgb)
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        data_url = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+    emit({
+        "ok": True,
+        "scope": scope,
+        "x": left,
+        "y": top,
+        "width": width,
+        "height": height,
+        "dataUrl": data_url,
+    })
+
+
+def action(payload):
+    action_name = str(payload.get("action") or "").strip().lower()
+    x = to_int(payload.get("x"), 0)
+    y = to_int(payload.get("y"), 0)
+    delta = to_int(payload.get("delta"), 0)
+    text = str(payload.get("text") or "")
+    keys = [str(item).strip() for item in (payload.get("keys") or []) if str(item).strip()]
+    allow_clipboard_typing = bool(payload.get("allowClipboardTyping"))
+
+    if action_name == "move":
+        pyautogui.moveTo(x, y, duration=0)
+        emit({"ok": True, "movedTo": {"x": x, "y": y}})
+        return
+
+    if action_name in {"click", "double_click", "right_click"}:
+        pyautogui.moveTo(x, y, duration=0)
+        if action_name == "double_click":
+            pyautogui.doubleClick(x=x, y=y, button="left", interval=0.08)
+            emit({"ok": True, "clickedAt": {"x": x, "y": y}, "clicks": 2})
+            return
+        button = "right" if action_name == "right_click" else "left"
+        pyautogui.click(x=x, y=y, button=button)
+        emit({"ok": True, "clickedAt": {"x": x, "y": y}, "clicks": 1, "button": button})
+        return
+
+    if action_name == "scroll":
+        if x or y:
+            pyautogui.moveTo(x, y, duration=0)
+        pyautogui.scroll(delta)
+        emit({"ok": True, "delta": delta})
+        return
+
+    if action_name == "type":
+        if allow_clipboard_typing:
+            previous = None
+            try:
+                previous = pyperclip.paste()
+            except Exception:
+                previous = None
+            pyperclip.copy(text)
+            pyautogui.hotkey("ctrl", "v")
+            time.sleep(0.12)
+            if previous is not None:
+                try:
+                    pyperclip.copy(previous)
+                except Exception:
+                    pass
+            emit({"ok": True, "mode": "clipboard_paste", "length": len(text)})
+            return
+        pyautogui.write(text, interval=0)
+        emit({"ok": True, "mode": "write", "length": len(text)})
+        return
+
+    if action_name == "hotkey":
+        if not keys:
+            raise RuntimeError("Hotkey keys are required")
+        pyautogui.hotkey(*keys)
+        emit({"ok": True, "mode": "hotkey", "keys": keys})
+        return
+
+    raise RuntimeError(f"Unsupported Computer Use action: {action_name}")
+
+
+def main():
+    command = sys.argv[1] if len(sys.argv) > 1 else ""
+    raw = sys.stdin.read().strip()
+    payload = json.loads(raw) if raw else {}
+    if command == "list_windows":
+        list_windows(payload)
+        return
+    if command == "activate_window":
+        activate_window(payload)
+        return
+    if command == "screenshot":
+        screenshot(payload)
+        return
+    if command == "action":
+        action(payload)
+        return
+    raise RuntimeError(f"Unsupported command: {command}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        emit({
+            "ok": False,
+            "error": str(exc),
+            "traceback": traceback.format_exc(),
+        })
+        sys.exit(1)
+`;
     setAccessConfigPath(agentConfigPath);
     const validPermissionModes = new Set(['workspace_write', 'project', 'full_access']);
     const defaultAgentConfig = {
@@ -251,6 +537,237 @@ function initServer(mainWindow) {
     };
 
     const makeLocalId = (prefix) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+    const readTextFile = (filePath, fallback = '') => {
+        try {
+            if (!fs.existsSync(filePath)) return fallback;
+            return fs.readFileSync(filePath, 'utf8');
+        } catch (_) {
+            return fallback;
+        }
+    };
+
+    const ensureComputerUseRuntimeFiles = () => {
+        fs.mkdirSync(computerUseRuntimeRoot, { recursive: true });
+        if (readTextFile(computerUseRequirementsPath) !== COMPUTER_USE_RUNTIME_REQUIREMENTS) {
+            fs.writeFileSync(computerUseRequirementsPath, COMPUTER_USE_RUNTIME_REQUIREMENTS, 'utf8');
+        }
+        if (readTextFile(computerUseRuntimeBridgePath) !== COMPUTER_USE_RUNTIME_BRIDGE) {
+            fs.writeFileSync(computerUseRuntimeBridgePath, COMPUTER_USE_RUNTIME_BRIDGE, 'utf8');
+        }
+    };
+
+    const runCommandCapture = (command, args, options = {}) => {
+        const result = spawnSync(command, Array.isArray(args) ? args : [], {
+            encoding: 'utf8',
+            windowsHide: true,
+            timeout: Math.max(1000, Number(options.timeoutMs || 15000)),
+            cwd: options.cwd,
+            env: options.env ? { ...process.env, ...options.env } : process.env,
+            input: options.input,
+            maxBuffer: Math.max(1024 * 1024, Number(options.maxBuffer || 32 * 1024 * 1024)),
+        });
+        const stdout = String(result.stdout || '');
+        const stderr = String(result.stderr || '');
+        const errorMessage = result.error?.message || stderr.trim() || stdout.trim() || '';
+        return {
+            ok: !result.error && result.status === 0,
+            status: typeof result.status === 'number' ? result.status : null,
+            stdout,
+            stderr,
+            errorMessage,
+        };
+    };
+
+    const detectSystemPython = () => {
+        const probe = 'import json, sys; print(json.dumps({"version": ".".join(map(str, sys.version_info[:3])), "path": sys.executable}))';
+        const candidates = [
+            { command: 'python', prefixArgs: [] },
+            { command: 'py', prefixArgs: ['-3'] },
+            { command: 'python3', prefixArgs: [] },
+        ];
+        for (const candidate of candidates) {
+            const result = runCommandCapture(candidate.command, [...candidate.prefixArgs, '-c', probe], { timeoutMs: 12000 });
+            if (!result.ok) continue;
+            try {
+                const parsed = JSON.parse(String(result.stdout || '').trim() || '{}');
+                const version = String(parsed.version || '').trim();
+                if (!version.startsWith('3.')) continue;
+                return {
+                    installed: true,
+                    version,
+                    path: String(parsed.path || '').trim(),
+                    command: candidate.command,
+                    prefixArgs: candidate.prefixArgs,
+                };
+            } catch (_) { }
+        }
+        return {
+            installed: false,
+            version: '',
+            path: '',
+            command: '',
+            prefixArgs: [],
+        };
+    };
+
+    const getComputerUseRuntimeStatus = () => {
+        ensureComputerUseRuntimeFiles();
+        const python = detectSystemPython();
+        const venvCreated = fs.existsSync(computerUseVenvPythonPath);
+        const installedHash = readTextFile(computerUseInstallStampPath).trim();
+        const requirementsFound = fs.existsSync(computerUseRequirementsPath);
+        return {
+            platform: process.platform,
+            supported: process.platform === 'win32',
+            python: {
+                installed: python.installed,
+                version: python.version,
+                path: python.path,
+                command: python.command,
+            },
+            venv: {
+                created: venvCreated,
+                path: computerUseVenvRoot,
+                pythonPath: venvCreated ? computerUseVenvPythonPath : '',
+            },
+            dependencies: {
+                installed: venvCreated && requirementsFound && installedHash === COMPUTER_USE_REQUIREMENTS_HASH,
+                requirementsFound,
+                requirementsPath: computerUseRequirementsPath,
+                installStampPath: computerUseInstallStampPath,
+            },
+            permissions: {
+                accessibility: null,
+                screenRecording: null,
+            },
+        };
+    };
+
+    const runComputerUseRuntimeSetup = () => {
+        const steps = [];
+        const addStep = (id, title, status, message, detail) => {
+            steps.push({
+                id,
+                title,
+                status,
+                message,
+                detail,
+            });
+        };
+        try {
+            ensureComputerUseRuntimeFiles();
+            if (process.platform !== 'win32') {
+                addStep('platform', 'Platform check', 'error', 'Computer Use runtime setup currently supports Windows only.');
+                return {
+                    ok: false,
+                    error: 'Computer Use runtime setup currently supports Windows only.',
+                    steps,
+                    status: getComputerUseRuntimeStatus(),
+                };
+            }
+
+            const python = detectSystemPython();
+            if (!python.installed) {
+                addStep('python', 'Python 3', 'error', 'Python 3 was not found. Install Python 3 first.');
+                return {
+                    ok: false,
+                    error: 'Python 3 was not found. Install Python 3 first.',
+                    steps,
+                    status: getComputerUseRuntimeStatus(),
+                };
+            }
+            addStep('python', 'Python 3', 'done', `Using Python ${python.version}`, python.path);
+
+            if (!fs.existsSync(computerUseVenvPythonPath)) {
+                const createVenv = runCommandCapture(
+                    python.command,
+                    [...python.prefixArgs, '-m', 'venv', computerUseVenvRoot],
+                    { timeoutMs: 120000 },
+                );
+                if (!createVenv.ok || !fs.existsSync(computerUseVenvPythonPath)) {
+                    addStep('venv', 'Virtual environment', 'error', 'Failed to create the virtual environment.', createVenv.errorMessage);
+                    try { fs.unlinkSync(computerUseInstallStampPath); } catch (_) { }
+                    return {
+                        ok: false,
+                        error: createVenv.errorMessage || 'Failed to create the virtual environment.',
+                        steps,
+                        status: getComputerUseRuntimeStatus(),
+                    };
+                }
+                addStep('venv', 'Virtual environment', 'done', 'Virtual environment created.', computerUseVenvRoot);
+            } else {
+                addStep('venv', 'Virtual environment', 'done', 'Virtual environment already exists.', computerUseVenvRoot);
+            }
+
+            const pipVersion = runCommandCapture(computerUseVenvPythonPath, ['-m', 'pip', '--version'], { timeoutMs: 30000 });
+            if (!pipVersion.ok) {
+                const ensurePip = runCommandCapture(computerUseVenvPythonPath, ['-m', 'ensurepip', '--upgrade'], { timeoutMs: 120000 });
+                if (!ensurePip.ok) {
+                    addStep('pip', 'Pip bootstrap', 'error', 'Failed to prepare pip in the virtual environment.', ensurePip.errorMessage);
+                    try { fs.unlinkSync(computerUseInstallStampPath); } catch (_) { }
+                    return {
+                        ok: false,
+                        error: ensurePip.errorMessage || 'Failed to prepare pip in the virtual environment.',
+                        steps,
+                        status: getComputerUseRuntimeStatus(),
+                    };
+                }
+            }
+
+            const installResult = runCommandCapture(
+                computerUseVenvPythonPath,
+                [
+                    '-m',
+                    'pip',
+                    'install',
+                    '--disable-pip-version-check',
+                    '--no-input',
+                    '--trusted-host',
+                    COMPUTER_USE_PIP_TRUSTED_HOST,
+                    '-i',
+                    COMPUTER_USE_PIP_INDEX_URL,
+                    '-r',
+                    computerUseRequirementsPath,
+                ],
+                {
+                    timeoutMs: 300000,
+                    env: {
+                        PIP_INDEX_URL: COMPUTER_USE_PIP_INDEX_URL,
+                        PIP_TRUSTED_HOST: COMPUTER_USE_PIP_TRUSTED_HOST,
+                    },
+                },
+            );
+            if (!installResult.ok) {
+                addStep('dependencies', 'Dependencies', 'error', 'Failed to install runtime dependencies.', installResult.errorMessage);
+                try { fs.unlinkSync(computerUseInstallStampPath); } catch (_) { }
+                return {
+                    ok: false,
+                    error: installResult.errorMessage || 'Failed to install runtime dependencies.',
+                    steps,
+                    status: getComputerUseRuntimeStatus(),
+                };
+            }
+
+            fs.writeFileSync(computerUseInstallStampPath, COMPUTER_USE_REQUIREMENTS_HASH, 'utf8');
+            addStep('dependencies', 'Dependencies', 'done', 'Dependencies installed successfully.', computerUseRequirementsPath);
+
+            return {
+                ok: true,
+                steps,
+                status: getComputerUseRuntimeStatus(),
+            };
+        } catch (error) {
+            try { fs.unlinkSync(computerUseInstallStampPath); } catch (_) { }
+            addStep('setup', 'Setup', 'error', error.message || 'Computer Use environment setup failed.');
+            return {
+                ok: false,
+                error: error.message || 'Computer Use environment setup failed.',
+                steps,
+                status: getComputerUseRuntimeStatus(),
+            };
+        }
+    };
 
     const normalizeAppList = (value, fallback = []) => {
         const source = Array.isArray(value)
@@ -3505,6 +4022,10 @@ function ConvertTo-HotkeyLiteral([string[]]$keys) {
 
     function listComputerUseWindows() {
         if (process.platform !== 'win32') return [];
+        if (isComputerUsePythonRuntimeReady()) {
+            const result = runComputerUsePythonBridge('list_windows', {}, { timeoutMs: 15000, maxBuffer: 8 * 1024 * 1024 });
+            return Array.isArray(result.windows) ? result.windows : [];
+        }
         const script = `${computerUseWin32Prelude}
 $foreground = [Win32ComputerUse]::GetForegroundWindow().ToInt64()
 $windows = New-Object System.Collections.ArrayList
@@ -3601,6 +4122,11 @@ $windows | Sort-Object @{ Expression = 'isForeground'; Descending = $true }, pro
         if (numericHandle === null) {
             throw new Error('A valid window handle is required.');
         }
+        if (isComputerUsePythonRuntimeReady()) {
+            return runComputerUsePythonBridge('activate_window', {
+                handle: toWindowHandleString(numericHandle),
+            }, { timeoutMs: 12000 });
+        }
         const script = `${computerUseWin32Prelude}
 $handle = [IntPtr]::new(${numericHandle})
 [uint32]$processId = 0
@@ -3622,9 +4148,79 @@ $foreground = [Win32ComputerUse]::GetForegroundWindow().ToInt64()
         return runPowerShellJson(script, { timeoutMs: 6000 });
     }
 
+    function isComputerUsePythonRuntimeReady() {
+        ensureComputerUseRuntimeFiles();
+        return process.platform === 'win32'
+            && fs.existsSync(computerUseVenvPythonPath)
+            && fs.existsSync(computerUseRuntimeBridgePath)
+            && readTextFile(computerUseInstallStampPath).trim() === COMPUTER_USE_REQUIREMENTS_HASH;
+    }
+
+    function runComputerUsePythonBridge(command, payload, options = {}) {
+        if (!isComputerUsePythonRuntimeReady()) {
+            throw new Error('Computer Use Python runtime is not ready. Install the environment first.');
+        }
+        const response = runCommandCapture(
+            computerUseVenvPythonPath,
+            [computerUseRuntimeBridgePath, command],
+            {
+                timeoutMs: Math.max(1000, Number(options.timeoutMs || 30000)),
+                input: JSON.stringify(payload || {}),
+                maxBuffer: Math.max(1024 * 1024, Number(options.maxBuffer || 48 * 1024 * 1024)),
+            },
+        );
+        const raw = String(response.stdout || '').trim();
+        if (!raw) {
+            throw new Error(response.errorMessage || `Computer Use Python ${command} returned no output.`);
+        }
+        let parsed;
+        try {
+            parsed = JSON.parse(raw);
+        } catch (_) {
+            throw new Error(response.errorMessage || raw);
+        }
+        if (!response.ok || parsed.ok === false) {
+            throw new Error(parsed.error || response.errorMessage || `Computer Use Python ${command} failed.`);
+        }
+        return parsed;
+    }
+
     function captureComputerUseScreenshot(handle, scope) {
         const { target } = getComputerUseTargetWindow(handle);
         const resolvedScope = scope === 'screen' || !target ? 'screen' : 'window';
+        if (isComputerUsePythonRuntimeReady()) {
+            let payload = { scope: resolvedScope };
+            let originX = 0;
+            let originY = 0;
+            if (resolvedScope === 'window' && target) {
+                const { x, y, width, height } = target.bounds || {};
+                originX = Number(x || 0);
+                originY = Number(y || 0);
+                payload = {
+                    scope: resolvedScope,
+                    x: originX,
+                    y: originY,
+                    width: Math.max(1, Number(width || 1)),
+                    height: Math.max(1, Number(height || 1)),
+                };
+            }
+            const result = runComputerUsePythonBridge('screenshot', payload, { timeoutMs: 20000, maxBuffer: 64 * 1024 * 1024 }) || {};
+            return {
+                scope: resolvedScope,
+                width: Number(result.width || 0),
+                height: Number(result.height || 0),
+                origin: resolvedScope === 'window'
+                    ? { x: originX, y: originY }
+                    : {
+                        x: Number(result.x || 0),
+                        y: Number(result.y || 0),
+                    },
+                dataUrl: String(result.dataUrl || ''),
+                window: resolvedScope === 'window' ? target : null,
+                createdAt: new Date().toISOString(),
+                engine: 'python',
+            };
+        }
         let body = '';
         let originX = 0;
         let originY = 0;
@@ -3673,10 +4269,11 @@ $memory.Dispose()
                 : {
                     x: Number(result.x || 0),
                     y: Number(result.y || 0),
-                },
+            },
             dataUrl: String(result.dataUrl || ''),
             window: resolvedScope === 'window' ? target : null,
             createdAt: new Date().toISOString(),
+            engine: 'powershell',
         };
     }
 
@@ -3693,6 +4290,18 @@ $memory.Dispose()
                 y: Math.trunc(Number(target.bounds.y || 0) + y),
             }
             : { x, y };
+        if (isComputerUsePythonRuntimeReady()) {
+            return runComputerUsePythonBridge('action', {
+                action,
+                x: resolvedPoint.x,
+                y: resolvedPoint.y,
+                delta,
+                text,
+                keys,
+                allowClipboardTyping: config.allowClipboardTyping,
+                coordinateMode,
+            }, { timeoutMs: 30000 });
+        }
         let body = '';
         if (action === 'move') {
             body = `
@@ -4053,6 +4662,14 @@ $literal = ConvertTo-HotkeyLiteral $keys
             durationMs: response.durationMs || 0,
         };
     }
+
+    server.get('/api/computer-use/runtime-status', (_req, res) => {
+        res.json({ status: getComputerUseRuntimeStatus() });
+    });
+
+    server.post('/api/computer-use/runtime-setup', (_req, res) => {
+        res.json(runComputerUseRuntimeSetup());
+    });
 
     server.get('/api/computer-use/config', (_req, res) => {
         res.json({ config: readComputerUseConfig() });

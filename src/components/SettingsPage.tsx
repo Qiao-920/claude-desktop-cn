@@ -37,6 +37,7 @@ import {
   CodeGitStatusResult,
   ComputerUseAuditEntry,
   ComputerUseConfig,
+  ComputerUseRuntimeStatus,
   ComputerUseScreenshotResult,
   ComputerUseSession,
   ComputerUseWindowInfo,
@@ -44,6 +45,7 @@ import {
   disconnectGithub,
   getComputerUseAudit,
   getComputerUseConfig,
+  getComputerUseRuntimeStatus,
   getComputerUseSession,
   getCodeGitStatus,
   getAgentConfig,
@@ -62,6 +64,7 @@ import {
   logout,
   logoutOtherSessions,
   runComputerUseAction,
+  runComputerUseRuntimeSetup,
   McpToolAuditEntry,
   McpToolInfo,
   McpServerConfig,
@@ -151,6 +154,31 @@ type ComputerUseSequenceStep = {
 };
 
 const COMPUTER_USE_SEQUENCE_STORAGE_KEY = 'computer_use_sequences_v1';
+const EMPTY_COMPUTER_USE_RUNTIME_STATUS: ComputerUseRuntimeStatus = {
+  platform: 'unknown',
+  supported: false,
+  python: {
+    installed: false,
+    version: '',
+    path: '',
+    command: '',
+  },
+  venv: {
+    created: false,
+    path: '',
+    pythonPath: '',
+  },
+  dependencies: {
+    installed: false,
+    requirementsFound: false,
+    requirementsPath: '',
+    installStampPath: '',
+  },
+  permissions: {
+    accessibility: null,
+    screenRecording: null,
+  },
+};
 
 const SKILL_DESCRIPTION_ZH: Record<string, string> = {
   'code-review': '代码审查助手。重点检查 bug、安全风险、性能问题、可维护性和缺少测试，适合在提交前做最后一轮质量把关。',
@@ -672,6 +700,34 @@ const InfoStat = ({
   </div>
 );
 
+const ComputerUseStatusRow = ({
+  label,
+  ok,
+  detail,
+}: {
+  label: string;
+  ok: boolean | null;
+  detail: React.ReactNode;
+}) => (
+  <div className="flex items-center gap-3 rounded-xl border border-claude-border bg-claude-bg px-4 py-3">
+    <div
+      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${
+        ok === true
+          ? 'bg-emerald-500/12 text-emerald-300'
+          : ok === false
+            ? 'bg-rose-500/12 text-rose-300'
+            : 'bg-claude-input text-claude-textSecondary'
+      }`}
+    >
+      {ok === true ? <Check size={15} /> : <span className="text-[15px] font-semibold">{ok === false ? '!' : '·'}</span>}
+    </div>
+    <div className="min-w-0 flex-1">
+      <div className="text-[13px] font-medium text-claude-text">{label}</div>
+      <div className="mt-0.5 text-[12px] leading-6 text-claude-textSecondary">{detail}</div>
+    </div>
+  </div>
+);
+
 const InlineActionButton = ({
   children,
   onClick,
@@ -823,6 +879,8 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     allowedApps: [],
     blockedApps: [],
   });
+  const [computerUseRuntimeStatus, setComputerUseRuntimeStatus] = useState<ComputerUseRuntimeStatus>(EMPTY_COMPUTER_USE_RUNTIME_STATUS);
+  const [computerUseRuntimeNote, setComputerUseRuntimeNote] = useState('');
   const [computerUseSession, setComputerUseSession] = useState<ComputerUseSession>({ active: false });
   const [computerUseWindows, setComputerUseWindows] = useState<ComputerUseWindowInfo[]>([]);
   const [computerUseAudit, setComputerUseAudit] = useState<ComputerUseAuditEntry[]>([]);
@@ -906,6 +964,36 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
       allowedApps: next.allowedApps.join('\n'),
       blockedApps: next.blockedApps.join('\n'),
     });
+    return next;
+  };
+
+  const applyComputerUseRuntimeStatusPayload = (status?: Partial<ComputerUseRuntimeStatus> | null) => {
+    const next: ComputerUseRuntimeStatus = {
+      platform: String(status?.platform || EMPTY_COMPUTER_USE_RUNTIME_STATUS.platform),
+      supported: status?.supported === true,
+      python: {
+        installed: status?.python?.installed === true,
+        version: String(status?.python?.version || ''),
+        path: String(status?.python?.path || ''),
+        command: String(status?.python?.command || ''),
+      },
+      venv: {
+        created: status?.venv?.created === true,
+        path: String(status?.venv?.path || ''),
+        pythonPath: String(status?.venv?.pythonPath || ''),
+      },
+      dependencies: {
+        installed: status?.dependencies?.installed === true,
+        requirementsFound: status?.dependencies?.requirementsFound === true,
+        requirementsPath: String(status?.dependencies?.requirementsPath || ''),
+        installStampPath: String(status?.dependencies?.installStampPath || ''),
+      },
+      permissions: {
+        accessibility: status?.permissions?.accessibility ?? null,
+        screenRecording: status?.permissions?.screenRecording ?? null,
+      },
+    };
+    setComputerUseRuntimeStatus(next);
     return next;
   };
 
@@ -1050,6 +1138,13 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
         setMcpToolAudit(Array.isArray(data?.entries) ? data.entries : []);
       } catch {
         setMcpToolAudit([]);
+      }
+
+      try {
+        const data = await getComputerUseRuntimeStatus();
+        applyComputerUseRuntimeStatusPayload(data?.status || null);
+      } catch {
+        applyComputerUseRuntimeStatusPayload(null);
       }
 
       try {
@@ -1800,12 +1895,40 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     setComputerUseSession(data?.session || { active: false });
   };
 
+  const reloadComputerUseRuntimeStatus = async () => {
+    const data = await getComputerUseRuntimeStatus();
+    applyComputerUseRuntimeStatusPayload(data?.status || null);
+  };
+
   const persistComputerUseConfig = async (patch: Partial<ComputerUseConfig>) => {
     setComputerUseBusy('config');
     try {
       const data = await updateComputerUseConfig(patch);
       applyComputerUseConfigPayload(data?.config || patch);
       await reloadComputerUseAudit();
+    } finally {
+      setComputerUseBusy('');
+    }
+  };
+
+  const handleInstallComputerUseRuntime = async () => {
+    setComputerUseBusy('runtime:setup');
+    setComputerUseRuntimeNote('');
+    try {
+      const result = await runComputerUseRuntimeSetup();
+      applyComputerUseRuntimeStatusPayload(result?.status || null);
+      setComputerUseRuntimeNote(
+        result?.ok
+          ? (isZh ? '环境已经准备好了。现在可以继续启用桌面控制。' : 'The environment is ready. You can now enable Computer Use.')
+          : (result?.error || (isZh ? '环境安装失败，请检查 Python 和网络。' : 'Environment setup failed. Check Python and your network.')),
+      );
+    } catch (error: any) {
+      setComputerUseRuntimeNote(error?.message || (isZh ? '环境安装失败，请稍后重试。' : 'Environment setup failed. Please try again.'));
+      try {
+        await reloadComputerUseRuntimeStatus();
+      } catch {
+        applyComputerUseRuntimeStatusPayload(null);
+      }
     } finally {
       setComputerUseBusy('');
     }
@@ -2419,7 +2542,17 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
           </div>
         );
 
-      case 'computerUse':
+      case 'computerUse': {
+        const computerUseRuntimeReady =
+          computerUseRuntimeStatus.python.installed &&
+          computerUseRuntimeStatus.venv.created &&
+          computerUseRuntimeStatus.dependencies.installed;
+        const computerUseRuntimeNotice = computerUseRuntimeNote ||
+          (!computerUseRuntimeStatus.supported
+            ? (isZh ? '当前只有 Windows 支持这套运行环境安装。' : 'This runtime setup currently supports Windows only.')
+            : computerUseRuntimeReady
+              ? (isZh ? '环境已经准备好，下一步点“启用桌面控制”。' : 'The environment is ready. Next, enable Computer Use.')
+              : (isZh ? '先把这三项准备好，再继续下面的窗口和动作。' : 'Get these three items ready first, then continue.'));
         return (
           <div className="space-y-5">
             <SectionCard
@@ -2430,6 +2563,68 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                   : 'This first version provides workspace-level full access inside allowlisted windows with screenshot, activation, click, typing, hotkeys, audit, and session limits.'
               }
             >
+              <div className="mx-auto max-w-[760px] space-y-5">
+                <div className="space-y-3">
+                  <ComputerUseStatusRow
+                    label="Python 3"
+                    ok={computerUseRuntimeStatus.python.installed}
+                    detail={
+                      computerUseRuntimeStatus.python.installed
+                        ? `${computerUseRuntimeStatus.python.version || 'Python 3'}${computerUseRuntimeStatus.python.path ? ` (${computerUseRuntimeStatus.python.path})` : ''}`
+                        : (isZh ? '未检测到 Python 3。请先安装 Python 3。' : 'Python 3 was not found. Install Python 3 first.')
+                    }
+                  />
+                  <ComputerUseStatusRow
+                    label="Virtual Environment"
+                    ok={computerUseRuntimeStatus.python.installed ? computerUseRuntimeStatus.venv.created : null}
+                    detail={
+                      computerUseRuntimeStatus.venv.created
+                        ? `${isZh ? '已就绪' : 'Ready'}${computerUseRuntimeStatus.venv.path ? ` (${computerUseRuntimeStatus.venv.path})` : ''}`
+                        : (isZh ? '还没有创建虚拟环境。点击安装按钮会自动创建。' : 'The virtual environment has not been created yet. Install Environment will create it automatically.')
+                    }
+                  />
+                  <ComputerUseStatusRow
+                    label="Dependencies"
+                    ok={computerUseRuntimeStatus.venv.created ? computerUseRuntimeStatus.dependencies.installed : null}
+                    detail={
+                      computerUseRuntimeStatus.dependencies.installed
+                        ? `${isZh ? '依赖已安装' : 'Dependencies installed'}${computerUseRuntimeStatus.dependencies.requirementsPath ? ` (${computerUseRuntimeStatus.dependencies.requirementsPath})` : ''}`
+                        : (isZh ? '依赖还没有安装。安装环境时会自动完成。' : 'Dependencies are not installed yet. Installing the environment will do this automatically.')
+                    }
+                  />
+                </div>
+
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                  <div className="mb-3 text-[14px] font-medium text-claude-text">{isZh ? '环境准备' : 'Environment setup'}</div>
+                  <div className="flex flex-wrap gap-2">
+                    <InlineActionButton onClick={handleInstallComputerUseRuntime} disabled={computerUseBusy === 'runtime:setup' || !computerUseRuntimeStatus.supported}>
+                      {computerUseBusy === 'runtime:setup' ? 'Installing...' : 'Install Environment'}
+                    </InlineActionButton>
+                    <InlineActionButton onClick={() => Promise.all([reloadComputerUseRuntimeStatus(), reloadComputerUseWindows(), reloadComputerUseSession(), reloadComputerUseAudit()])}>
+                      Recheck Status
+                    </InlineActionButton>
+                    <InlineActionButton
+                      onClick={() =>
+                        persistComputerUseConfig(
+                          computerUseConfig.enabled && computerUseConfig.trustedMode
+                            ? { enabled: false, trustedMode: false }
+                            : { enabled: true, trustedMode: true },
+                        )
+                      }
+                      disabled={computerUseBusy === 'config' || !computerUseRuntimeReady}
+                    >
+                      {computerUseConfig.enabled && computerUseConfig.trustedMode
+                        ? (isZh ? '关闭桌面控制' : 'Disable Computer Use')
+                        : (isZh ? '启用桌面控制' : 'Enable Computer Use')}
+                    </InlineActionButton>
+                  </div>
+                  <div className="mt-3 rounded-lg border border-claude-border bg-claude-input px-3 py-3 text-[12px] leading-6 text-claude-textSecondary">
+                    {computerUseRuntimeNotice}
+                  </div>
+                </div>
+
+                {computerUseRuntimeReady ? (
+                  <>
               <div className="grid grid-cols-4 gap-4">
                 <InfoStat
                   label={isZh ? '当前状态' : 'Status'}
@@ -2815,9 +3010,13 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                   </div>
                 </div>
               </div>
+                </>
+              ) : null}
+              </div>
             </SectionCard>
           </div>
         );
+      }
 
       case 'git':
         return (

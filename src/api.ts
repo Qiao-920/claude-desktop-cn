@@ -1608,6 +1608,59 @@ export async function getMcpToolAudit(): Promise<{ entries: McpToolAuditEntry[] 
   return { entries: Array.isArray(data.entries) ? data.entries : [] };
 }
 
+export interface ComputerUseRuntimeStatus {
+  platform: string;
+  supported: boolean;
+  python: {
+    installed: boolean;
+    version?: string;
+    path?: string;
+    command?: string;
+  };
+  venv: {
+    created: boolean;
+    path?: string;
+    pythonPath?: string;
+  };
+  dependencies: {
+    installed: boolean;
+    requirementsFound: boolean;
+    requirementsPath?: string;
+    installStampPath?: string;
+  };
+  permissions: {
+    accessibility: boolean | null;
+    screenRecording: boolean | null;
+  };
+}
+
+export interface ComputerUseRuntimeSetupStep {
+  id: string;
+  title: string;
+  status: 'done' | 'error' | 'pending';
+  message?: string;
+  detail?: string;
+}
+
+export interface ComputerUseRuntimeSetupResult {
+  ok: boolean;
+  error?: string;
+  steps: ComputerUseRuntimeSetupStep[];
+  status: ComputerUseRuntimeStatus;
+}
+
+export async function getComputerUseRuntimeStatus(): Promise<{ status: ComputerUseRuntimeStatus }> {
+  const res = await request('/computer-use/runtime-status');
+  return res.json();
+}
+
+export async function runComputerUseRuntimeSetup(): Promise<ComputerUseRuntimeSetupResult> {
+  const res = await request('/computer-use/runtime-setup', {
+    method: 'POST',
+  });
+  return res.json();
+}
+
 export interface ComputerUseConfig {
   enabled: boolean;
   trustedMode: boolean;
@@ -1650,6 +1703,7 @@ export interface ComputerUseScreenshotResult {
   scope: 'window' | 'screen';
   width: number;
   height: number;
+  engine?: 'python' | 'powershell';
   origin?: {
     x: number;
     y: number;
