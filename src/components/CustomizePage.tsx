@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Plus, Search, Trash2, Sparkles, LayoutGrid, FileText,
   ChevronRight, ChevronDown, Folder, File, MoreHorizontal, Info, Eye, Code,
-  Settings, Check, MessageSquare, ClipboardList, Upload, Github, X, FolderPlus, AppWindow
+  Settings, Check, MessageSquare, ClipboardList, Upload, Github, X, FolderPlus, AppWindow, Bot
 } from 'lucide-react';
 import MarkdownRenderer, { CodeBlock } from './MarkdownRenderer';
 import { getSkills, getSkillDetail, getSkillFile, createSkill, updateSkill, deleteSkill, toggleSkill, importSkill, getGithubStatus, getGithubAuthUrl, disconnectGithub } from '../api';
@@ -199,7 +199,7 @@ const FileTreeNode: React.FC<FileTreeNodeProps> = ({
 const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void }) => {
   const navigate = useNavigate();
   const isZh = localStorage.getItem('ui_language') === 'zh-CN';
-  const [tab, setTab] = useState<'overview' | 'skills' | 'connectors'>('overview');
+  const [tab, setTab] = useState<'plugins' | 'skills' | 'connectors'>('plugins');
   const [examples, setExamples] = useState<Skill[]>([]);
   const [mySkills, setMySkills] = useState<Skill[]>([]);
   const [selectedSkillId, setSelectedSkillId] = useState<string | null>(null);
@@ -445,6 +445,56 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
   const q = search.toLowerCase();
   const filteredExamples = examples.filter(s => s.name.toLowerCase().includes(q));
   const filteredMy = mySkills.filter(s => s.name.toLowerCase().includes(q));
+  const pluginCards = [
+    {
+      id: 'github',
+      title: isZh ? 'GitHub 集成' : 'GitHub Integration',
+      subtitle: githubConnected ? (isZh ? '已连接，可直接带仓库上下文对话。' : 'Connected and ready for repository-aware chat.') : (isZh ? '连接 GitHub，把仓库上下文带进聊天和项目。' : 'Connect GitHub to bring repo context into chat and projects.'),
+      badge: githubConnected ? (isZh ? '已连接' : 'Connected') : (isZh ? '未连接' : 'Not connected'),
+      icon: <Github size={18} className="text-claude-textSecondary" />,
+      onClick: () => setTab('connectors'),
+    },
+    {
+      id: 'computer-use',
+      title: 'Computer Use',
+      subtitle: isZh ? '桌面截图、点击、输入和白名单窗口控制。' : 'Desktop screenshots, clicks, typing, and allowlisted window control.',
+      badge: isZh ? '桌面控制' : 'Desktop',
+      icon: <AppWindow size={18} className="text-claude-textSecondary" />,
+      onClick: openComputerUseSettings,
+    },
+    {
+      id: 'skills',
+      title: isZh ? 'Skills 工作室' : 'Skills Studio',
+      subtitle: isZh ? '集中管理内置和自定义 Skills，并把能力绑定到项目。' : 'Manage built-in and custom skills, then bind them to projects.',
+      badge: `${examples.length + mySkills.length} ${isZh ? '项' : 'items'}`,
+      icon: <Sparkles size={18} className="text-claude-textSecondary" />,
+      onClick: () => setTab('skills'),
+    },
+    {
+      id: 'automations',
+      title: isZh ? '自动化工作台' : 'Automations',
+      subtitle: isZh ? '把日报、巡检、发布准备和 Agent 配方集中管理。' : 'Centralize reports, triage, release prep, and agent recipes.',
+      badge: isZh ? '工作流' : 'Workflow',
+      icon: <ClipboardList size={18} className="text-claude-textSecondary" />,
+      onClick: () => navigate('/automations'),
+    },
+    {
+      id: 'agents',
+      title: isZh ? '多 Agent 工作台' : 'Multi-Agent Workspace',
+      subtitle: isZh ? '给项目配置内置 Agent、角色会话和执行入口。' : 'Set up built-in agents, role chats, and execution entrypoints for projects.',
+      badge: isZh ? '协作' : 'Collab',
+      icon: <Bot size={18} className="text-claude-textSecondary" />,
+      onClick: () => navigate('/agents'),
+    },
+    {
+      id: 'mcp',
+      title: 'MCP / Connectors',
+      subtitle: isZh ? '继续把第三方能力接进来，做得更像 Codex 的插件中心。' : 'Bring more third-party capability in and move closer to a Codex-style plugin hub.',
+      badge: isZh ? '扩展' : 'Extensions',
+      icon: <LayoutGrid size={18} className="text-claude-textSecondary" />,
+      onClick: () => setTab('connectors'),
+    },
+  ];
 
   // --- Render Helpers ---
 
@@ -463,7 +513,7 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
       <div className="w-[240px] border-r border-claude-border flex flex-col pt-4 pb-4 flex-shrink-0 bg-claude-bg">
         <div className="px-4 mb-6">
           <button onClick={() => {
-            if (tab !== 'overview') setTab('overview');
+            if (tab !== 'plugins') setTab('plugins');
             else navigate(-1);
           }}
             className="flex items-center gap-2 text-claude-text font-medium hover:text-claude-text/80 transition-colors">
@@ -472,6 +522,11 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
           </button>
         </div>
         <nav className="flex-1 px-2 space-y-1">
+          <button onClick={() => setTab('plugins')}
+            className={`w-full flex items-center gap-3 px-3 py-2 text-[15px] font-medium rounded-lg transition-colors ${tab === 'plugins' ? 'bg-claude-hover text-claude-text' : 'text-claude-text hover:bg-claude-hover'}`}>
+            <img src={customizeIconImg} alt="" className="w-[22px] h-[22px] dark:invert" />
+            {isZh ? '插件' : 'Plugins'}
+          </button>
           <button onClick={() => setTab('skills')}
             className={`w-full flex items-center gap-3 px-3 py-2 text-[15px] font-medium rounded-lg transition-colors ${tab === 'skills' ? 'bg-claude-hover text-claude-text' : 'text-claude-text hover:bg-claude-hover'}`}>
             <img src={skillsImg} alt="" className="w-[22px] h-[22px] dark:invert" />
@@ -680,7 +735,114 @@ const CustomizePage = ({ onCreateWithClaude }: { onCreateWithClaude?: () => void
 
       {/* 3. Right Column: Detail / Create / Overview */}
       <div className="flex-1 flex flex-col min-w-0">
-        {tab === 'overview' ? (
+        {tab === 'plugins' ? (
+          <div className="h-full overflow-y-auto bg-claude-bg px-6 py-6">
+            <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-5">
+              <section className="rounded-[24px] border border-claude-border bg-[linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0))] p-6">
+                <div className="max-w-[760px]">
+                  <div className="text-[34px] font-semibold tracking-[-0.04em] text-claude-text">
+                    {isZh ? '让 Claude 按你的方式工作' : 'Make Claude work your way'}
+                  </div>
+                  <div className="mt-2 text-[13px] leading-6 text-claude-textSecondary">
+                    {isZh
+                      ? '把插件、技能、连接器和桌面能力集中到一个能力中心里。先从这里挑能力，再继续进入技能、连接器或项目工作流。'
+                      : 'Bring plugins, skills, connectors, and desktop capabilities into one capability hub. Start here, then jump into the tool-specific workflow.'}
+                  </div>
+                </div>
+
+                <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-[18px] border border-claude-border bg-claude-input/80 px-4 py-3">
+                    <div className="text-[11px] uppercase tracking-[0.12em] text-claude-textSecondary/80">{isZh ? '能力卡片' : 'Capabilities'}</div>
+                    <div className="mt-2 text-[26px] font-semibold tracking-[-0.03em] text-claude-text">{pluginCards.length}</div>
+                  </div>
+                  <div className="rounded-[18px] border border-claude-border bg-claude-input/80 px-4 py-3">
+                    <div className="text-[11px] uppercase tracking-[0.12em] text-claude-textSecondary/80">{isZh ? 'Skills' : 'Skills'}</div>
+                    <div className="mt-2 text-[26px] font-semibold tracking-[-0.03em] text-claude-text">{examples.length + mySkills.length}</div>
+                  </div>
+                  <div className="rounded-[18px] border border-claude-border bg-claude-input/80 px-4 py-3">
+                    <div className="text-[11px] uppercase tracking-[0.12em] text-claude-textSecondary/80">{isZh ? '连接器状态' : 'Connector status'}</div>
+                    <div className="mt-2 text-[26px] font-semibold tracking-[-0.03em] text-claude-text">{githubConnected ? 1 : 0}</div>
+                  </div>
+                  <div className="rounded-[18px] border border-claude-border bg-claude-input/80 px-4 py-3">
+                    <div className="text-[11px] uppercase tracking-[0.12em] text-claude-textSecondary/80">{isZh ? '当前重点' : 'Current focus'}</div>
+                    <div className="mt-2 text-[18px] font-semibold tracking-[-0.03em] text-claude-text">
+                      {githubConnected ? (isZh ? 'GitHub 已连通' : 'GitHub connected') : 'Computer Use'}
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
+                <div className="rounded-[22px] border border-claude-border bg-claude-input p-5">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-[18px] font-semibold text-claude-text">{isZh ? '插件与能力' : 'Plugins & capabilities'}</div>
+                      <div className="mt-1 text-[12px] text-claude-textSecondary">
+                        {isZh ? '像 Codex 一样，把高频能力做成清晰入口。' : 'Expose high-frequency capabilities as clear Codex-like entry points.'}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setTab('connectors')}
+                      className="rounded-xl border border-claude-border px-3 py-1.5 text-[12px] text-claude-textSecondary hover:bg-claude-hover hover:text-claude-text"
+                    >
+                      {isZh ? '管理连接器' : 'Manage connectors'}
+                    </button>
+                  </div>
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    {pluginCards.map((card) => (
+                      <button
+                        key={card.id}
+                        onClick={card.onClick}
+                        className="group rounded-[18px] border border-claude-border bg-claude-bg px-4 py-4 text-left transition-colors hover:bg-claude-hover"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-claude-border bg-claude-input/80">
+                            {card.icon}
+                          </div>
+                          <span className="rounded-full border border-claude-border px-2 py-0.5 text-[10px] text-claude-textSecondary">
+                            {card.badge}
+                          </span>
+                        </div>
+                        <div className="mt-4 text-[16px] font-medium text-claude-text">{card.title}</div>
+                        <div className="mt-2 text-[12px] leading-6 text-claude-textSecondary">{card.subtitle}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-[22px] border border-claude-border bg-claude-input p-5">
+                  <div className="text-[18px] font-semibold text-claude-text">{isZh ? '常用操作' : 'Quick actions'}</div>
+                  <div className="mt-1 text-[12px] text-claude-textSecondary">
+                    {isZh ? '直接跳到最常用的配置入口。' : 'Jump straight into the most-used configuration flows.'}
+                  </div>
+                  <div className="mt-4 space-y-3">
+                    <button
+                      onClick={() => setTab('skills')}
+                      className="w-full rounded-[16px] border border-claude-border bg-claude-bg px-4 py-3 text-left transition-colors hover:bg-claude-hover"
+                    >
+                      <div className="text-[14px] font-medium text-claude-text">{isZh ? '打开 Skills 工作室' : 'Open Skills Studio'}</div>
+                      <div className="mt-1 text-[12px] text-claude-textSecondary">{isZh ? '继续编辑、导入或绑定技能。' : 'Edit, import, or bind skills.'}</div>
+                    </button>
+                    <button
+                      onClick={() => setTab('connectors')}
+                      className="w-full rounded-[16px] border border-claude-border bg-claude-bg px-4 py-3 text-left transition-colors hover:bg-claude-hover"
+                    >
+                      <div className="text-[14px] font-medium text-claude-text">{isZh ? '打开连接器面板' : 'Open connectors'}</div>
+                      <div className="mt-1 text-[12px] text-claude-textSecondary">{isZh ? '管理 GitHub 和外部能力接入。' : 'Manage GitHub and external capability access.'}</div>
+                    </button>
+                    <button
+                      onClick={() => navigate('/agents')}
+                      className="w-full rounded-[16px] border border-claude-border bg-claude-bg px-4 py-3 text-left transition-colors hover:bg-claude-hover"
+                    >
+                      <div className="text-[14px] font-medium text-claude-text">{isZh ? '打开多 Agent 工作台' : 'Open multi-agent workspace'}</div>
+                      <div className="mt-1 text-[12px] text-claude-textSecondary">{isZh ? '继续给项目加 Agent、开角色会话和派任务。' : 'Add agents to projects, open role chats, and delegate work.'}</div>
+                    </button>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
+        ) : false ? (
           <div className="flex flex-col items-center justify-center h-full max-w-2xl mx-auto px-6 py-12">
             <div className="mb-6">
               <img src={customizeMainImg} alt="Customize" className="w-[140px] h-auto dark:invert opacity-90" />

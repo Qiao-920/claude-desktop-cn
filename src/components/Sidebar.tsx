@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { getStreamingIds } from '../streamingState';
@@ -18,8 +18,9 @@ import claudeImg from '../assets/icons/claude.png';
 import searchIconImg from '../assets/icons/search-icon.png';
 import customizeIconImg from '../assets/icons/customize-icon.png';
 import { NAV_ITEMS } from '../constants';
-import { ChevronUp, Settings, HelpCircle, LogOut, Shield, CreditCard, Search } from 'lucide-react';
-import { getConversations, deleteConversation, updateConversation, getUser, getUserUsage, logout, getUserProfile, getCodeSSO } from '../api';
+import { ChevronDown, ChevronRight, ChevronUp, Folder, FolderOpen, MessageSquarePlus, Settings, HelpCircle, LogOut, Shield, CreditCard, Search, Clock3, Bot, Copy } from 'lucide-react';
+import { createProjectConversation, getConversations, deleteConversation, updateConversation, updateProject, getUser, getUserUsage, logout, getUserProfile, getCodeSSO, getProjects, Project } from '../api';
+import { copyToClipboard } from '../utils/clipboard';
 
 import SearchModal from './SearchModal';
 
@@ -33,6 +34,38 @@ interface SidebarProps {
   onCloseOverlays?: () => void;
   tunerConfig?: any;
   setTunerConfig?: (config: any) => void;
+}
+
+type SidebarConversation = {
+  id: string;
+  title?: string;
+  created_at?: string;
+  project_id?: string;
+  project_name?: string | null;
+  research_mode?: boolean;
+  project_run_kind?: 'general' | 'role_chat' | 'task_execution';
+  project_chat_kind?: 'general' | 'code' | 'research' | 'agent';
+  project_member_id?: string;
+  model?: string;
+};
+
+type SidebarProjectGroup = {
+  project: Project;
+  conversations: SidebarConversation[];
+};
+
+function getProjectChatKind(conversation: SidebarConversation): 'general' | 'code' | 'research' | 'agent' {
+  if (conversation.project_chat_kind) return conversation.project_chat_kind;
+  if (conversation.project_run_kind === 'role_chat' || conversation.project_run_kind === 'task_execution') return 'agent';
+  if (conversation.research_mode) return 'research';
+  return 'general';
+}
+
+function getProjectChatKindLabel(kind: 'general' | 'code' | 'research' | 'agent', isZh: boolean) {
+  if (kind === 'code') return isZh ? '代码' : 'Code';
+  if (kind === 'research') return isZh ? '研究' : 'Research';
+  if (kind === 'agent') return isZh ? 'Agent' : 'Agent';
+  return isZh ? '普通' : 'General';
 }
 
 interface RenameModalProps {
@@ -111,8 +144,10 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
   const location = useLocation();
   const isZh = localStorage.getItem('ui_language') === 'zh-CN';
   const codeJumpUrl = ((import.meta as any).env?.VITE_CODE_JUMP_URL || '/code/').trim();
-  const [chats, setChats] = useState<any[]>([]);
+  const [chats, setChats] = useState<SidebarConversation[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [activeMenuIndex, setActiveMenuIndex] = useState<number | null>(null);
+  const [activeProjectMenuId, setActiveProjectMenuId] = useState<string | null>(null);
   const [menuPosition, setMenuPosition] = useState<{ top: number, left: number } | null>(null);
   const [showRenameModal, setShowRenameModal] = useState(false);
   const [renameChatId, setRenameChatId] = useState<string | null>(null);
@@ -127,6 +162,14 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
   const [isAdmin, setIsAdmin] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [isRecentsCollapsed, setIsRecentsCollapsed] = useState(false);
+  const [collapsedProjects, setCollapsedProjects] = useState<Record<string, boolean>>(() => {
+    try {
+      const raw = JSON.parse(localStorage.getItem('sidebar_project_collapsed_v1') || '{}');
+      return raw && typeof raw === 'object' ? raw : {};
+    } catch {
+      return {};
+    }
+  });
   const [isNewChatAnimating, setIsNewChatAnimating] = useState(false);
   const [streamingIds, setStreamingIds] = useState<Set<string>>(new Set());
   const [updateStatus, setUpdateStatus] = useState<{ type: string; version?: string; percent?: number } | null>(null);
@@ -162,8 +205,10 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
   const userMenuRef = useRef<HTMLDivElement>(null);
   const userBtnRef = useRef<HTMLButtonElement>(null);
 
-  const groupedRecents = React.useMemo(() => {
-    const limited = chats.slice(0, 30).map((chat, index) => ({ chat, index }));
+  const globalChats = useMemo(() => chats.filter((chat) => !chat.project_id), [chats]);
+
+  const groupedRecents = useMemo(() => {
+    const limited = globalChats.slice(0, 30).map((chat, index) => ({ chat, index: chats.findIndex((item) => item.id === chat.id) }));
     const sections: Array<{ label: string; projectName?: string | null; items: Array<{ chat: any; index: number }> }> = [];
     for (const item of limited) {
       const projectName = item.chat.project_name || null;
@@ -176,13 +221,55 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
       }
     }
     return sections;
-  }, [chats, isZh]);
+  }, [chats, globalChats, isZh]);
+
+  const selectedProjectId = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get('project');
+  }, [location.search]);
+
+  const activeChatId = useMemo(() => {
+    const match = location.pathname.match(/^\/chat\/([^/?#]+)/);
+    return match ? match[1] : null;
+  }, [location.pathname]);
+
+  const activeChat = useMemo(
+    () => (activeChatId ? chats.find((chat) => chat.id === activeChatId) || null : null),
+    [activeChatId, chats],
+  );
+
+  const activeProjectId = activeChat?.project_id || selectedProjectId || null;
+
+  const projectGroups = useMemo<SidebarProjectGroup[]>(() => {
+    return projects
+      .filter((project) => !project.is_archived)
+      .map((project) => ({
+        project,
+        conversations: chats
+          .filter((chat) => chat.project_id === project.id)
+          .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()),
+      }))
+      .filter((group) => group.conversations.length > 0 || group.project.id === activeProjectId);
+  }, [activeProjectId, chats, projects]);
+
+  const getNavLabel = useCallback((label: string) => {
+    if (!isZh) return label;
+    if (label === 'Chats') return '聊天';
+    if (label === 'Agents') return '多 Agent';
+    if (label === 'Automation') return '自动化';
+    if (label === 'Projects') return '项目';
+    if (label === 'Artifacts') return '作品';
+    if (label === 'Code') return '代码';
+    return label;
+  }, [isZh]);
 
   // Map labels to the correct custom icon
   const getIcon = (label: string, size: number) => {
     const className = "dark:invert transition-[filter] duration-200";
     switch (label) {
       case 'Chats': return <IconChatBubble size={size} className={className} />;
+      case 'Agents': return <Bot size={size - 7} className="text-current" />;
+      case 'Automation': return <Clock3 size={size - 7} className="text-current" />;
       case 'Projects': return <IconProjects size={size} className={className} />;
       case 'Artifacts': return <IconArtifactsExact size={size} className={className} />;
       case 'Code': return <IconCode size={size} className={className} />;
@@ -215,6 +302,14 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
       navigate('/projects');
       return;
     }
+    if (label === 'Agents') {
+      navigate('/agents');
+      return;
+    }
+    if (label === 'Automation') {
+      navigate('/automations');
+      return;
+    }
     if (label === 'Artifacts') {
       navigate('/artifacts');
       return;
@@ -225,9 +320,90 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
     }
   };
 
+  const persistCollapsedProjects = useCallback((nextValue: Record<string, boolean>) => {
+    setCollapsedProjects(nextValue);
+    localStorage.setItem('sidebar_project_collapsed_v1', JSON.stringify(nextValue));
+  }, []);
+
+  const toggleProjectCollapsed = useCallback((projectId: string) => {
+    persistCollapsedProjects({
+      ...collapsedProjects,
+      [projectId]: !collapsedProjects[projectId],
+    });
+  }, [collapsedProjects, persistCollapsedProjects]);
+
+  const loadSidebarData = useCallback(async () => {
+    try {
+      const [conversationData, projectData] = await Promise.all([
+        getConversations(),
+        getProjects(),
+      ]);
+      if (Array.isArray(conversationData)) {
+        setChats(conversationData);
+      }
+      if (Array.isArray(projectData)) {
+        setProjects(projectData);
+      }
+    } catch (e) {
+      console.error('Failed to load sidebar data', e);
+    }
+  }, []);
+
+  const handleOpenProject = useCallback((projectId: string) => {
+    onCloseOverlays?.();
+    navigate(`/projects?project=${projectId}`);
+  }, [navigate, onCloseOverlays]);
+
+  const handleCreateProjectChat = useCallback(async (project: Project, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    try {
+      const conv = await createProjectConversation(project.id, `${project.name} chat`);
+      await loadSidebarData();
+      onCloseOverlays?.();
+      navigate(`/chat/${conv.id}`);
+    } catch (error) {
+      console.error('Failed to create project chat', error);
+    }
+  }, [loadSidebarData, navigate, onCloseOverlays]);
+
+  const handleChooseProjectFolder = useCallback(async (project: Project, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    try {
+      const selected = await (window as any).electronAPI?.selectDirectory?.();
+      if (!selected || typeof selected !== 'string') return;
+      await updateProject(project.id, { workspace_path: selected });
+      await loadSidebarData();
+      setActiveProjectMenuId(null);
+    } catch (error) {
+      console.error('Failed to update project workspace', error);
+    }
+  }, [loadSidebarData]);
+
+  const handleOpenProjectFolder = useCallback(async (project: Project, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (!project.workspace_path) return;
+    try {
+      await (window as any).electronAPI?.openFolder?.(project.workspace_path);
+      setActiveProjectMenuId(null);
+    } catch (error) {
+      console.error('Failed to open project folder', error);
+    }
+  }, []);
+
+  const handleCopyProjectWorkspace = useCallback(async (project: Project, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (!project.workspace_path) return;
+    try {
+      await copyToClipboard(project.workspace_path);
+      setActiveProjectMenuId(null);
+    } catch (error) {
+      console.error('Failed to copy project workspace', error);
+    }
+  }, []);
+
   useEffect(() => {
     setUserUser(getUser());
-    fetchChats();
+    loadSidebarData();
     fetchPlan();
     getUserProfile().then((data: any) => {
       const p = data?.user || data;
@@ -238,9 +414,8 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
     }).catch(() => { });
 
     // 监听标题更新事件
-    const handleTitleUpdate = () => {
-      console.log('[Sidebar] Title update event received, fetching conversations...');
-      fetchChats();
+    const handleConversationMutation = () => {
+      loadSidebarData();
     };
 
     // 监听用户资料更新事件
@@ -255,26 +430,20 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
       }).catch(() => { });
     };
 
-    window.addEventListener('conversationTitleUpdated', handleTitleUpdate);
+    window.addEventListener('conversationTitleUpdated', handleConversationMutation);
+    window.addEventListener('conversationDeleted', handleConversationMutation);
     window.addEventListener('userProfileUpdated', handleProfileUpdate);
 
     return () => {
-      window.removeEventListener('conversationTitleUpdated', handleTitleUpdate);
+      window.removeEventListener('conversationTitleUpdated', handleConversationMutation);
+      window.removeEventListener('conversationDeleted', handleConversationMutation);
       window.removeEventListener('userProfileUpdated', handleProfileUpdate);
     };
-  }, [refreshTrigger]);
+  }, [loadSidebarData]);
 
-  const fetchChats = async () => {
-    try {
-      const data = await getConversations();
-      console.log('[Sidebar] Fetched conversations:', data);
-      if (Array.isArray(data)) {
-        setChats(data);
-      }
-    } catch (e) {
-      console.error("Failed to fetch chats", e);
-    }
-  };
+  useEffect(() => {
+    loadSidebarData();
+  }, [loadSidebarData, location.pathname, location.search, refreshTrigger]);
 
   const fetchPlan = async () => {
     try {
@@ -324,7 +493,7 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
     } catch (err) {
       console.error('Failed to rename chat:', err);
       // Revert on failure
-      fetchChats();
+      loadSidebarData();
     }
     setShowRenameModal(false);
     setRenameChatId(null);
@@ -459,7 +628,7 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
               className={`leading-none transition-opacity duration-200 text-left ${isCollapsed ? 'opacity-0 w-0 hidden' : 'opacity-100 block'}`}
               style={{ fontSize: '14px', fontWeight: 400 }}
             >
-              New chat
+              {isZh ? '新建聊天' : 'New chat'}
             </span>
           </button>
         </div>
@@ -496,7 +665,7 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
               className={`leading-none transition-opacity duration-200 text-left ${isCollapsed ? 'opacity-0 w-0 hidden' : 'opacity-100 block'}`}
               style={{ fontSize: '14px', fontWeight: 400 }}
             >
-              Search
+              {isZh ? '搜索' : 'Search'}
             </span>
           </button>
         </div>
@@ -533,7 +702,7 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
               className={`leading-none transition-opacity duration-200 text-left ${isCollapsed ? 'opacity-0 w-0 hidden' : 'opacity-100 block'}`}
               style={{ fontSize: '14px', fontWeight: 400 }}
             >
-              Customize
+              {isZh ? '自定义' : 'Customize'}
             </span>
           </button>
         </div>
@@ -550,12 +719,12 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
         >
 
           {/* Navigation Links */}
-          <nav className="space-y-0.5 mb-6">
+          <nav className="space-y-1 mb-5">
             {NAV_ITEMS.map((item) => (
               <button
                 key={item.label}
                 onClick={() => handleNavClick(item.label)}
-                className={`w-full flex items-center justify-start text-claude-text hover:bg-claude-hover rounded-lg transition-colors group overflow-hidden whitespace-nowrap ${(location.pathname === '/chats' && item.label === 'Chats') || (location.pathname === '/projects' && item.label === 'Projects') ? 'bg-claude-hover' : ''}`}
+                className={`w-full flex items-center justify-start text-claude-text hover:bg-claude-hover rounded-lg transition-colors group overflow-hidden whitespace-nowrap ${(location.pathname === '/chats' && item.label === 'Chats') || (location.pathname === '/projects' && item.label === 'Projects') || (location.pathname === '/agents' && item.label === 'Agents') || (location.pathname === '/automations' && item.label === 'Automation') ? 'bg-claude-hover' : ''}`}
                 style={{
                   fontWeight: 400,
                   paddingTop: '2px',
@@ -571,11 +740,167 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
                   className={`leading-none transition-opacity duration-200 text-left ${isCollapsed ? 'opacity-0 w-0 hidden' : 'opacity-100 block'}`}
                   style={{ fontSize: '14px' }}
                 >
-                  {item.label}
+                  {getNavLabel(item.label)}
                 </span>
               </button>
             ))}
           </nav>
+
+          {!isCollapsed && projectGroups.length > 0 && (
+            <div className="mb-5">
+              <div
+                className="px-3 pb-2 text-[13px] font-medium text-claude-textSecondary"
+                style={{ paddingLeft: `${tunerConfig?.recentsPl || 12}px` }}
+              >
+                {isZh ? '项目' : 'Projects'}
+              </div>
+              <div className="space-y-1">
+                {projectGroups.map(({ project, conversations }) => {
+                  const isProjectActive = activeProjectId === project.id;
+                  const isCollapsedProject = !!collapsedProjects[project.id];
+                  return (
+                    <div key={`project-tree-${project.id}`} className="space-y-0.5">
+                      <div
+                        onClick={() => handleOpenProject(project.id)}
+                        className={`group relative flex min-h-[34px] items-center gap-2 rounded-xl px-3 py-1.5 cursor-pointer transition-colors ${isProjectActive ? 'bg-claude-hover' : 'hover:bg-claude-hover/80'}`}
+                        style={{ paddingLeft: `${tunerConfig?.recentsPl || 12}px` }}
+                      >
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleProjectCollapsed(project.id);
+                          }}
+                          className="text-claude-textSecondary hover:text-claude-text transition-colors"
+                          title={isCollapsedProject ? (isZh ? '展开项目' : 'Expand project') : (isZh ? '收起项目' : 'Collapse project')}
+                        >
+                          {isCollapsedProject ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                        </button>
+                        {isProjectActive ? (
+                          <FolderOpen size={14} className="text-claude-text" />
+                        ) : (
+                          <Folder size={14} className="text-claude-textSecondary" />
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[13px] font-medium text-claude-text">{project.name}</div>
+                        </div>
+                        <div className="text-[11px] text-claude-textSecondary">{conversations.length}</div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveProjectMenuId((prev) => prev === project.id ? null : project.id);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 text-claude-textSecondary hover:text-claude-text transition-all"
+                          title={isZh ? '项目菜单' : 'Project menu'}
+                        >
+                          <IconDotsHorizontal size={14} />
+                        </button>
+                        <button
+                          onClick={(e) => handleCreateProjectChat(project, e)}
+                          className="opacity-0 group-hover:opacity-100 text-claude-textSecondary hover:text-claude-text transition-all"
+                          title={isZh ? '新建项目聊天' : 'New project chat'}
+                        >
+                          <MessageSquarePlus size={14} />
+                        </button>
+                        {activeProjectMenuId === project.id && (
+                          <>
+                            <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setActiveProjectMenuId(null); }} />
+                            <div className="absolute right-0 top-full z-50 mt-1 w-[220px] rounded-[14px] border border-gray-200 bg-white py-1.5 shadow-[0_4px_24px_rgba(0,0,0,0.15)] dark:border-[#65645F] dark:bg-[#30302E]">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setActiveProjectMenuId(null); handleOpenProject(project.id); }}
+                                className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-[13px] text-claude-text transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                              >
+                                <Folder size={15} className="text-claude-textSecondary" />
+                                {isZh ? '打开项目' : 'Open project'}
+                              </button>
+                              <button
+                                onClick={(e) => handleCreateProjectChat(project, e)}
+                                className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-[13px] text-claude-text transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                              >
+                                <MessageSquarePlus size={15} className="text-claude-textSecondary" />
+                                {isZh ? '新建项目聊天' : 'New project chat'}
+                              </button>
+                              <div className="my-1.5 border-t border-claude-border opacity-50" />
+                              <button
+                                onClick={(e) => handleChooseProjectFolder(project, e)}
+                                className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-[13px] text-claude-text transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                              >
+                                <FolderOpen size={15} className="text-claude-textSecondary" />
+                                {isZh ? '重选项目目录' : 'Choose project folder'}
+                              </button>
+                              <button
+                                onClick={(e) => handleOpenProjectFolder(project, e)}
+                                className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-[13px] text-claude-text transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                              >
+                                <FolderOpen size={15} className="text-claude-textSecondary" />
+                                {isZh ? '在资源管理器中打开' : 'Open in Explorer'}
+                              </button>
+                              <button
+                                onClick={(e) => handleCopyProjectWorkspace(project, e)}
+                                className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-[13px] text-claude-text transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                              >
+                                <Copy size={15} className="text-claude-textSecondary" />
+                                {isZh ? '复制项目路径' : 'Copy workspace path'}
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                      {!isCollapsedProject && conversations.map((chat) => {
+                        const chatIndex = chats.findIndex((item) => item.id === chat.id);
+                        const isActive = location.pathname === `/chat/${chat.id}`;
+                        const chatKind = getProjectChatKind(chat);
+                        return (
+                          <div
+                            key={`project-conversation-${chat.id}`}
+                            onClick={() => { onCloseOverlays?.(); navigate(`/chat/${chat.id}`); }}
+                            className={`relative group flex min-h-[30px] items-center rounded-lg transition-colors cursor-pointer ${isActive || activeMenuIndex === chatIndex ? 'bg-claude-hover' : 'hover:bg-claude-hover/80'}`}
+                            style={{
+                              paddingTop: `${Math.max((tunerConfig?.recentsItemPy || 6) - 2, 3)}px`,
+                              paddingBottom: `${Math.max((tunerConfig?.recentsItemPy || 6) - 2, 3)}px`,
+                              paddingLeft: `${(tunerConfig?.recentsPl || 12) + 34}px`,
+                              paddingRight: `${tunerConfig?.recentsPl || 12}px`
+                            }}
+                          >
+                            {streamingIds.has(chat.id) && (
+                              <span
+                                className="flex-shrink-0 mr-2 w-[7px] h-[7px] rounded-full bg-neutral-700 dark:bg-neutral-300 animate-pulse"
+                                style={{ animationDuration: '1.6s' }}
+                              />
+                            )}
+                            <div className="flex min-w-0 flex-1 items-center gap-2 pr-6">
+                              <div
+                                className="text-claude-text truncate leading-snug"
+                                style={{ fontSize: `${tunerConfig?.recentsFontSize || 13}px` }}
+                              >
+                                {chat.title || (isZh ? '未命名聊天' : 'Untitled chat')}
+                              </div>
+                              <span className="shrink-0 rounded-full border border-claude-border px-1.5 py-0.5 text-[10px] leading-none text-claude-textSecondary">
+                                {chatKind === 'code'
+                                  ? (isZh ? '代码' : 'Code')
+                                  : chatKind === 'research'
+                                    ? (isZh ? '研究' : 'Research')
+                                    : chatKind === 'agent'
+                                      ? 'Agent'
+                                      : (isZh ? '普通' : 'General')}
+                              </span>
+                            </div>
+                            {chatIndex >= 0 && (
+                              <button
+                                onClick={(e) => handleMenuClick(e, chatIndex)}
+                                className={`absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-claude-textSecondary hover:text-claude-text transition-all ${activeMenuIndex === chatIndex ? 'opacity-100 block' : 'opacity-0 group-hover:opacity-100 hidden group-hover:block'}`}
+                              >
+                                <IconDotsHorizontal size={16} />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Recents Section Header */}
           <div
@@ -706,7 +1031,7 @@ const Sidebar = ({ isCollapsed, toggleSidebar, refreshTrigger, onNewChatClick, o
                 </div>
               );
             })}
-            {chats.length > 30 && (
+            {globalChats.length > 30 && (
               <button
                 onClick={() => { onCloseOverlays?.(); navigate('/chats'); }}
                 className="w-full flex items-center gap-2 rounded-lg hover:bg-claude-hover transition-colors text-claude-textSecondary hover:text-claude-text"

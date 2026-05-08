@@ -28,6 +28,8 @@ import CustomizePage from './components/CustomizePage';
 import ProjectsPage from './components/ProjectsPage';
 import CoworkPage from './components/CoworkPage';
 import CodePage from './components/CodePage';
+import AutomationsPage from './components/AutomationsPage';
+import AgentsPage from './components/AgentsPage';
 import { useClientLanguageText } from './utils/chineseClientText';
 
 const Tooltip = ({ children, text, shortcut }: { children: React.ReactNode; text: string; shortcut?: string }) => {
@@ -93,11 +95,13 @@ const isDesktopWorkspacePath = (pathname: string) => (
   || pathname.startsWith('/chat/')
   || pathname === '/cowork'
   || pathname === '/projects'
+  || pathname === '/agents'
+  || pathname === '/automations'
   || pathname === '/code'
 );
 
 const getDesktopTabModeFromPath = (pathname: string): DesktopTabMode => {
-  if (pathname === '/cowork' || pathname === '/projects') return 'cowork';
+  if (pathname === '/cowork' || pathname === '/projects' || pathname === '/agents' || pathname === '/automations') return 'cowork';
   if (pathname === '/code') return 'code';
   return 'chat';
 };
@@ -493,7 +497,7 @@ const Layout = () => {
   const [draggedDesktopTabId, setDraggedDesktopTabId] = useState<string | null>(null);
   const [dragOverDesktopTabId, setDragOverDesktopTabId] = useState<string | null>(null);
   const isCodeRoute = location.pathname === '/code';
-  const isCoworkRoute = location.pathname === '/cowork' || location.pathname === '/projects';
+  const isCoworkRoute = location.pathname === '/cowork' || location.pathname === '/projects' || location.pathname === '/agents' || location.pathname === '/automations';
   const isChatRoute = !isCodeRoute && !isCoworkRoute;
   const currentDesktopTabId = useMemo(() => new URLSearchParams(location.search).get('tab') || '', [location.search]);
   const visibleDesktopTabs = useMemo(() => sortDesktopTabsForDisplay(desktopTabs), [desktopTabs]);
@@ -1372,7 +1376,7 @@ const Layout = () => {
             {/* Main Content Area - takes remaining width after panel */}
             <div className="flex-1 flex flex-col h-full min-w-0">
               {/* Header - Only render here if NOT in Artifacts-only mode */}
-              {isChatMode && (!showArtifacts || documentPanelDoc) && !showSettings && !showUpgrade && location.pathname !== '/chats' && location.pathname !== '/customize' && location.pathname !== '/projects' && location.pathname !== '/artifacts' && location.pathname !== '/code' && location.pathname !== '/cowork' && (
+              {isChatMode && (!showArtifacts || documentPanelDoc) && !showSettings && !showUpgrade && location.pathname !== '/chats' && location.pathname !== '/customize' && location.pathname !== '/projects' && location.pathname !== '/automations' && location.pathname !== '/artifacts' && location.pathname !== '/code' && location.pathname !== '/cowork' && (
                 <ChatHeader
                   title={currentChatTitle}
                   showArtifacts={showArtifacts}
@@ -1409,6 +1413,36 @@ const Layout = () => {
                   )}
                 >
                   <ProjectsPage />
+                </PageErrorBoundary>
+              ) : location.pathname === '/agents' ? (
+                <PageErrorBoundary
+                  fallback={(
+                    <div className="flex h-full items-center justify-center bg-claude-bg px-6">
+                      <div className="max-w-[520px] rounded-2xl border border-claude-border bg-claude-input px-6 py-5 text-center shadow-xl">
+                        <div className="text-[18px] font-semibold text-claude-text">Agents 页面加载失败</div>
+                        <div className="mt-2 text-[13px] leading-6 text-claude-textSecondary">
+                          多 Agent 工作台遇到了前端异常。你可以先返回项目页，或者刷新后重试。
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                >
+                  <AgentsPage />
+                </PageErrorBoundary>
+              ) : location.pathname === '/automations' ? (
+                <PageErrorBoundary
+                  fallback={(
+                    <div className="flex h-full items-center justify-center bg-claude-bg px-6">
+                      <div className="max-w-[520px] rounded-2xl border border-claude-border bg-claude-input px-6 py-5 text-center shadow-xl">
+                        <div className="text-[18px] font-semibold text-claude-text">Automations 页面加载失败</div>
+                        <div className="mt-2 text-[13px] leading-6 text-claude-textSecondary">
+                          自动化工作台遇到了前端异常。现在已经有页面级兜底，你可以先返回项目页，或者刷新后重试。
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                >
+                  <AutomationsPage />
                 </PageErrorBoundary>
               ) : location.pathname === '/cowork' ? (
                 <PageErrorBoundary
@@ -1584,6 +1618,8 @@ const App = () => {
         <Route path="/chats" element={<Layout />} />
         <Route path="/customize" element={<Layout />} />
         <Route path="/projects" element={<Layout />} />
+        <Route path="/agents" element={<Layout />} />
+        <Route path="/automations" element={<Layout />} />
         <Route path="/cowork" element={<Layout />} />
         <Route path="/code" element={<Layout />} />
         <Route path="/artifacts" element={<Layout />} />

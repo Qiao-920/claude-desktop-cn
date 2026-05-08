@@ -18,6 +18,8 @@ export const RECENT_CHATS = [
 
 export const NAV_ITEMS = [
   { label: "Chats", icon: "message-square" },
+  { label: "Agents", icon: "bot" },
+  { label: "Automation", icon: "clock-3" },
   { label: "Projects", icon: "folder" },
   { label: "Artifacts", icon: "sparkles" },
 ];

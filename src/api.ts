@@ -391,6 +391,7 @@ export interface Project {
   next_action?: string;
   tasks: ProjectTask[];
   team_members: ProjectTeamMember[];
+  automation_recipes?: ProjectAutomationRecipe[];
   is_archived: number;
   file_count?: number;
   chat_count?: number;
@@ -410,6 +411,16 @@ export type ProjectTeamMemberStatus = 'active' | 'idle' | 'blocked';
 export type ProjectTaskRunState = 'idle' | 'running' | 'updated' | 'blocked' | 'failed';
 
 export type ProjectConversationRunKind = 'general' | 'role_chat' | 'task_execution';
+
+export type ProjectChatKind = 'general' | 'code' | 'research' | 'agent';
+
+export type ProjectAutomationTrigger = 'manual' | 'daily' | 'weekly';
+
+export type ProjectAutomationRunMode = 'clawparrot' | 'selfhosted';
+
+export type ProjectAutomationRunStatus = 'idle' | 'running' | 'success' | 'error';
+
+export type ProjectAutomationRunSource = 'manual' | 'scheduled';
 
 export interface ProjectTeamMember {
   id: string;
@@ -437,10 +448,44 @@ export interface ProjectTask {
   updated_at: string;
 }
 
+export interface ProjectAutomationRecipe {
+  id: string;
+  name: string;
+  prompt: string;
+  target_kind: ProjectChatKind;
+  agent_id?: string;
+  model?: string;
+  enabled?: boolean;
+  trigger: ProjectAutomationTrigger;
+  schedule_time?: string;
+  schedule_weekday?: number;
+  run_mode?: ProjectAutomationRunMode;
+  env_token?: string;
+  env_base_url?: string;
+  last_run_at?: string;
+  last_run_status?: ProjectAutomationRunStatus;
+  last_run_error?: string;
+  next_run_at?: string;
+  run_history?: ProjectAutomationRunEntry[];
+  updated_at: string;
+}
+
+export interface ProjectAutomationRunEntry {
+  id: string;
+  source: ProjectAutomationRunSource;
+  status: Exclude<ProjectAutomationRunStatus, 'idle'>;
+  started_at: string;
+  finished_at?: string;
+  conversation_id?: string;
+  error?: string;
+}
+
 export interface ProjectConversationCreateOptions {
   project_task_id?: string;
   project_member_id?: string;
   project_run_kind?: ProjectConversationRunKind;
+  project_chat_kind?: ProjectChatKind;
+  research_mode?: boolean;
 }
 
 export interface ProjectFile {
@@ -483,10 +528,18 @@ export async function getProjects(): Promise<Project[]> {
   return res.json();
 }
 
-export async function createProject(name: string, description?: string): Promise<Project> {
+export async function createProject(
+  name: string,
+  description?: string,
+  workspacePath?: string,
+): Promise<Project> {
   const res = await request('/projects', {
     method: 'POST',
-    body: JSON.stringify({ name, description: description || '' }),
+    body: JSON.stringify({
+      name,
+      description: description || '',
+      workspace_path: workspacePath || '',
+    }),
   });
   return res.json();
 }
@@ -498,7 +551,7 @@ export async function getProject(id: string) {
 
 export async function updateProject(
   id: string,
-  data: Partial<Pick<Project, 'name' | 'description' | 'instructions' | 'is_archived' | 'workspace_path' | 'status' | 'owner' | 'milestone' | 'next_action' | 'tasks' | 'team_members'>>,
+  data: Partial<Pick<Project, 'name' | 'description' | 'instructions' | 'is_archived' | 'workspace_path' | 'status' | 'owner' | 'milestone' | 'next_action' | 'tasks' | 'team_members' | 'automation_recipes'>>,
 ) {
   const res = await request(`/projects/${id}`, {
     method: 'PATCH',
@@ -544,6 +597,27 @@ export async function createProjectConversation(
   const res = await request(`/projects/${projectId}/conversations`, {
     method: 'POST',
     body: JSON.stringify({ title, model, ...(options || {}) }),
+  });
+  return res.json();
+}
+
+export function getProjectAutomationRuntimeSnapshot(): {
+  run_mode: ProjectAutomationRunMode;
+  env_token?: string;
+  env_base_url?: string;
+} {
+  const runMode = (localStorage.getItem('user_mode') === 'selfhosted' ? 'selfhosted' : 'clawparrot') as ProjectAutomationRunMode;
+  return {
+    run_mode: runMode,
+    ...resolveEnvCreds(runMode),
+  };
+}
+
+export async function triggerProjectAutomationRecipe(projectId: string, recipeId: string): Promise<{ ok: boolean; conversation: any }> {
+  const runtime = getProjectAutomationRuntimeSnapshot();
+  const res = await request(`/projects/${projectId}/automation-recipes/${recipeId}/run`, {
+    method: 'POST',
+    body: JSON.stringify(runtime),
   });
   return res.json();
 }

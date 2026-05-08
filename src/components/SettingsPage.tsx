@@ -816,11 +816,6 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const [uiDensity, setUiDensity] = useState(localStorage.getItem('ui_density') || 'compact');
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
   const [chatFont, setChatFont] = useState(localStorage.getItem('chat_font') || 'default');
-  const [sendKey, setSendKey] = useState(localStorage.getItem('sendKey') || 'enter');
-  const [newlineKey, setNewlineKey] = useState(
-    localStorage.getItem('newlineKey') ||
-      (localStorage.getItem('sendKey') === 'enter' ? 'shift_enter' : 'enter'),
-  );
   const [defaultOpenTarget, setDefaultOpenTarget] = useState(localStorage.getItem('default_open_target') || 'vscode');
   const [integratedShell, setIntegratedShell] = useState(localStorage.getItem('integrated_shell') || 'powershell');
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('full_access');
@@ -2164,44 +2159,6 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
               </SectionCard>
             )}
 
-            <SectionCard title="输入行为" subtitle="这部分是原生产品里最常用的发送和换行习惯。">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-3">
-                  <div className="text-[13px] text-claude-textSecondary mb-1">发送消息</div>
-                  <select
-                    value={sendKey}
-                    onChange={(e) => {
-                      const next = e.target.value;
-                      setSendKey(next);
-                      localStorage.setItem('sendKey', next);
-                    }}
-                    className="w-full bg-transparent text-[14px] text-claude-text outline-none"
-                  >
-                    <option value="enter">Enter</option>
-                    <option value="ctrl_enter">Ctrl+Enter</option>
-                    <option value="alt_enter">Alt+Enter</option>
-                    <option value="cmd_enter">Cmd+Enter</option>
-                  </select>
-                </div>
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-3">
-                  <div className="text-[13px] text-claude-textSecondary mb-1">换行</div>
-                  <select
-                    value={newlineKey}
-                    onChange={(e) => {
-                      setNewlineKey(e.target.value);
-                      localStorage.setItem('newlineKey', e.target.value);
-                    }}
-                    className="w-full bg-transparent text-[14px] text-claude-text outline-none"
-                  >
-                    <option value="enter">Enter</option>
-                    <option value="shift_enter">Shift+Enter</option>
-                    <option value="ctrl_enter">Ctrl+Enter</option>
-                    <option value="alt_enter">Alt+Enter</option>
-                  </select>
-                </div>
-              </div>
-            </SectionCard>
-
             <SectionCard title="用户模式" subtitle="在官方 Anthropic API 和自定义兼容 API 之间切换。">
               <div className="grid grid-cols-2 gap-3">
                 {[
@@ -2668,8 +2625,8 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                 />
               </div>
 
-              <div className="mt-4 grid grid-cols-[minmax(320px,0.94fr)_minmax(420px,1.06fr)] gap-4">
-                <div className="space-y-4">
+              <div className="mt-4 flex flex-col gap-4 xl:flex-row xl:items-start">
+                <div className="space-y-4 xl:min-w-0 xl:flex-[0.94] xl:self-start">
                   <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
                     <div className="mb-3 text-[14px] font-medium text-claude-text">{isZh ? '权限开关' : 'Access gates'}</div>
                     <div className="space-y-3">
@@ -2792,7 +2749,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                   </div>
                 </div>
 
-                <div className="space-y-4">
+                <div className="space-y-4 xl:min-w-[420px] xl:flex-[1.06] xl:self-start">
                   <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
                     <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                       <div>
@@ -3650,8 +3607,12 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                 <InlineActionButton onClick={openCustomizeSkills}>{isZh ? '创建 / 导入' : 'Create / import'}</InlineActionButton>
               </div>
 
-              <div className="grid grid-cols-[minmax(0,0.92fr)_minmax(360px,0.88fr)] gap-4">
-                <div className="max-h-[620px] space-y-2 overflow-y-auto pr-1">
+              <div className="grid gap-4 xl:grid-cols-[minmax(320px,0.78fr)_minmax(0,1.22fr)] xl:items-start">
+                <div className="rounded-xl border border-claude-border bg-claude-bg p-2 xl:sticky xl:top-4">
+                  <div className="mb-2 px-2 pt-1 text-[11px] uppercase tracking-[0.12em] text-claude-textSecondary/70">
+                    {isZh ? 'Skill 列表' : 'Skill list'}
+                  </div>
+                  <div className="max-h-[calc(100vh-210px)] space-y-2 overflow-y-auto pr-1">
                   {filteredSkillsList.length > 0 ? filteredSkillsList.map((skill) => (
                     <div
                       key={skill.id}
@@ -3706,8 +3667,9 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                     </div>
                   )}
                 </div>
+                </div>
 
-                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4">
+                <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-4 xl:min-w-[360px] xl:self-start">
                   {selectedSkill ? (
                     <div className="space-y-4">
                       <div className="flex items-start justify-between gap-4">

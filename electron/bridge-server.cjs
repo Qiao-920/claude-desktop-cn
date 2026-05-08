@@ -898,6 +898,61 @@ if __name__ == "__main__":
     const PROJECT_TASK_RUN_STATE_VALUES = new Set(['idle', 'running', 'updated', 'blocked', 'failed']);
     const PROJECT_TEAM_MEMBER_KIND_VALUES = new Set(['human', 'agent']);
     const PROJECT_TEAM_MEMBER_STATUS_VALUES = new Set(['active', 'idle', 'blocked']);
+    const PROJECT_CHAT_KIND_VALUES = new Set(['general', 'code', 'research', 'agent']);
+    const PROJECT_AUTOMATION_TRIGGER_VALUES = new Set(['manual', 'daily', 'weekly']);
+    const PROJECT_AUTOMATION_RUN_MODE_VALUES = new Set(['clawparrot', 'selfhosted']);
+    const PROJECT_AUTOMATION_RUN_STATUS_VALUES = new Set(['idle', 'running', 'success', 'error']);
+    const PROJECT_AUTOMATION_RUN_SOURCE_VALUES = new Set(['manual', 'scheduled']);
+    const activeAutomationRuns = new Set();
+
+    const padTimeSegment = (value) => String(value).padStart(2, '0');
+    const formatClockTime = (date) => `${padTimeSegment(date.getHours())}:${padTimeSegment(date.getMinutes())}`;
+    const normalizeAutomationTime = (value) => {
+        const raw = String(value || '').trim();
+        if (!/^\d{2}:\d{2}$/.test(raw)) return '09:00';
+        const [hours, minutes] = raw.split(':').map((item) => Number(item));
+        if (!Number.isInteger(hours) || !Number.isInteger(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+            return '09:00';
+        }
+        return `${padTimeSegment(hours)}:${padTimeSegment(minutes)}`;
+    };
+    const normalizeAutomationWeekday = (value) => {
+        const weekday = Number(value);
+        return Number.isInteger(weekday) && weekday >= 0 && weekday <= 6 ? weekday : 1;
+    };
+    const inferAutomationRunMode = (recipe) => {
+        if (PROJECT_AUTOMATION_RUN_MODE_VALUES.has(recipe?.run_mode)) return recipe.run_mode;
+        const modelId = String(recipe?.model || '').replace(/-thinking$/, '');
+        return /^claude-/i.test(modelId) ? 'clawparrot' : 'selfhosted';
+    };
+    const computeProjectAutomationNextRunAt = (recipe, fromDate = new Date()) => {
+        if (!recipe || recipe.trigger === 'manual' || recipe.enabled === false) return '';
+        const [hours, minutes] = normalizeAutomationTime(recipe.schedule_time).split(':').map((item) => Number(item));
+        const next = new Date(fromDate);
+        next.setSeconds(0, 0);
+        next.setHours(hours, minutes, 0, 0);
+        if (recipe.trigger === 'daily') {
+            if (next.getTime() <= fromDate.getTime()) next.setDate(next.getDate() + 1);
+            return next.toISOString();
+        }
+        const targetWeekday = normalizeAutomationWeekday(recipe.schedule_weekday);
+        const currentWeekday = next.getDay();
+        let dayOffset = targetWeekday - currentWeekday;
+        if (dayOffset < 0) dayOffset += 7;
+        next.setDate(next.getDate() + dayOffset);
+        if (next.getTime() <= fromDate.getTime()) next.setDate(next.getDate() + 7);
+        return next.toISOString();
+    };
+    const getDefaultAutomationModel = (runMode) => {
+        if (runMode === 'selfhosted') {
+            for (const provider of providers) {
+                if (!provider || !provider.enabled || !Array.isArray(provider.models)) continue;
+                const enabledModel = provider.models.find((model) => model && model.id && model.enabled !== false);
+                if (enabledModel?.id) return enabledModel.id;
+            }
+        }
+        return 'claude-sonnet-4-6';
+    };
 
     const normalizeProjectTeamMember = (member) => ({
         id: member?.id || makeLocalId('project-member'),
@@ -925,6 +980,50 @@ if __name__ == "__main__":
         updated_at: task?.updated_at || new Date().toISOString(),
     });
 
+    const normalizeProjectAutomationRecipe = (recipe) => {
+        const history = Array.isArray(recipe?.run_history)
+            ? recipe.run_history
+                .map((entry) => ({
+                    id: String(entry?.id || makeLocalId('project-automation-run')),
+                    source: PROJECT_AUTOMATION_RUN_SOURCE_VALUES.has(entry?.source) ? entry.source : 'manual',
+                    status: ['running', 'success', 'error'].includes(entry?.status) ? entry.status : 'running',
+                    started_at: String(entry?.started_at || '').trim(),
+                    finished_at: String(entry?.finished_at || '').trim(),
+                    conversation_id: String(entry?.conversation_id || '').trim(),
+                    error: String(entry?.error || '').trim(),
+                }))
+                .filter((entry) => entry.started_at)
+                .slice(0, 12)
+            : [];
+        const normalized = {
+            id: recipe?.id || makeLocalId('project-automation'),
+            name: String(recipe?.name || '').trim(),
+            prompt: String(recipe?.prompt || '').trim(),
+            target_kind: PROJECT_CHAT_KIND_VALUES.has(recipe?.target_kind) ? recipe.target_kind : 'general',
+            agent_id: String(recipe?.agent_id || '').trim(),
+            model: String(recipe?.model || '').trim(),
+            enabled: recipe?.enabled !== false,
+            trigger: PROJECT_AUTOMATION_TRIGGER_VALUES.has(recipe?.trigger) ? recipe.trigger : 'manual',
+            schedule_time: normalizeAutomationTime(recipe?.schedule_time),
+            schedule_weekday: normalizeAutomationWeekday(recipe?.schedule_weekday),
+            run_mode: inferAutomationRunMode(recipe),
+            env_token: String(recipe?.env_token || '').trim(),
+            env_base_url: String(recipe?.env_base_url || '').trim(),
+            last_run_at: recipe?.last_run_at || '',
+            last_run_status: PROJECT_AUTOMATION_RUN_STATUS_VALUES.has(recipe?.last_run_status) ? recipe.last_run_status : 'idle',
+            last_run_error: String(recipe?.last_run_error || '').trim(),
+            next_run_at: String(recipe?.next_run_at || '').trim(),
+            run_history: history,
+            updated_at: recipe?.updated_at || new Date().toISOString(),
+        };
+        if (normalized.trigger === 'manual') {
+            normalized.next_run_at = '';
+        } else if (!normalized.next_run_at) {
+            normalized.next_run_at = computeProjectAutomationNextRunAt(normalized);
+        }
+        return normalized;
+    };
+
     const normalizeProjectRecord = (project) => {
         if (!project || typeof project !== 'object') return project;
         if (!Array.isArray(project.github_sources)) project.github_sources = [];
@@ -938,11 +1037,27 @@ if __name__ == "__main__":
         project.tasks = Array.isArray(project.tasks)
             ? project.tasks.map(normalizeProjectTask).filter((task) => task.title)
             : [];
+        project.automation_recipes = Array.isArray(project.automation_recipes)
+            ? project.automation_recipes.map(normalizeProjectAutomationRecipe).filter((recipe) => recipe.name && recipe.prompt)
+            : [];
         const validMemberIds = new Set(project.team_members.map((member) => member.id));
         project.tasks = project.tasks.map((task) => ({
             ...task,
             assignee_id: task.assignee_id && validMemberIds.has(task.assignee_id) ? task.assignee_id : '',
         }));
+        project.automation_recipes = project.automation_recipes.map((recipe) => ({
+            ...recipe,
+            agent_id: recipe.target_kind === 'agent' && recipe.agent_id && validMemberIds.has(recipe.agent_id) ? recipe.agent_id : '',
+        }));
+        project.automation_recipes = project.automation_recipes.map((recipe) => {
+            const normalizedRecipe = { ...recipe };
+            if (normalizedRecipe.trigger === 'manual' || normalizedRecipe.enabled === false) {
+                normalizedRecipe.next_run_at = '';
+            } else if (!normalizedRecipe.next_run_at) {
+                normalizedRecipe.next_run_at = computeProjectAutomationNextRunAt(normalizedRecipe);
+            }
+            return normalizedRecipe;
+        });
         return project;
     };
 
@@ -1016,6 +1131,273 @@ if __name__ == "__main__":
     };
 
     const saveDb = () => fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
+
+    const copyProjectFilesToWorkspace = (projectId, workspacePath) => {
+        const projectFiles = db.project_files.filter((file) => file.project_id === projectId);
+        for (const projectFile of projectFiles) {
+            if (projectFile.file_path && fs.existsSync(projectFile.file_path)) {
+                try {
+                    const destinationPath = path.join(workspacePath, projectFile.file_name);
+                    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+                    fs.copyFileSync(projectFile.file_path, destinationPath);
+                } catch (_) { }
+            }
+        }
+    };
+
+    const createProjectConversationRecord = (project, {
+        title = 'New Conversation',
+        model = 'claude-sonnet-4-6',
+        project_task_id = '',
+        project_member_id = '',
+        project_run_kind = 'general',
+        project_chat_kind = '',
+        research_mode = false,
+    } = {}) => {
+        const id = uuidv4();
+        const workspacePath = path.join(workspacesDir, id);
+        if (!fs.existsSync(workspacePath)) fs.mkdirSync(workspacePath, { recursive: true });
+        copyProjectFilesToWorkspace(project.id, workspacePath);
+        const newConv = {
+            id,
+            title,
+            model,
+            project_id: project.id,
+            project_task_id: String(project_task_id || '').trim(),
+            project_member_id: String(project_member_id || '').trim(),
+            project_run_kind: String(project_run_kind || 'general').trim() || 'general',
+            project_chat_kind: String(project_chat_kind || '').trim() || undefined,
+            research_mode: !!research_mode,
+            workspace_path: workspacePath,
+            created_at: new Date().toISOString(),
+        };
+        db.conversations.push(newConv);
+        if (newConv.project_task_id) {
+            syncProjectTaskExecution(newConv, '', [], {
+                assignee_id: newConv.project_member_id || undefined,
+                run_state: 'running',
+                run_summary: 'Task execution session created. Waiting for the first agent update.',
+                status: 'doing',
+            });
+        } else {
+            project.updated_at = new Date().toISOString();
+            saveDb();
+        }
+        return newConv;
+    };
+
+    const updateProjectAutomationRecipe = (projectId, recipeId, updater) => {
+        const project = db.projects.find((item) => item.id === projectId);
+        if (!project) return null;
+        normalizeProjectRecord(project);
+        let updatedRecipe = null;
+        project.automation_recipes = (project.automation_recipes || []).map((recipe) => {
+            if (recipe.id !== recipeId) return recipe;
+            updatedRecipe = normalizeProjectAutomationRecipe(typeof updater === 'function' ? updater(recipe) : { ...recipe, ...(updater || {}) });
+            return updatedRecipe;
+        });
+        if (!updatedRecipe) return null;
+        project.updated_at = new Date().toISOString();
+        saveDb();
+        return updatedRecipe;
+    };
+
+    const appendAutomationRunHistory = (recipe, entry) => {
+        const history = Array.isArray(recipe?.run_history) ? recipe.run_history : [];
+        return [
+            {
+                id: entry.id || makeLocalId('project-automation-run'),
+                source: PROJECT_AUTOMATION_RUN_SOURCE_VALUES.has(entry.source) ? entry.source : 'manual',
+                status: ['running', 'success', 'error'].includes(entry.status) ? entry.status : 'running',
+                started_at: entry.started_at || new Date().toISOString(),
+                finished_at: entry.finished_at || '',
+                conversation_id: entry.conversation_id || '',
+                error: entry.error || '',
+            },
+            ...history,
+        ].slice(0, 12);
+    };
+
+    const updateAutomationRunHistoryEntry = (recipe, runId, patch) => {
+        const history = Array.isArray(recipe?.run_history) ? recipe.run_history : [];
+        return history.map((entry) => entry.id === runId ? { ...entry, ...patch } : entry);
+    };
+
+    const buildProjectAutomationInitialMessage = (project, recipe, targetAgent) => {
+        const lines = [];
+        const trimmedInstructions = String(project.instructions || '').trim();
+        if (targetAgent) {
+            lines.push(`You are now operating as the project member "${targetAgent.name}".`);
+            lines.push(targetAgent.kind === 'agent'
+                ? 'This is an agent role, so work in an execution-oriented way.'
+                : 'This is a human collaborator role, so work in a collaborative way.');
+            if (project.name) lines.push(`Project: ${project.name}`);
+            if (targetAgent.role) lines.push(`Role: ${targetAgent.role}`);
+            if (targetAgent.focus) lines.push(`Current focus: ${targetAgent.focus}`);
+            if (project.milestone) lines.push(`Milestone: ${project.milestone}`);
+            if (project.next_action) lines.push(`Next action: ${project.next_action}`);
+            if (trimmedInstructions) lines.push(`Project instructions:\n${trimmedInstructions}`);
+            lines.push(`Execute this automation recipe:\n${recipe.prompt}`);
+        } else {
+            lines.push('This run was triggered by a saved project automation recipe.');
+            if (project.name) lines.push(`Project: ${project.name}`);
+            if (project.milestone) lines.push(`Milestone: ${project.milestone}`);
+            if (project.next_action) lines.push(`Next action: ${project.next_action}`);
+            if (trimmedInstructions) lines.push(`Project instructions:\n${trimmedInstructions}`);
+            lines.push(`Automation recipe:\n${recipe.prompt}`);
+        }
+        return lines.filter(Boolean).join('\n\n');
+    };
+
+    const streamDrainPromise = async (response) => {
+        if (!response?.body || typeof response.body.getReader !== 'function') {
+            await response.text().catch(() => '');
+            return;
+        }
+        const reader = response.body.getReader();
+        try {
+            while (true) {
+                const { done } = await reader.read();
+                if (done) break;
+            }
+        } finally {
+            try { reader.releaseLock(); } catch (_) { }
+        }
+    };
+
+    const launchProjectAutomationRun = (project, recipe, source = 'manual') => {
+        normalizeProjectRecord(project);
+        const runKey = `${project.id}:${recipe.id}`;
+        if (activeAutomationRuns.has(runKey)) {
+            throw new Error('This automation is already running.');
+        }
+        const targetAgent = recipe.agent_id
+            ? (project.team_members || []).find((member) => member.id === recipe.agent_id)
+            : null;
+        if (recipe.target_kind === 'agent' && (!targetAgent || targetAgent.kind !== 'agent')) {
+            throw new Error('The bound agent no longer exists for this automation.');
+        }
+
+        const runMode = PROJECT_AUTOMATION_RUN_MODE_VALUES.has(recipe.run_mode) ? recipe.run_mode : inferAutomationRunMode(recipe);
+        const model = String(recipe.model || targetAgent?.model || getDefaultAutomationModel(runMode)).trim() || getDefaultAutomationModel(runMode);
+        const title = targetAgent ? `${recipe.name} · ${targetAgent.name}` : recipe.name;
+        const conversation = createProjectConversationRecord(project, {
+            title,
+            model,
+            project_member_id: targetAgent?.id || '',
+            project_run_kind: targetAgent ? 'role_chat' : 'general',
+            project_chat_kind: recipe.target_kind,
+            research_mode: recipe.target_kind === 'research',
+        });
+        const now = new Date();
+        const nextRunAt = computeProjectAutomationNextRunAt(recipe, now);
+        const historyRunId = makeLocalId('project-automation-run');
+        updateProjectAutomationRecipe(project.id, recipe.id, (currentRecipe) => ({
+            ...currentRecipe,
+            last_run_at: now.toISOString(),
+            last_run_status: 'running',
+            last_run_error: '',
+            next_run_at: source === 'scheduled' ? nextRunAt : (currentRecipe.trigger === 'manual' ? '' : nextRunAt),
+            run_history: appendAutomationRunHistory(currentRecipe, {
+                id: historyRunId,
+                source,
+                status: 'running',
+                started_at: now.toISOString(),
+                conversation_id: conversation.id,
+            }),
+            updated_at: now.toISOString(),
+        }));
+        activeAutomationRuns.add(runKey);
+
+        const payload = {
+            conversation_id: conversation.id,
+            message: buildProjectAutomationInitialMessage(project, recipe, targetAgent),
+            user_mode: runMode,
+            env_token: recipe.env_token || undefined,
+            env_base_url: recipe.env_base_url || undefined,
+        };
+
+        (async () => {
+            try {
+                const response = await fetch('http://127.0.0.1:30080/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                if (!response.ok) {
+                    const errorText = await response.text().catch(() => '');
+                    throw new Error(errorText || `Automation run failed with HTTP ${response.status}`);
+                }
+                await streamDrainPromise(response);
+                updateProjectAutomationRecipe(project.id, recipe.id, (currentRecipe) => ({
+                    ...currentRecipe,
+                    last_run_at: new Date().toISOString(),
+                    last_run_status: 'success',
+                    last_run_error: '',
+                    next_run_at: currentRecipe.trigger === 'manual' ? '' : computeProjectAutomationNextRunAt(currentRecipe, new Date()),
+                    run_history: updateAutomationRunHistoryEntry(currentRecipe, historyRunId, {
+                        status: 'success',
+                        finished_at: new Date().toISOString(),
+                        error: '',
+                    }),
+                    updated_at: new Date().toISOString(),
+                }));
+            } catch (error) {
+                console.error('[Automation] Run failed:', project.id, recipe.id, error?.message || error);
+                updateProjectAutomationRecipe(project.id, recipe.id, (currentRecipe) => ({
+                    ...currentRecipe,
+                    last_run_at: new Date().toISOString(),
+                    last_run_status: 'error',
+                    last_run_error: String(error?.message || error || 'Automation run failed'),
+                    next_run_at: currentRecipe.trigger === 'manual' ? '' : computeProjectAutomationNextRunAt(currentRecipe, new Date()),
+                    run_history: updateAutomationRunHistoryEntry(currentRecipe, historyRunId, {
+                        status: 'error',
+                        finished_at: new Date().toISOString(),
+                        error: String(error?.message || error || 'Automation run failed'),
+                    }),
+                    updated_at: new Date().toISOString(),
+                }));
+            } finally {
+                activeAutomationRuns.delete(runKey);
+            }
+        })();
+
+        return conversation;
+    };
+
+    const runDueProjectAutomations = () => {
+        const now = Date.now();
+        for (const project of db.projects) {
+            normalizeProjectRecord(project);
+            for (const recipe of project.automation_recipes || []) {
+                if (recipe.enabled === false || recipe.trigger === 'manual' || !recipe.next_run_at) continue;
+                const dueAt = Date.parse(recipe.next_run_at);
+                if (!Number.isFinite(dueAt) || dueAt > now) continue;
+                const runKey = `${project.id}:${recipe.id}`;
+                if (activeAutomationRuns.has(runKey)) continue;
+                try {
+                    launchProjectAutomationRun(project, recipe, 'scheduled');
+                } catch (error) {
+                    console.error('[Automation] Scheduled run failed to launch:', project.id, recipe.id, error?.message || error);
+                    updateProjectAutomationRecipe(project.id, recipe.id, (currentRecipe) => ({
+                        ...currentRecipe,
+                        last_run_at: new Date().toISOString(),
+                        last_run_status: 'error',
+                        last_run_error: String(error?.message || error || 'Failed to start scheduled run'),
+                        next_run_at: currentRecipe.trigger === 'manual' ? '' : computeProjectAutomationNextRunAt(currentRecipe, new Date()),
+                        updated_at: new Date().toISOString(),
+                    }));
+                }
+            }
+        }
+    };
+
+    setTimeout(() => {
+        try { runDueProjectAutomations(); } catch (error) { console.error('[Automation] Initial scheduler tick failed:', error); }
+    }, 15000);
+    setInterval(() => {
+        try { runDueProjectAutomations(); } catch (error) { console.error('[Automation] Scheduler tick failed:', error); }
+    }, 30000);
 
     const slugifySegment = (value, fallback = 'project') => {
         const slug = String(value || '')
@@ -2019,11 +2401,20 @@ if __name__ == "__main__":
 
     server.post('/api/projects', (req, res) => {
         const id = uuidv4();
-        const { name, description = '' } = req.body;
+        const { name, description = '', workspace_path = '' } = req.body;
         if (!name || !name.trim()) return res.status(400).json({ error: 'Name required' });
 
-        const projectDir = path.join(workspacesDir, `project-${id}`);
-        if (!fs.existsSync(projectDir)) fs.mkdirSync(projectDir, { recursive: true });
+        let projectDir = '';
+        if (String(workspace_path || '').trim()) {
+            try {
+                projectDir = ensureExistingDirectory(workspace_path);
+            } catch (error) {
+                return res.status(400).json({ error: error.message || 'Invalid workspace path' });
+            }
+        } else {
+            projectDir = path.join(workspacesDir, `project-${id}`);
+            if (!fs.existsSync(projectDir)) fs.mkdirSync(projectDir, { recursive: true });
+        }
 
         const project = {
             id, name: name.trim(), description: description.trim(),
@@ -2034,6 +2425,7 @@ if __name__ == "__main__":
             next_action: '',
             tasks: [],
             team_members: [],
+            automation_recipes: [],
             github_sources: [],
             is_archived: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
         };
@@ -2083,6 +2475,12 @@ if __name__ == "__main__":
                 return res.status(400).json({ error: 'Project team members must be an array' });
             }
             project.team_members = req.body.team_members.map(normalizeProjectTeamMember).filter((member) => member.name);
+        }
+        if (req.body.automation_recipes !== undefined) {
+            if (!Array.isArray(req.body.automation_recipes)) {
+                return res.status(400).json({ error: 'Project automation recipes must be an array' });
+            }
+            project.automation_recipes = req.body.automation_recipes.map(normalizeProjectAutomationRecipe).filter((recipe) => recipe.name && recipe.prompt);
         }
         if (req.body.is_archived !== undefined) project.is_archived = req.body.is_archived;
         if (req.body.workspace_path !== undefined) {
@@ -2195,50 +2593,34 @@ if __name__ == "__main__":
     server.post('/api/projects/:id/conversations', (req, res) => {
         const project = db.projects.find(p => p.id === req.params.id);
         if (!project) return res.status(404).json({ error: 'Project not found' });
-
-        const id = uuidv4();
-        const {
-            title = 'New Conversation',
-            model = 'claude-sonnet-4-6',
-            project_task_id = '',
-            project_member_id = '',
-            project_run_kind = 'general',
-        } = req.body || {};
-        const workspacePath = path.join(workspacesDir, id);
-        if (!fs.existsSync(workspacePath)) fs.mkdirSync(workspacePath, { recursive: true });
-
-        // Copy project files into workspace so SDK can read them
-        const projectFiles = db.project_files.filter(f => f.project_id === project.id);
-        for (const pf of projectFiles) {
-            if (pf.file_path && fs.existsSync(pf.file_path)) {
-                try {
-                    const destPath = path.join(workspacePath, pf.file_name);
-                    fs.mkdirSync(path.dirname(destPath), { recursive: true });
-                    fs.copyFileSync(pf.file_path, destPath);
-                } catch (_) {}
-            }
-        }
-
-        const newConv = {
-            id, title, model, project_id: project.id,
-            project_task_id: String(project_task_id || '').trim(),
-            project_member_id: String(project_member_id || '').trim(),
-            project_run_kind: String(project_run_kind || 'general').trim() || 'general',
-            workspace_path: workspacePath, created_at: new Date().toISOString(),
-        };
-        db.conversations.push(newConv);
-        if (newConv.project_task_id) {
-            syncProjectTaskExecution(newConv, '', [], {
-                assignee_id: newConv.project_member_id || undefined,
-                run_state: 'running',
-                run_summary: 'Task execution session created. Waiting for the first agent update.',
-                status: 'doing',
-            });
-        } else {
-            project.updated_at = new Date().toISOString();
-            saveDb();
-        }
+        const newConv = createProjectConversationRecord(project, req.body || {});
         res.json(newConv);
+    });
+
+    server.post('/api/projects/:id/automation-recipes/:recipeId/run', (req, res) => {
+        const project = db.projects.find((item) => item.id === req.params.id);
+        if (!project) return res.status(404).json({ error: 'Project not found' });
+        normalizeProjectRecord(project);
+        let recipe = (project.automation_recipes || []).find((item) => item.id === req.params.recipeId);
+        if (!recipe) return res.status(404).json({ error: 'Automation recipe not found' });
+        try {
+            if (req.body && typeof req.body === 'object') {
+                const runtimeOverrides = {
+                    run_mode: PROJECT_AUTOMATION_RUN_MODE_VALUES.has(req.body.run_mode) ? req.body.run_mode : recipe.run_mode,
+                    env_token: req.body.env_token !== undefined ? String(req.body.env_token || '').trim() : recipe.env_token,
+                    env_base_url: req.body.env_base_url !== undefined ? String(req.body.env_base_url || '').trim() : recipe.env_base_url,
+                    updated_at: new Date().toISOString(),
+                };
+                recipe = updateProjectAutomationRecipe(project.id, recipe.id, (currentRecipe) => ({
+                    ...currentRecipe,
+                    ...runtimeOverrides,
+                })) || recipe;
+            }
+            const conversation = launchProjectAutomationRun(project, recipe, 'manual');
+            res.json({ ok: true, conversation });
+        } catch (error) {
+            res.status(400).json({ error: error?.message || 'Failed to launch automation' });
+        }
     });
 
     server.post('/api/projects/:id/derive-worktree', (req, res) => {
@@ -2348,6 +2730,7 @@ if __name__ == "__main__":
             project_task_id = '',
             project_member_id = '',
             project_run_kind = 'general',
+            project_chat_kind = '',
         } = req.body || {};
         const workspacePath = path.join(workspacesDir, id);
 
@@ -2378,6 +2761,7 @@ if __name__ == "__main__":
             project_task_id: String(project_task_id || '').trim(),
             project_member_id: String(project_member_id || '').trim(),
             project_run_kind: String(project_run_kind || 'general').trim() || 'general',
+            project_chat_kind: String(project_chat_kind || '').trim() || undefined,
             ...(project_id ? { project_id } : {}),
         };
         db.conversations.push(newConv);

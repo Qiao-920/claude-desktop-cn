@@ -389,7 +389,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
             projectId: project.id,
             projectName: project.name,
             title: conversation.title || (isZh ? '未命名聊天' : 'Untitled chat'),
-        detail: isZh ? '项目聊天' : 'Project chat',
+            detail: isZh ? '项目聊天' : 'Project chat',
             at: conversation.created_at,
           });
         });
@@ -400,7 +400,9 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
             projectId: project.id,
             projectName: project.name,
             title: file.file_name,
-        detail: file.source_type === 'github' ? 'GitHub file' : (isZh ? '项目文件' : 'Project file'),
+            detail: file.source_type === 'github'
+              ? (isZh ? 'GitHub 文件' : 'GitHub file')
+              : (isZh ? '项目文件' : 'Project file'),
             at: file.created_at,
           });
         });
@@ -411,7 +413,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
             projectId: project.id,
             projectName: project.name,
             title: source.repo_full_name,
-        detail: isZh ? `同步到 ${source.ref}` : `Synced to ${source.ref}`,
+            detail: isZh ? `同步到 ${source.ref}` : `Synced to ${source.ref}`,
             at: source.last_synced_at || source.added_at,
           });
         });
@@ -618,14 +620,14 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
       icon: Wrench,
     },
     {
-      title: isZh ? '协作页现在负责什么' : 'What Cowork is responsible for now',
+      title: isZh ? '协作页现在能帮你做什么' : 'What Cowork is responsible for now',
       text: isZh
-        ? '它现在更像总览和路由层，把项目、权限、GitHub 和工作区的关键信号集中起来，方便你快速跳转。'
+        ? '它现在更像总览和导航层，会把项目、权限、GitHub 和工作区的关键信号集中起来，方便你快速决定下一步去哪里。'
         : 'Cowork now acts as the overview and routing layer, bringing together projects, permissions, GitHub, and workspace signals for quick jumps.',
       icon: Link2,
     },
     {
-      title: isZh ? '下一层继续补什么' : 'What lands next',
+      title: isZh ? '下一步还会补什么' : 'What lands next',
       text: isZh
         ? '后面适合继续补共享任务列表、审批流、多成员分工和项目状态时间线，把它从总览页推进成真正的协作中心。'
         : 'Next up are shared task lists, approval flow, multi-member coordination, and project status timelines, turning this into a true collaboration hub.',
@@ -680,7 +682,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
               <div className="mt-5 grid gap-3 md:grid-cols-3">
                 <div className="rounded-2xl border border-claude-border bg-claude-bg px-4 py-4">
                   <div className="text-[12px] text-claude-textSecondary">{isZh ? '第一步' : 'Step 1'}</div>
-                  <div className="mt-2 text-[14px] font-medium text-claude-text">{isZh ? '先看项目是不是你要继续的那个' : 'Confirm the project you want'}</div>
+                  <div className="mt-2 text-[14px] font-medium text-claude-text">{isZh ? '先确认是不是你要继续的项目' : 'Confirm the project you want'}</div>
                 </div>
                 <div className="rounded-2xl border border-claude-border bg-claude-bg px-4 py-4">
                   <div className="text-[12px] text-claude-textSecondary">{isZh ? '第二步' : 'Step 2'}</div>
@@ -808,7 +810,9 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="truncate text-[16px] font-semibold text-claude-text">{summary.projectName}</div>
+                    <div className="break-words text-[16px] font-semibold leading-6 text-claude-text">
+                      {summary.projectName}
+                    </div>
                     <div className="mt-1 text-[12px] text-claude-textSecondary">{formatActivityTime(summary.updatedAt)}</div>
                   </div>
                   <ArrowRight size={16} className="shrink-0 text-claude-textSecondary" />
@@ -890,13 +894,17 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
                 <div className="mt-4 space-y-2">
                   {summary.goals && (
                     <div className="rounded-xl border border-claude-border px-3 py-3">
-                      <div className="text-[11px] uppercase tracking-[0.08em] text-claude-textSecondary">{isZh ? '目标' : 'Goals'}</div>
+                      <div className="text-[11px] tracking-[0.08em] text-claude-textSecondary">
+                        {isZh ? '项目目标' : 'Goals'}
+                      </div>
                       <div className="mt-1 line-clamp-2 text-[12px] leading-6 text-claude-text">{summary.goals}</div>
                     </div>
                   )}
                   {summary.constraints && (
                     <div className="rounded-xl border border-claude-border px-3 py-3">
-                      <div className="text-[11px] uppercase tracking-[0.08em] text-claude-textSecondary">{isZh ? '约束' : 'Constraints'}</div>
+                      <div className="text-[11px] tracking-[0.08em] text-claude-textSecondary">
+                        {isZh ? '约束条件' : 'Constraints'}
+                      </div>
                       <div className="mt-1 line-clamp-2 text-[12px] leading-6 text-claude-text">{summary.constraints}</div>
                     </div>
                   )}
@@ -980,7 +988,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
             <div className="rounded-2xl border border-claude-border bg-claude-bg p-5">
               <div className="text-[13px] font-medium text-claude-text">{isZh ? '成员看板' : 'Member board'}</div>
               <div className="mt-4 space-y-3">
-                {teamLoadItems.length > 0 ? teamLoadItems.slice(0, 8).map((item) => (
+                  {teamLoadItems.length > 0 ? teamLoadItems.slice(0, 8).map((item) => (
                   <button
                     key={`${item.projectId}:${item.member.id}`}
                     type="button"
@@ -1032,12 +1040,12 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
               <div className="flex items-center gap-3">
                 <UsersRound size={18} className="text-claude-textSecondary" />
                 <h2 className="text-[17px] font-semibold text-claude-text">
-                  {isZh ? '任务看板' : 'Task board'}
+                  {isZh ? '任务板' : 'Task board'}
                 </h2>
               </div>
               <p className="mt-2 text-[13px] leading-6 text-claude-textSecondary">
                 {isZh
-                  ? '先用本地看板把产品任务、发布事项和工作区事项收起来。后面可以继续接多人分工、GitHub Issues 和状态流。'
+                  ? '先用本地任务板把产品任务、发布事项和工作区事项收起来。后面可以继续接多人分工、GitHub Issues 和状态流。'
                   : 'A local board for product, release, and workspace tasks. Later it can connect to assignees, GitHub Issues, and status streams.'}
               </p>
             </div>
@@ -1166,7 +1174,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
               <div className="flex items-center gap-3">
                 <FolderGit2 size={18} className="text-claude-textSecondary" />
                 <h2 className="text-[17px] font-semibold text-claude-text">
-                    {isZh ? '最近活跃项目' : 'Recently active projects'}
+                  {isZh ? '最近活跃项目' : 'Recently active projects'}
                 </h2>
               </div>
               <div className="mt-4 space-y-3">
@@ -1185,10 +1193,10 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
                       className="flex w-full items-start justify-between gap-4 rounded-xl border border-claude-border bg-claude-bg px-4 py-4 text-left transition-colors hover:bg-claude-hover"
                     >
                       <div className="min-w-0">
-                        <div className="truncate text-[14px] font-medium text-claude-text">{project.name}</div>
+                        <div className="break-words text-[14px] font-medium leading-6 text-claude-text">{project.name}</div>
                         <div className="mt-1 text-[12px] leading-6 text-claude-textSecondary">
                           {project.description ||
-                            (isZh ? '这个项目还没有补描述。' : 'This project does not have a description yet.')}
+                            (isZh ? '这个项目还没有填写简介。' : 'This project does not have a description yet.')}
                         </div>
                         <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-claude-textSecondary">
                           <span className="rounded-full border border-claude-border px-2 py-1">
@@ -1257,7 +1265,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0">
                                   <div className="text-[12px] text-claude-textSecondary">{item.projectName}</div>
-                                  <div className="mt-1 truncate text-[14px] font-medium text-claude-text">{item.title}</div>
+                                  <div className="mt-1 break-words text-[14px] font-medium leading-6 text-claude-text">{item.title}</div>
                                   <div className="mt-1 text-[12px] leading-6 text-claude-textSecondary">{item.detail}</div>
                                 </div>
                                 <div className="shrink-0 text-[11px] text-claude-textSecondary">{formatActivityTime(item.at)}</div>
@@ -1276,7 +1284,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
               <div className="flex items-center gap-3">
                 <MessageSquareText size={18} className="text-claude-textSecondary" />
                 <h2 className="text-[17px] font-semibold text-claude-text">
-                  {isZh ? '协作页现在负责什么' : 'What Cowork handles now'}
+                  {isZh ? '协作页现在能帮你做什么' : 'What Cowork handles now'}
                 </h2>
               </div>
               <div className="mt-4 space-y-3">
@@ -1299,7 +1307,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
               <div className="flex items-center gap-3">
                 <Link2 size={18} className="text-claude-textSecondary" />
                 <h2 className="text-[17px] font-semibold text-claude-text">
-            {isZh ? '当前工作方式' : 'Current workflow'}
+                  {isZh ? '当前工作方式' : 'Current workflow'}
                 </h2>
               </div>
               <div className="mt-4 space-y-3 text-[13px] leading-7 text-claude-textSecondary">
@@ -1313,7 +1321,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
                 </div>
                 <div className="rounded-xl border border-claude-border bg-claude-bg px-4 py-3">
                   <div className="text-[12px] uppercase tracking-[0.08em] text-claude-textSecondary/80">
-            {isZh ? 'GitHub 连接' : 'GitHub connection'}
+                    {isZh ? 'GitHub 连接' : 'GitHub connection'}
                   </div>
                   <div className="mt-1 text-claude-text">
                     {githubConnected === null
@@ -1322,10 +1330,10 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
                         : 'Checking…'
                       : githubConnected
                         ? isZh
-                          ? '已连接，可以继续补仓库来源和文件上下文。'
+                          ? '已连接，你可以继续补仓库来源、文件上下文和项目资料。'
                           : 'Connected, ready for repository sources and file context.'
                         : isZh
-                          ? '还没有连接，适合先去设置里完成授权。'
+                          ? '还没有连接，建议先去设置里完成授权。'
                           : 'Not connected yet. Completing auth in Settings is the next good step.'}
                   </div>
                 </div>
@@ -1335,7 +1343,7 @@ const CoworkPage = ({ desktopTabId }: CoworkPageProps) => {
                   </div>
                   <div className="mt-1 text-claude-text">
                     {isZh
-                      ? '选目录、看文件、跑命令、看 Git 状态时，直接去代码页；整理资料、维护项目和仓库来源时，去项目页。'
+                      ? '需要选目录、看文件、跑命令、看 Git 状态时，直接去代码页；需要整理资料、维护项目和仓库来源时，去项目页。'
                       : 'Go to Code for folders, files, commands, and Git status. Go to Projects for source management and project context.'}
                   </div>
                 </div>
