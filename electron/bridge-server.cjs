@@ -3961,6 +3961,12 @@ if __name__ == "__main__":
         return scanSkillsDir(userSkillsDir, 'user').map(s => ({ ...s, is_example: false }));
     }
 
+    function buildSkillDedupeKey(skill) {
+        const sourceDirKey = normalizeSkillKey(skill && skill.source_dir);
+        const nameKey = normalizeSkillKey(skill && skill.name);
+        return sourceDirKey || nameKey || String(skill && skill.id || '').trim().toLowerCase();
+    }
+
     // GET /api/skills 鈥?list all skills
     server.get('/api/skills', (req, res) => {
         const prefs = loadSkillPrefs();
@@ -3982,11 +3988,26 @@ if __name__ == "__main__":
             allExamples.push({ ...s, enabled: prefs[s.id] !== undefined ? prefs[s.id] : true });
         }
 
+        const exampleKeys = new Set(allExamples.map(buildSkillDedupeKey).filter(Boolean));
+
         // 3) User-created skills
-        const userSkills = loadUserSkills().map(s => ({
-            ...s,
-            enabled: prefs[s.id] !== undefined ? prefs[s.id] : true
-        }));
+        // Bundled skills are synced into ~/.claude/skills for engine compatibility.
+        // Hide those synced duplicates from API consumers so menus don't render the
+        // same skill twice.
+        const seenUserKeys = new Set();
+        const userSkills = loadUserSkills()
+            .filter((s) => {
+                const key = buildSkillDedupeKey(s);
+                if (!key) return true;
+                if (exampleKeys.has(key)) return false;
+                if (seenUserKeys.has(key)) return false;
+                seenUserKeys.add(key);
+                return true;
+            })
+            .map(s => ({
+                ...s,
+                enabled: prefs[s.id] !== undefined ? prefs[s.id] : true
+            }));
 
         // Strip content from list response (only return on detail)
         const stripContent = (s) => {

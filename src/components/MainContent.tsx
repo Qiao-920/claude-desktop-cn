@@ -97,6 +97,12 @@ function getSkillMenuProjectExample(
   return skill.triggerExamples[0] || '';
 }
 
+function getSkillMenuUniqueKey(skill: { name?: string; id?: string }) {
+  const normalizedName = normalizeSkillKey(skill?.name);
+  if (normalizedName) return normalizedName;
+  return String(skill?.id || '').trim().toLowerCase();
+}
+
 // Blue skill tag shown in chat messages (hover shows tooltip)
 const SkillTag: React.FC<{ slug: string; description?: string; descriptionZh?: string }> = ({ slug, description, descriptionZh }) => {
   const [hover, setHover] = useState(false);
@@ -1669,7 +1675,15 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
     if (!showPlusMenu) { setShowSkillsSubmenu(false); setShowProjectsSubmenu(false); return; }
     getSkills().then((data: any) => {
       const all = [...(data.examples || []), ...(data.my_skills || [])];
-      setEnabledSkills(all.filter((s: any) => s.enabled).map((s: any) => ({
+      const seen = new Set<string>();
+      const deduped = all.filter((s: any) => {
+        const key = getSkillMenuUniqueKey(s);
+        if (!key) return true;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      setEnabledSkills(deduped.filter((s: any) => s.enabled).map((s: any) => ({
         id: s.id,
         name: s.name,
         description: s.description,
