@@ -1523,12 +1523,72 @@ if __name__ == "__main__":
     // ===== URL normalization helper =====
     // Strips known endpoint suffixes so base URLs like
     // "https://api.siliconflow.cn/v1/chat/completions" become "https://api.siliconflow.cn/v1"
-    function normalizeBaseUrl(url) {
+    function normalizeBaseUrl(url, format = 'openai') {
         if (!url) return url;
-        let clean = url.replace(/\/+$/, '');
-        clean = clean.replace(/\/(chat\/completions|messages)$/, '');
+        let clean = String(url).trim().replace(/\/+$/, '');
+        clean = clean
+            .replace(/\/v1\/(chat\/completions|messages|models)$/i, '')
+            .replace(/\/(chat\/completions|messages|models)$/i, '')
+            .replace(/\/+$/, '');
+        try {
+            const parsed = new URL(clean);
+            if (/deepseek\.com$/i.test(parsed.hostname) || /platform\.deepseek\.com$/i.test(parsed.hostname)) {
+                parsed.protocol = 'https:';
+                parsed.host = 'api.deepseek.com';
+                let pathname = parsed.pathname.replace(/\/+$/, '');
+                pathname = pathname.replace(/^\/v1$/i, '');
+                pathname = pathname.replace(/^\/anthropic\/v1$/i, '/anthropic');
+                if (format === 'anthropic') {
+                    pathname = '/anthropic';
+                } else if (/^\/anthropic$/i.test(pathname)) {
+                    pathname = '';
+                }
+                parsed.pathname = pathname || '';
+                clean = parsed.toString().replace(/\/+$/, '');
+            }
+        } catch (_) {}
         return clean.replace(/\/+$/, '');
     }
+
+    const migrateProviderModels = (provider) => {
+        if (!provider || !Array.isArray(provider.models)) return provider;
+        const providerName = String(provider.name || '').trim().toLowerCase();
+        const providerUrl = String(provider.baseUrl || '').trim().toLowerCase();
+        const isDeepSeek = providerName === 'deepseek'
+            || providerUrl.includes('deepseek.com')
+            || providerUrl.includes('platform.deepseek.com');
+        if (!isDeepSeek) return provider;
+
+        const currentIds = new Set(provider.models.map((model) => String(model?.id || '').trim()).filter(Boolean));
+        const hasLegacyIds = currentIds.has('deepseek-chat') || currentIds.has('deepseek-reasoner');
+        const hasCurrentIds = currentIds.has('deepseek-v4-flash') || currentIds.has('deepseek-v4-pro');
+        if (!hasLegacyIds || hasCurrentIds) return provider;
+
+        const legacyEnabled = provider.models.some((model) => model && model.enabled !== false);
+        provider.models = [
+            { id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash', enabled: legacyEnabled },
+            { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro', enabled: legacyEnabled },
+        ];
+        return provider;
+    };
+
+    const normalizeProviderRecord = (provider) => {
+        if (!provider) return provider;
+        if (provider.baseUrl) {
+            provider.baseUrl = normalizeBaseUrl(provider.baseUrl, provider.format || 'openai');
+        }
+        migrateProviderModels(provider);
+        return provider;
+    };
+
+    let providersChangedOnBoot = false;
+    providers = providers.map((provider) => {
+        const before = JSON.stringify(provider || null);
+        normalizeProviderRecord(provider);
+        if (JSON.stringify(provider || null) !== before) providersChangedOnBoot = true;
+        return provider;
+    });
+    if (providersChangedOnBoot) saveProviders();
 
     // ===== Proxy-level Web Search for OpenAI providers =====
     // Anthropic's web_search_20250305 is a server-side tool handled by the Anthropic API itself.
@@ -3320,6 +3380,14 @@ if __name__ == "__main__":
         });
     });
     server.get('/api/providers', (req, res) => {
+        let changed = false;
+        providers = providers.map((provider) => {
+            const before = JSON.stringify(provider || null);
+            normalizeProviderRecord(provider);
+            if (JSON.stringify(provider || null) !== before) changed = true;
+            return provider;
+        });
+        if (changed) saveProviders();
         res.json(providers);
     });
     server.post('/api/providers', (req, res) => {
@@ -3328,7 +3396,7 @@ if __name__ == "__main__":
         if (!p.name) return res.status(400).json({ error: 'Missing name' });
         if (!p.models) p.models = [];
         if (p.enabled === undefined) p.enabled = true;
-        if (p.baseUrl) p.baseUrl = normalizeBaseUrl(p.baseUrl);
+        normalizeProviderRecord(p);
         providers.push(p);
         saveProviders();
         res.json(p);
@@ -3347,8 +3415,8 @@ if __name__ == "__main__":
                 modelsCount: Array.isArray(req.body && req.body.models) ? req.body.models.length : undefined,
             }).slice(0, 500),
             '| poolBefore=', summarizeEnginePool());
-        if (req.body.baseUrl) req.body.baseUrl = normalizeBaseUrl(req.body.baseUrl);
         Object.assign(p, req.body);
+        normalizeProviderRecord(p);
         delete p._id; // prevent duplication
         saveProviders();
         // Refresh idle engines immediately, but don't kill active turns mid-response.
@@ -3380,10 +3448,13 @@ if __name__ == "__main__":
     // Get all available models across all enabled providers
     server.get('/api/providers/models', (req, res) => {
         const models = [];
+        const seenModelIds = new Set();
         for (const p of providers) {
             if (!p.enabled) continue;
             for (const m of (p.models || [])) {
-                if (m.enabled === false) continue;
+                if (m.enabled === false || !m.id) continue;
+                if (seenModelIds.has(m.id)) continue;
+                seenModelIds.add(m.id);
                 models.push({ id: m.id, name: m.name || m.id, providerId: p.id, providerName: p.name });
             }
         }
@@ -8117,6 +8188,9 @@ You have the following skills available. When a user's request matches a skill's
             // pre-fix rows lack the flag and the delete handler falls back to a
             // clean-session reset for them.
             const userMsgUuid = uuidv4();
+            const persistedUserMessage = typeof display_message === 'string' && display_message.trim()
+                ? display_message
+                : message;
             db.messages.push({
                 id: userMsgUuid, conversation_id, role: 'user',
                 content: JSON.stringify([{ type: 'text', text: persistedUserMessage }]),
@@ -8152,9 +8226,6 @@ You have the following skills available. When a user's request matches a skill's
                         role: 'assistant',
                         content: JSON.stringify([{ type: 'text', text: result.report }]),
                         created_at: new Date().toISOString(),
-            const persistedUserMessage = typeof display_message === 'string' && display_message.trim()
-                ? display_message
-                : message;
                         research: {
                             plan: result.plan,
                             sub_results: result.sub_results.map(r => ({

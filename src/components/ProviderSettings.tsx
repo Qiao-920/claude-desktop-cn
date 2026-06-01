@@ -25,7 +25,7 @@ const KNOWN_PROVIDERS: Array<{
     },
     {
       match: u => /deepseek\.com/i.test(u), name: 'DeepSeek', format: 'openai', color: '#4D6BFE', letter: 'D',
-      defaultModels: [{ id: 'deepseek-chat', name: 'DeepSeek V3' }, { id: 'deepseek-reasoner', name: 'DeepSeek R1' }]
+      defaultModels: [{ id: 'deepseek-v4-flash', name: 'DeepSeek V4 Flash' }, { id: 'deepseek-v4-pro', name: 'DeepSeek V4 Pro' }]
     },
     {
       match: u => /bigmodel\.cn/i.test(u), name: 'GLM (Zhipu)', format: 'openai', color: '#3B68FF', letter: 'G',
@@ -53,6 +53,98 @@ function detectProvider(url: string) {
     if (kp.match(url)) return kp;
   }
   return null;
+}
+
+function normalizeProviderBaseUrl(baseUrl: string, format: 'openai' | 'anthropic' = 'openai') {
+  let clean = (baseUrl || '').trim().replace(/\/+$/, '');
+  clean = clean
+    .replace(/\/v1\/(chat\/completions|messages|models)$/i, '')
+    .replace(/\/(chat\/completions|messages|models)$/i, '')
+    .replace(/\/+$/, '');
+  try {
+    const parsed = new URL(clean);
+    if (/deepseek\.com$/i.test(parsed.hostname) || /platform\.deepseek\.com$/i.test(parsed.hostname)) {
+      parsed.protocol = 'https:';
+      parsed.host = 'api.deepseek.com';
+      let pathname = parsed.pathname.replace(/\/+$/, '');
+      pathname = pathname.replace(/^\/v1$/i, '');
+      pathname = pathname.replace(/^\/anthropic\/v1$/i, '/anthropic');
+      if (format === 'anthropic') {
+        pathname = '/anthropic';
+      } else if (/^\/anthropic$/i.test(pathname)) {
+        pathname = '';
+      }
+      parsed.pathname = pathname || '';
+      clean = parsed.toString().replace(/\/+$/, '');
+    }
+  } catch (_) { }
+  return clean;
+}
+
+function prettifyProviderModelName(modelId: string, providerName?: string) {
+  const id = String(modelId || '').trim();
+  if (!id) return id;
+  if (providerName === 'DeepSeek') {
+    if (id === 'deepseek-v4-flash') return 'DeepSeek V4 Flash';
+    if (id === 'deepseek-v4-pro') return 'DeepSeek V4 Pro';
+    if (id === 'deepseek-chat') return 'DeepSeek Chat (兼容别名)';
+    if (id === 'deepseek-reasoner') return 'DeepSeek Reasoner (兼容别名)';
+  }
+  return id
+    .replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
+function buildModelListRequest(baseUrl: string, apiKey: string, format: 'openai' | 'anthropic') {
+  const normalized = normalizeProviderBaseUrl(baseUrl, format);
+  const detected = detectProvider(normalized);
+  if (detected?.name === 'DeepSeek') {
+    return {
+      endpoint: 'https://api.deepseek.com/models',
+      headers: { Authorization: `Bearer ${apiKey}` },
+      providerName: detected.name,
+    };
+  }
+  let endpoint = normalized;
+  if (!endpoint.endsWith('/v1')) endpoint += '/v1';
+  endpoint += '/models';
+  const headers: Record<string, string> = format === 'anthropic'
+    ? { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' }
+    : { Authorization: `Bearer ${apiKey}` };
+  return {
+    endpoint,
+    headers,
+    providerName: detected?.name,
+  };
+}
+
+function extractProviderModels(data: any, providerName?: string): ProviderModel[] {
+  const rawModels = Array.isArray(data?.data)
+    ? data.data
+    : Array.isArray(data?.models)
+      ? data.models
+      : Array.isArray(data)
+        ? data
+        : [];
+  const seen = new Set<string>();
+  const models: ProviderModel[] = [];
+  for (const item of rawModels) {
+    const id = typeof item?.id === 'string' ? item.id.trim() : '';
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    models.push({
+      id,
+      name: item?.display_name || item?.name || prettifyProviderModelName(id, providerName),
+      enabled: true,
+    });
+  }
+  if (providerName === 'DeepSeek') {
+    const hasCurrentIds = models.some((model) => model.id === 'deepseek-v4-flash' || model.id === 'deepseek-v4-pro');
+    if (hasCurrentIds) {
+      return models.filter((model) => model.id !== 'deepseek-chat' && model.id !== 'deepseek-reasoner');
+    }
+  }
+  return models;
 }
 
 // Real provider SVG logos
@@ -252,10 +344,11 @@ const ProviderSettings: React.FC = () => {
 
   const handleQuickAdd = async () => {
     if (!newUrl.trim() && !newKey.trim()) return;
-    const url = newUrl.trim();
+    const rawUrl = newUrl.trim();
     const key = newKey.trim();
-    const detected = detectProvider(url);
+    const detected = detectProvider(rawUrl);
     const format = detected?.format || 'openai';
+    const url = normalizeProviderBaseUrl(rawUrl, format);
 
     // Every provider starts with supportsWebSearch=false. It flips to true only after the
     // probe endpoint returns success.
@@ -277,14 +370,11 @@ const ProviderSettings: React.FC = () => {
     // Auto-probe: fetch models from /v1/models endpoint for all providers
     if (key) {
       try {
-        let endpoint = url.replace(/\/+$/, '').replace(/\/(chat\/completions|messages)$/, '').replace(/\/+$/, '');
-        if (!endpoint.endsWith('/v1')) endpoint += '/v1';
-        const res = await fetch(endpoint + '/models', { headers: { 'Authorization': 'Bearer ' + key } });
+        const { endpoint, headers, providerName } = buildModelListRequest(url, key, format);
+        const res = await fetch(endpoint, { headers });
         if (res.ok) {
           const data = await res.json();
-          const models = (data.data || [])
-            .filter((m: any) => m.id && typeof m.id === 'string')
-            .map((m: any) => ({ id: m.id, name: m.id, enabled: true }));
+          const models = extractProviderModels(data, providerName);
           if (models.length > 0) {
             await updateProvider(p.id, { models });
             setProviderList(prev => prev.map(x => x.id === p.id ? { ...x, models } : x));
@@ -327,20 +417,11 @@ const ProviderSettings: React.FC = () => {
     if (!p.baseUrl || !p.apiKey) return;
     setFetchingModels(true);
     try {
-      let endpoint = p.baseUrl.replace(/\/+$/, '').replace(/\/(chat\/completions|messages)$/, '').replace(/\/+$/, '');
-      if (!endpoint.endsWith('/v1')) endpoint += '/v1';
-      endpoint += '/models';
-
-      const headers: Record<string, string> = {};
-      if (p.format === 'openai') headers['Authorization'] = 'Bearer ' + p.apiKey;
-      else headers['x-api-key'] = p.apiKey;
-
+      const { endpoint, headers, providerName } = buildModelListRequest(p.baseUrl, p.apiKey, p.format || 'openai');
       const res = await fetch(endpoint, { headers });
       if (res.ok) {
         const data = await res.json();
-        const models: ProviderModel[] = (data.data || [])
-          .filter((m: any) => m.id && typeof m.id === 'string')
-          .map((m: any) => ({ id: m.id, name: m.id, enabled: true }));
+        const models = extractProviderModels(data, providerName);
         if (models.length > 0) {
           await handleUpdate(p.id, { models });
           // Re-load full provider list to ensure allAvailableModels is up-to-date

@@ -55,7 +55,7 @@ function hasThinkingVariant(_modelId: string): boolean {
 }
 
 // Turn raw model ids / names into friendly labels.
-// - claude-opus-4-6 → "Opus 4.6", claude-haiku-4-5-20251001 → "Haiku 4.5"
+// - claude-opus-4-8 → "Opus 4.8", claude-haiku-4-5-20251001 → "Haiku 4.5"
 // - GLM-5 → "GLM 5", Deepseek-V3.2 → "Deepseek V3.2" (hyphens become spaces)
 // - Strips provider/org prefix (e.g. "Pro/zai-org/GLM-5" → "GLM 5")
 function prettifyModelName(name?: string, id?: string): string {

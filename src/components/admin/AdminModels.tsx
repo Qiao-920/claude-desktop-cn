@@ -230,7 +230,7 @@ export default function AdminModels() {
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2">
               <label className="block text-xs text-gray-500 mb-1">模型 ID *</label>
-              <input placeholder="claude-opus-4-6" value={form.id} disabled={editId !== null}
+              <input placeholder="claude-opus-4-8" value={form.id} disabled={editId !== null}
                 onChange={e => setForm({ ...form, id: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm disabled:bg-gray-50" />
             </div>

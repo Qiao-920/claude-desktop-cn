@@ -1337,7 +1337,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
       return common.length > 0 ? common : selfHostedModels;
     }
     return [
-      { id: 'claude-opus-4-6', name: 'Opus 4.6', enabled: 1, description: 'Most capable for ambitious work' },
+      { id: 'claude-opus-4-8', name: 'Opus 4.8', enabled: 1, description: 'Most capable for ambitious work' },
       { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6', enabled: 1, description: 'Most efficient for everyday tasks' },
       { id: 'claude-haiku-4-5-20251001', name: 'Haiku 4.5', enabled: 1, description: 'Fastest for quick answers' },
     ];
@@ -1359,7 +1359,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
     return visible;
   }, [displayCommonModels, modelCatalog, isSelfHostedMode]);
 
-  // Initial model: for self-hosted, prefer first configured model over hardcoded claude-sonnet-4-6
+  // Initial model: for self-hosted, prefer first configured model over hardcoded Claude fallback
   const [currentModelString, setCurrentModelString] = useState(() => {
     const saved = localStorage.getItem('default_model');
     if (saved) {
@@ -1916,7 +1916,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
           data = await getUserModels();
           // Enrich known Anthropic models with descriptions
           const descMap: Record<string, string> = {
-            'claude-opus-4-6': 'Most capable for ambitious work',
+            'claude-opus-4-8': 'Most capable for ambitious work',
             'claude-sonnet-4-6': 'Most efficient for everyday tasks',
             'claude-haiku-4-5-20251001': 'Fastest for quick answers',
           };
