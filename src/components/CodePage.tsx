@@ -860,6 +860,8 @@ const CodePage = ({ desktopTabId }: CodePageProps) => {
             return next.slice(-10);
           });
         },
+        undefined,
+        { displayMessage: nextPrompt },
       );
     } catch (error: any) {
       setAssistantStreaming(false);

@@ -7988,7 +7988,7 @@ You have the following skills available. When a user's request matches a skill's
 
     // Chat endpoint (persistent engine)
     server.post('/api/chat', async (req, res) => {
-        const { conversation_id, message, attachments, env_token, env_base_url, user_mode, user_profile } = req.body;
+        const { conversation_id, message, display_message, attachments, env_token, env_base_url, user_mode, user_profile } = req.body;
         const conv = db.conversations.find(c => c.id === conversation_id);
         if (!conv) return res.status(404).json({ error: 'Conversation not found' });
         console.log('[Chat] Incoming request',
@@ -8119,7 +8119,7 @@ You have the following skills available. When a user's request matches a skill's
             const userMsgUuid = uuidv4();
             db.messages.push({
                 id: userMsgUuid, conversation_id, role: 'user',
-                content: JSON.stringify([{ type: 'text', text: message }]),
+                content: JSON.stringify([{ type: 'text', text: persistedUserMessage }]),
                 created_at: new Date().toISOString(),
                 engineUuidSynced: true,
                 attachments: attachments && attachments.length > 0 ? attachments.map(a => ({ fileId: a.fileId, fileName: a.fileName, fileType: a.fileType, mimeType: a.mimeType, size: a.size, source: a.source, gh_repo: a.ghRepo, gh_ref: a.ghRef })) : undefined
@@ -8152,6 +8152,9 @@ You have the following skills available. When a user's request matches a skill's
                         role: 'assistant',
                         content: JSON.stringify([{ type: 'text', text: result.report }]),
                         created_at: new Date().toISOString(),
+            const persistedUserMessage = typeof display_message === 'string' && display_message.trim()
+                ? display_message
+                : message;
                         research: {
                             plan: result.plan,
                             sub_results: result.sub_results.map(r => ({

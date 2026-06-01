@@ -1972,7 +1972,8 @@ export async function sendMessage(
   onDocumentDraft?: (draft: { draft_id: string; title?: string; format?: string; preview?: string; preview_available?: boolean; done?: boolean; document?: any }) => void,
   onCodeExecution?: (data: { type: string; executionId: string; code?: string; language?: string; files?: Array<{ id: string; name: string }>; stdout?: string; stderr?: string; images?: string[]; error?: string | null }) => void,
   onToolUse?: (event: { type: 'start' | 'done'; tool_use_id: string; tool_name?: string; tool_input?: any; content?: string; is_error?: boolean }) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  requestExtras?: { displayMessage?: string }
 ) {
   const token = getToken();
   let fullText = '';
@@ -1986,6 +1987,7 @@ export async function sendMessage(
       body: JSON.stringify({
         conversation_id: conversationId,
         message,
+        display_message: requestExtras?.displayMessage,
         attachments: attachments || undefined,
         ...resolveEnvCreds(getUserModeForConversation(conversationId)),
         user_mode: getUserModeForConversation(conversationId),
