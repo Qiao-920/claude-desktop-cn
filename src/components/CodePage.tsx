@@ -463,6 +463,8 @@ const CodePage = ({ desktopTabId }: CodePageProps) => {
   const [error, setError] = useState('');
   const treeMenuRef = useRef<HTMLDivElement | null>(null);
   const assistantFileInputRef = useRef<HTMLInputElement | null>(null);
+  const assistantScrollRef = useRef<HTMLDivElement | null>(null);
+  const assistantScrollAnchorRef = useRef<HTMLDivElement | null>(null);
   const editorScrollRef = useRef<HTMLDivElement | null>(null);
   const editorTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const resizeStateRef = useRef<null | { type: 'left' | 'right' | 'bottom'; startX: number; startY: number; startWidth?: number; startHeight?: number }>(null);
@@ -738,6 +740,18 @@ const CodePage = ({ desktopTabId }: CodePageProps) => {
     }
     localStorage.setItem(assistantConversationStorageKey, assistantConversationId);
   }, [assistantConversationId, assistantConversationStorageKey]);
+
+  useEffect(() => {
+    const container = assistantScrollRef.current;
+    const anchor = assistantScrollAnchorRef.current;
+    if (!container || !anchor) return;
+    const maxOffset = 120;
+    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight <= maxOffset;
+    if (!isNearBottom && !assistantStreaming) return;
+    requestAnimationFrame(() => {
+      anchor.scrollIntoView({ block: 'end' });
+    });
+  }, [assistantMessages, assistantStreaming]);
 
   useEffect(() => {
     const handleMove = (event: MouseEvent) => {
@@ -2597,7 +2611,7 @@ const CodePage = ({ desktopTabId }: CodePageProps) => {
                 <div className="mt-1 truncate">{workspacePath || (isZh ? '还没有选择项目目录' : 'No workspace selected')}</div>
               </div>
 
-              <div className="flex-1 min-h-0 overflow-y-auto">
+              <div ref={assistantScrollRef} className="flex-1 min-h-0 overflow-y-auto">
                 {assistantConversationLoading ? (
                   <div className="px-4 py-4 text-[12px] text-[#9D9D9D]">{isZh ? '正在加载侧边对话...' : 'Loading the side conversation...'}</div>
                 ) : assistantMessages.length > 0 ? (
@@ -2657,6 +2671,7 @@ const CodePage = ({ desktopTabId }: CodePageProps) => {
                         </div>
                       );
                     })}
+                    <div ref={assistantScrollAnchorRef} />
                   </div>
                 ) : (
                   <div className="flex h-full min-h-[320px] flex-col items-center justify-center px-8 text-center">
