@@ -29,6 +29,12 @@ function getUserModeForConversation(conversationId?: string): string {
   return localStorage.getItem('user_mode') || 'clawparrot';
 }
 
+function inferUserModeFromModel(model?: string): 'clawparrot' | 'selfhosted' | null {
+  const base = String(model || '').replace(/-thinking$/, '').trim();
+  if (!base) return null;
+  return /^claude-/i.test(base) ? 'clawparrot' : 'selfhosted';
+}
+
 // Resolve env_token / env_base_url to send to bridge. clawparrot mode must ignore
 // CUSTOM_API_KEY/CUSTOM_BASE_URL — those exist only because an old version of the
 // app let clawparrot users paste their own relay API key; the UI was removed but
@@ -1973,11 +1979,12 @@ export async function sendMessage(
   onCodeExecution?: (data: { type: string; executionId: string; code?: string; language?: string; files?: Array<{ id: string; name: string }>; stdout?: string; stderr?: string; images?: string[]; error?: string | null }) => void,
   onToolUse?: (event: { type: 'start' | 'done'; tool_use_id: string; tool_name?: string; tool_input?: any; content?: string; is_error?: boolean }) => void,
   signal?: AbortSignal,
-  requestExtras?: { displayMessage?: string }
+  requestExtras?: { displayMessage?: string; model?: string }
 ) {
   const token = getToken();
   let fullText = '';
   try {
+    const effectiveMode = inferUserModeFromModel(requestExtras?.model) || getUserModeForConversation(conversationId);
     const res = await fetch(`${API_BASE}/chat`, {
       method: 'POST',
       headers: {
@@ -1988,9 +1995,10 @@ export async function sendMessage(
         conversation_id: conversationId,
         message,
         display_message: requestExtras?.displayMessage,
+        model: requestExtras?.model,
         attachments: attachments || undefined,
-        ...resolveEnvCreds(getUserModeForConversation(conversationId)),
-        user_mode: getUserModeForConversation(conversationId),
+        ...resolveEnvCreds(effectiveMode),
+        user_mode: effectiveMode,
         user_profile: (() => {
           try {
             const p = JSON.parse(localStorage.getItem('user_profile') || localStorage.getItem('user') || '{}');

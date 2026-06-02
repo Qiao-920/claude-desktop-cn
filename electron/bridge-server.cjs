@@ -8059,9 +8059,14 @@ You have the following skills available. When a user's request matches a skill's
 
     // Chat endpoint (persistent engine)
     server.post('/api/chat', async (req, res) => {
-        const { conversation_id, message, display_message, attachments, env_token, env_base_url, user_mode, user_profile } = req.body;
+        const { conversation_id, message, display_message, model, attachments, env_token, env_base_url, user_mode, user_profile } = req.body;
         const conv = db.conversations.find(c => c.id === conversation_id);
         if (!conv) return res.status(404).json({ error: 'Conversation not found' });
+        if (model && model !== conv.model) {
+            console.log('[Chat] Request model override for conv', conversation_id, ':', conv.model, '->', model);
+            conv.model = model;
+            saveDb();
+        }
         console.log('[Chat] Incoming request',
             '| conv=', conversation_id,
             '| msgLen=', (message || '').length,

@@ -790,6 +790,7 @@ const CodePage = ({ desktopTabId }: CodePageProps) => {
     if (!nextPrompt || assistantStreaming) return;
 
     const contextPrompt = buildAssistantContextPrompt(nextPrompt, options);
+    const assistantModel = localStorage.getItem('default_model') || 'claude-sonnet-4-6';
 
     setAssistantError('');
     setAssistantStreaming(true);
@@ -810,7 +811,7 @@ const CodePage = ({ desktopTabId }: CodePageProps) => {
     let conversationId = assistantConversationId;
     try {
       if (!conversationId) {
-        const created = await createConversation(isZh ? '代码侧栏助手' : 'Code sidebar assistant');
+        const created = await createConversation(isZh ? '代码侧栏助手' : 'Code sidebar assistant', assistantModel);
         conversationId = created?.id;
         if (!conversationId) {
           throw new Error(isZh ? '创建对话失败' : 'Failed to create conversation');
@@ -875,7 +876,16 @@ const CodePage = ({ desktopTabId }: CodePageProps) => {
           });
         },
         undefined,
-        { displayMessage: nextPrompt },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        {
+          displayMessage: nextPrompt,
+          model: assistantModel,
+        },
       );
     } catch (error: any) {
       setAssistantStreaming(false);

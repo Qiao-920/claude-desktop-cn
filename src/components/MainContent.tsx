@@ -3131,7 +3131,11 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
           return newMsgs;
         });
       },
-      controller.signal
+      controller.signal,
+      {
+        displayMessage: userMessageText,
+        model: currentModelString,
+      }
     );
   };
 
@@ -3404,7 +3408,10 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
       },
       undefined,
       undefined,
-      controller.signal
+      controller.signal,
+      {
+        model: currentModelString,
+      }
     );
   };
 
@@ -3616,7 +3623,10 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
       },
       undefined,
       undefined,
-      controller.signal
+      controller.signal,
+      {
+        model: currentModelString,
+      }
     );
   };
 
