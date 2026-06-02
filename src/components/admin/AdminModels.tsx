@@ -236,7 +236,7 @@ export default function AdminModels() {
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">显示名称 *</label>
-              <input placeholder="Opus 4.6" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
+              <input placeholder="Opus 4.8" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" />
             </div>
             <div>

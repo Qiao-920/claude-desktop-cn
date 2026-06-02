@@ -365,7 +365,7 @@ async function runResearchPipeline({
     query,
     apiKey,
     baseUrl,
-    model = 'claude-opus-4-6',
+    model = 'claude-opus-4-8',
     sendSSE,
 }) {
     const startedAt = Date.now();

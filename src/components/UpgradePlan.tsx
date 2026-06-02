@@ -98,7 +98,7 @@ const UpgradePlan = ({ onClose }: UpgradePlanProps) => {
       ? { model_multiplier: 5.0, output_multiplier: 5.0, cache_read_multiplier: 0.1 }
       : { model_multiplier: 3.0, output_multiplier: 5.0, cache_read_multiplier: 0.1 };
     const enabled = billingModels.filter(m => Number(m.enabled) === 1);
-    const exactId = family === 'opus' ? 'claude-opus-4-6' : 'claude-sonnet-4-6';
+    const exactId = family === 'opus' ? 'claude-opus-4-8' : 'claude-sonnet-4-6';
     const model = enabled.find(m => m.id === exactId) || enabled.find(m => new RegExp(family, 'i').test(m.id));
     if (!model) return fallback;
     return {
@@ -284,7 +284,7 @@ const UpgradePlan = ({ onClose }: UpgradePlanProps) => {
 
             {/* Rounds table */}
             <div className={`rounded-xl p-4 mb-4 ${style.bg} border ${style.border}`}>
-              <h4 className={`text-[13px] font-semibold ${style.color} mb-3`}>预估对话轮数（Opus 4.6）</h4>
+              <h4 className={`text-[13px] font-semibold ${style.color} mb-3`}>预估对话轮数（Opus 4.8）</h4>
               <table className="w-full text-[13px]">
                 <thead>
                   <tr className="text-claude-textSecondary">
@@ -332,7 +332,7 @@ const UpgradePlan = ({ onClose }: UpgradePlanProps) => {
               <h4 className="text-[13px] font-semibold text-claude-text mb-2">包含功能</h4>
               <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[12px] text-claude-textSecondary">
                 {[
-                  'Claude Opus 4.6 深度推理',
+                  'Claude Opus 4.8 深度推理',
                   'Claude Sonnet 4.6 快速响应',
                   'GPT-5.4 多模型切换',
                   'Extended Thinking 模式',
@@ -384,7 +384,7 @@ const UpgradePlan = ({ onClose }: UpgradePlanProps) => {
             {/* Feature banner */}
             <div className="mb-6 px-5 py-4 rounded-2xl bg-claude-hover border border-claude-border">
               <p className="text-[13px] text-claude-textSecondary text-center leading-relaxed mb-2">
-                所有套餐功能完全相同，仅额度不同 — 支持 Claude Opus 4.6 / Sonnet 4.6 / GPT-5.4 等模型，含 Extended Thinking 深度推理、联网搜索、文档生成、代码执行、文件上传与分析
+                所有套餐功能完全相同，仅额度不同 — 支持 Claude Opus 4.8 / Sonnet 4.6 / GPT-5.4 等模型，含 Extended Thinking 深度推理、联网搜索、文档生成、代码执行、文件上传与分析
               </p>
               <p className="text-[12px] text-claude-textSecondary/70 text-center leading-relaxed">
                 额度按实际用量扣费：问简单问题消耗很少（约 $0.06~0.10/轮），深度长对话消耗较多（约 $0.30~0.50/轮），不用担心问简单问题不划算

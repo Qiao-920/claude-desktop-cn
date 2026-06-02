@@ -17,7 +17,7 @@ const KNOWN_PROVIDERS: Array<{
     {
       match: u => /anthropic\.com/i.test(u), name: 'Anthropic', format: 'anthropic', color: '#D97757', letter: 'A',
       webSearch: 'native',
-      defaultModels: [{ id: 'claude-opus-4-6', name: 'Claude Opus 4.6' }, { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' }, { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5' }]
+      defaultModels: [{ id: 'claude-opus-4-8', name: 'Claude Opus 4.8' }, { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' }, { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5' }]
     },
     {
       match: u => /openai\.com/i.test(u), name: 'OpenAI', format: 'openai', color: '#10A37F', letter: 'O',
@@ -176,7 +176,7 @@ const API_BASE = 'http://127.0.0.1:30080/api';
 interface ChatModel { id: string; name: string; providerId: string; providerName: string; thinkingId?: string; tier?: 'opus' | 'sonnet' | 'haiku' | 'extra'; }
 
 // Composite key that uniquely identifies a model across providers.
-// Two providers can expose the same model id (e.g. claude-opus-4-6);
+// Two providers can expose the same model id (e.g. claude-opus-4-8);
 // uid = "providerId:modelId" prevents them from colliding in the UI.
 const modelUid = (m: { id: string; providerId: string }) => `${m.providerId}:${m.id}`;
 

@@ -377,7 +377,7 @@ const ProjectsPage = () => {
       } catch (_) { }
     }
     return [
-      { id: 'claude-opus-4-6', name: 'Opus 4.6', enabled: 1, description: 'Most capable for ambitious work' },
+      { id: 'claude-opus-4-8', name: 'Opus 4.8', enabled: 1, description: 'Most capable for ambitious work' },
       { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6', enabled: 1, description: 'Most efficient for everyday tasks' },
       { id: 'claude-haiku-4-5-20251001', name: 'Haiku 4.5', enabled: 1, description: 'Fastest for quick answers' },
     ];

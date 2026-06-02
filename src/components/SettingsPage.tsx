@@ -996,7 +996,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
   const [displayName, setDisplayName] = useState('');
   const [workFunction, setWorkFunction] = useState('');
   const [personalPreferences, setPersonalPreferences] = useState('');
-  const [defaultModel, setDefaultModel] = useState(localStorage.getItem('default_model') || 'claude-opus-4-6-thinking');
+  const [defaultModel, setDefaultModel] = useState(localStorage.getItem('default_model') || 'claude-opus-4-8-thinking');
   const [providerModels, setProviderModels] = useState<Array<{ base: string; label: string }>>([]);
 
   const [pwdCurrent, setPwdCurrent] = useState('');
@@ -1041,7 +1041,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
           setPersonalPreferences(nextProfile.personal_preferences || '');
           setTheme(nextProfile.theme || localStorage.getItem('theme') || 'dark');
           setChatFont(nextProfile.chat_font || localStorage.getItem('chat_font') || 'default');
-          setDefaultModel(nextProfile.default_model || localStorage.getItem('default_model') || 'claude-opus-4-6-thinking');
+          setDefaultModel(nextProfile.default_model || localStorage.getItem('default_model') || 'claude-opus-4-8-thinking');
         }
       } catch {
         // ignore
@@ -1263,7 +1263,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     isSelfHosted && providerModels.length > 0
       ? providerModels
       : [
-          { base: 'claude-opus-4-6', label: 'Opus 4.6' },
+          { base: 'claude-opus-4-8', label: 'Opus 4.8' },
           { base: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
           { base: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
         ];
