@@ -35,6 +35,44 @@ function inferUserModeFromModel(model?: string): 'clawparrot' | 'selfhosted' | n
   return /^claude-/i.test(base) ? 'clawparrot' : 'selfhosted';
 }
 
+type StoredChatModel = {
+  id?: string;
+  providerId?: string;
+  thinkingId?: string;
+};
+
+function getStoredChatModels(): StoredChatModel[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem('chat_models') || '[]');
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+
+export function getProviderIdForModel(model?: string): string | undefined {
+  const rawModel = String(model || '').trim();
+  const baseModel = rawModel.replace(/-thinking$/, '');
+  if (!baseModel) return undefined;
+
+  const defaultModel = localStorage.getItem('default_model') || '';
+  const defaultProviderId = localStorage.getItem('default_model_provider_id') || '';
+  if (defaultProviderId && defaultModel && defaultModel.replace(/-thinking$/, '') === baseModel) {
+    return defaultProviderId;
+  }
+
+  const matches = getStoredChatModels().filter((entry) => {
+    if (!entry || !entry.providerId) return false;
+    return entry.id === baseModel || entry.id === rawModel || entry.thinkingId === rawModel;
+  });
+  if (matches.length === 1) return matches[0].providerId;
+  if (matches.length > 1 && defaultProviderId) {
+    const preferred = matches.find((entry) => entry.providerId === defaultProviderId);
+    if (preferred?.providerId) return preferred.providerId;
+  }
+  return matches[0]?.providerId;
+}
+
 // Resolve env_token / env_base_url to send to bridge. clawparrot mode must ignore
 // CUSTOM_API_KEY/CUSTOM_BASE_URL — those exist only because an old version of the
 // app let clawparrot users paste their own relay API key; the UI was removed but
@@ -1075,13 +1113,17 @@ export async function getArtifactContent(filePath: string) {
   return res.json();
 }
 
-export async function createConversation(title?: string, model?: string, extras?: { research_mode?: boolean }) {
+export async function createConversation(title?: string, model?: string, extras?: { research_mode?: boolean; provider_id?: string }) {
   const body: any = { model };
   if (title !== undefined) {
     body.title = title;
   }
   if (extras?.research_mode !== undefined) {
     body.research_mode = extras.research_mode;
+  }
+  const providerId = extras?.provider_id || getProviderIdForModel(model);
+  if (providerId) {
+    body.provider_id = providerId;
   }
   const res = await request('/conversations', {
     method: 'POST',
@@ -1979,12 +2021,13 @@ export async function sendMessage(
   onCodeExecution?: (data: { type: string; executionId: string; code?: string; language?: string; files?: Array<{ id: string; name: string }>; stdout?: string; stderr?: string; images?: string[]; error?: string | null }) => void,
   onToolUse?: (event: { type: 'start' | 'done'; tool_use_id: string; tool_name?: string; tool_input?: any; content?: string; is_error?: boolean }) => void,
   signal?: AbortSignal,
-  requestExtras?: { displayMessage?: string; model?: string }
+  requestExtras?: { displayMessage?: string; model?: string; providerId?: string }
 ) {
   const token = getToken();
   let fullText = '';
   try {
     const effectiveMode = inferUserModeFromModel(requestExtras?.model) || getUserModeForConversation(conversationId);
+    const effectiveProviderId = requestExtras?.providerId || getProviderIdForModel(requestExtras?.model);
     const res = await fetch(`${API_BASE}/chat`, {
       method: 'POST',
       headers: {
@@ -1996,6 +2039,7 @@ export async function sendMessage(
         message,
         display_message: requestExtras?.displayMessage,
         model: requestExtras?.model,
+        provider_id: effectiveProviderId,
         attachments: attachments || undefined,
         ...resolveEnvCreds(effectiveMode),
         user_mode: effectiveMode,

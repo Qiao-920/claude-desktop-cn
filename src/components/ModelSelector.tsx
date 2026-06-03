@@ -6,6 +6,7 @@ export interface SelectableModel {
   name: string;
   enabled: number;
   description?: string;
+  providerId?: string;
   tier?: 'opus' | 'sonnet' | 'haiku' | 'extra';
 }
 

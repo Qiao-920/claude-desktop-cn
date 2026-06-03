@@ -1502,7 +1502,20 @@ if __name__ == "__main__":
     const saveProviders = () => fs.writeFileSync(providersPath, JSON.stringify(providers, null, 2));
 
     // Resolve provider + key + url for a given model ID
-    function resolveProvider(modelId) {
+    function resolveProvider(modelId, providerId) {
+        if (providerId) {
+            const explicit = providers.find(p => p && p.id === providerId && p.enabled);
+            if (explicit) {
+                const hasModel = !!(explicit.models && explicit.models.some(m => m.id === modelId && m.enabled !== false));
+                if (!hasModel) {
+                    console.warn('[Provider] Explicit provider "' + explicit.name + '" (' + explicit.id + ') selected for model "' + modelId + '" but the model is not listed there. Using explicit provider anyway.');
+                } else {
+                    console.log('[Provider] Resolved "' + modelId + '" via explicit provider "' + explicit.name + '" (' + explicit.baseUrl + ')');
+                }
+                return explicit;
+            }
+            console.warn('[Provider] Explicit provider "' + providerId + '" not found or disabled for model "' + modelId + '". Falling back to model lookup.');
+        }
         // Search all enabled providers for this model
         let match = null;
         for (const p of providers) {
@@ -2788,6 +2801,7 @@ if __name__ == "__main__":
             project_id,
             research_mode = false,
             project_task_id = '',
+            provider_id = '',
             project_member_id = '',
             project_run_kind = 'general',
             project_chat_kind = '',
@@ -2816,7 +2830,7 @@ if __name__ == "__main__":
         }
 
         const newConv = {
-            id, title, model, workspace_path: workspacePath, created_at: new Date().toISOString(),
+            id, title, model, provider_id: String(provider_id || '').trim() || undefined, workspace_path: workspacePath, created_at: new Date().toISOString(),
             research_mode: !!research_mode,
             project_task_id: String(project_task_id || '').trim(),
             project_member_id: String(project_member_id || '').trim(),
@@ -2840,6 +2854,7 @@ if __name__ == "__main__":
             id,
             title,
             model,
+            provider_id: String(provider_id || '').trim() || undefined,
             workspace_path: workspacePath,
             research_mode: !!research_mode,
             ...(project_id ? { project_id } : {}),
@@ -2916,6 +2931,11 @@ if __name__ == "__main__":
             conv.model = req.body.model;
             // Don't reset claude_session_id 鈥?engine sessions store message history
             // which is model-agnostic. The engine can resume with a different model.
+        }
+        if ('provider_id' in req.body) {
+            const nextProviderId = String(req.body.provider_id || '').trim();
+            if (nextProviderId) conv.provider_id = nextProviderId;
+            else delete conv.provider_id;
         }
         // Move conversation to/from a project
         if ('project_id' in req.body) {
@@ -7689,14 +7709,14 @@ You have the following skills available. When a user's request matches a skill's
         }
         return sysPrompt;
     }
-    function resolveChatConfig(conv, user_mode, env_token, env_base_url) {
+    function resolveChatConfig(conv, user_mode, env_token, env_base_url, requestedProviderId) {
         const rawModel = conv.model || 'claude-sonnet-4-6';
         let modelId = rawModel.replace(/-thinking$/, '');
         if (user_mode === 'clawparrot' && !/^claude-/i.test(modelId)) {
             console.warn('[Chat] Non-Claude model', modelId, 'detected under clawparrot mode - falling back to claude-sonnet-4-6');
             modelId = 'claude-sonnet-4-6';
         }
-        const provider = user_mode === 'selfhosted' ? resolveProvider(modelId) : null;
+        const provider = user_mode === 'selfhosted' ? resolveProvider(modelId, requestedProviderId || conv.provider_id) : null;
         let apiKey, baseUrl, apiFormat = 'anthropic';
         let supportsWebSearch = false;
         let webSearchStrategy = null;
@@ -8059,20 +8079,26 @@ You have the following skills available. When a user's request matches a skill's
 
     // Chat endpoint (persistent engine)
     server.post('/api/chat', async (req, res) => {
-        const { conversation_id, message, display_message, model, attachments, env_token, env_base_url, user_mode, user_profile } = req.body;
+        const { conversation_id, message, display_message, model, provider_id, attachments, env_token, env_base_url, user_mode, user_profile } = req.body;
         const conv = db.conversations.find(c => c.id === conversation_id);
         if (!conv) return res.status(404).json({ error: 'Conversation not found' });
         if (model && model !== conv.model) {
             console.log('[Chat] Request model override for conv', conversation_id, ':', conv.model, '->', model);
             conv.model = model;
-            saveDb();
         }
+        if ('provider_id' in req.body) {
+            const nextProviderId = String(provider_id || '').trim();
+            if (nextProviderId) conv.provider_id = nextProviderId;
+            else delete conv.provider_id;
+        }
+        if (model || 'provider_id' in req.body) saveDb();
         console.log('[Chat] Incoming request',
             '| conv=', conversation_id,
             '| msgLen=', (message || '').length,
             '| attachments=', Array.isArray(attachments) ? attachments.length : 0,
             '| user_mode=', user_mode,
             '| model=', conv.model,
+            '| provider_id=', conv.provider_id || '(auto)',
             '| pool=', summarizeEnginePool());
         res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
         res.setHeader('Cache-Control', 'no-cache');
@@ -8259,7 +8285,7 @@ You have the following skills available. When a user's request matches a skill's
             }
 
             // 鈹€鈹€ 3. Get or create persistent engine 鈹€鈹€
-            const config = resolveChatConfig(conv, user_mode, env_token, env_base_url);
+            const config = resolveChatConfig(conv, user_mode, env_token, env_base_url, provider_id);
             let engine = enginePool.get(conversation_id);
             console.log('[Chat] Engine lookup for', conversation_id, '| existing=', summarizeEngine(engine), '| requestedModel=', config.modelId);
             // Engine reuse: must match on every dimension that's baked into the spawn

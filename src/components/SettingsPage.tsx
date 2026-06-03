@@ -50,6 +50,7 @@ import {
   getCodeGitStatus,
   getAgentConfig,
   getConversations,
+  getProviderIdForModel,
   getGithubAuthUrl,
   getGithubStatus,
   getMcpServers,
@@ -1679,6 +1680,9 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
     const next = thinking ? `${base}-thinking` : base;
     setDefaultModel(next);
     localStorage.setItem('default_model', next);
+    const nextProviderId = getProviderIdForModel(next);
+    if (nextProviderId) localStorage.setItem('default_model_provider_id', nextProviderId);
+    else localStorage.removeItem('default_model_provider_id');
     if (!isSelfHosted) {
       updateUserProfile({ default_model: next }).catch(() => {});
     }
@@ -2176,6 +2180,7 @@ const SettingsPage = ({ onClose }: SettingsPageProps) => {
                         if (prevMode !== nextMode) {
                           localStorage.removeItem('chat_models');
                           localStorage.removeItem('default_model');
+                          localStorage.removeItem('default_model_provider_id');
                           if (nextMode === 'clawparrot') {
                             localStorage.removeItem('CUSTOM_API_KEY');
                             localStorage.removeItem('CUSTOM_BASE_URL');

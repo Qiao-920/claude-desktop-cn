@@ -200,6 +200,12 @@ function saveChatModels(models: ChatModel[]) {
   localStorage.setItem('chat_models', JSON.stringify(models));
 }
 
+function saveDefaultModelSelection(modelId: string, providerId?: string) {
+  localStorage.setItem('default_model', modelId || '');
+  if (providerId) localStorage.setItem('default_model_provider_id', providerId);
+  else localStorage.removeItem('default_model_provider_id');
+}
+
 const SearchableModelSelect = ({
   value,
   onChange,
@@ -477,7 +483,7 @@ const ProviderSettings: React.FC = () => {
     // Auto-set default to first tier model
     if (!updated.some(cm => cm.id === defaultModel)) {
       const first = updated.find(cm => cm.tier === 'opus') || updated[0];
-      if (first) { setDefaultModel(first.id); localStorage.setItem('default_model', first.id); }
+      if (first) { setDefaultModel(first.id); saveDefaultModelSelection(first.id, first.providerId); }
     }
   };
 
@@ -497,13 +503,14 @@ const ProviderSettings: React.FC = () => {
     if (removed && defaultModel === removed.id) {
       const newDefault = updated[0]?.id || '';
       setDefaultModel(newDefault);
-      localStorage.setItem('default_model', newDefault);
+      saveDefaultModelSelection(newDefault, updated[0]?.providerId);
     }
   };
 
   const handleSetDefault = (id: string) => {
     setDefaultModel(id);
-    localStorage.setItem('default_model', id);
+    const selected = chatModels.find(cm => cm.id === id);
+    saveDefaultModelSelection(id, selected?.providerId);
   };
 
   return (

@@ -3,7 +3,7 @@ import { ChevronDown, FileText, ArrowUp, RotateCcw, Pencil, Copy, Check, Papercl
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { IconPlus, IconVoice, IconPencil, IconProjects, IconResearch, IconWebSearch } from './Icons';
 import ClaudeLogo from './ClaudeLogo';
-import { getConversation, sendMessage, createConversation, getUser, updateConversation, deleteMessagesFrom, deleteMessagesTail, uploadFile, deleteAttachment, compactConversation, answerUserQuestion, getUserUsage, getAttachmentUrl, getGenerationStatus, stopGeneration, getContextSize, getUserModels, getStreamStatus, reconnectStream, getProviderModels, getSkills, warmEngine, getProjects, createProject, Project, materializeGithub, getProviders, Provider, getAgentConfig, updateAgentConfig } from '../api';
+import { getConversation, sendMessage, createConversation, getUser, updateConversation, deleteMessagesFrom, deleteMessagesTail, uploadFile, deleteAttachment, compactConversation, answerUserQuestion, getUserUsage, getAttachmentUrl, getGenerationStatus, stopGeneration, getContextSize, getUserModels, getStreamStatus, reconnectStream, getProviderModels, getSkills, warmEngine, getProjects, createProject, Project, materializeGithub, getProviders, Provider, getAgentConfig, updateAgentConfig, getProviderIdForModel } from '../api';
 import { addStreaming, removeStreaming, isStreaming } from '../streamingState';
 import MarkdownRenderer from './MarkdownRenderer';
 import ResearchPanel from './ResearchPanel';
@@ -1322,6 +1322,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
       return chatModels.map((m: any) => ({
         id: m.id,
         name: m.name || m.id,
+        providerId: m.providerId,
         enabled: 1,
         tier: m.tier || 'extra',
         description: m.tier && tierDescMap[m.tier] ? tierDescMap[m.tier] : undefined,
@@ -1898,6 +1899,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
             const all = chatModels.map((m: any) => ({
               id: m.id,
               name: m.name || m.id,
+              providerId: m.providerId,
               enabled: 1,
               tier: m.tier || 'extra',
               description: m.tier && tierDescMap[m.tier] ? tierDescMap[m.tier] : undefined,
@@ -1909,7 +1911,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
           } else {
             // Fallback: load all from providers
             const pModels = await getProviderModels();
-            const all = pModels.map(m => ({ id: m.id, name: m.name || m.id, enabled: 1 }));
+            const all = pModels.map(m => ({ id: m.id, name: m.name || m.id, providerId: m.providerId, enabled: 1 }));
             data = { all, common: all, fallback_model: all[0]?.id || 'claude-sonnet-4-6' };
           }
         } else {
@@ -2474,11 +2476,12 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
   const handleModelChange = async (newModelString: string) => {
     if (!isModelSelectable(newModelString)) return;
     setCurrentModelString(newModelString);
+    const providerId = getProviderIdForModel(newModelString);
 
     // If in an existing conversation, we should update the conversation's model immediately
     if (activeId && !isCreatingRef.current) {
       try {
-        const updated = await updateConversation(activeId, { model: newModelString });
+        const updated = await updateConversation(activeId, { model: newModelString, provider_id: providerId });
         if (updated?.model) {
           setCurrentModelString(updated.model);
         }
@@ -2672,7 +2675,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
         }
         // 不传临时标题，让后端生成
         console.log("Creating conversation with model:", modelForCreate);
-        const newConv = await createConversation(undefined, modelForCreate, { research_mode: researchMode });
+        const newConv = await createConversation(undefined, modelForCreate, { research_mode: researchMode, provider_id: getProviderIdForModel(modelForCreate) } as any);
         console.log("Created conversation response:", newConv);
 
         if (!newConv || !newConv.id) {
@@ -3135,6 +3138,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
       {
         displayMessage: userMessageText,
         model: currentModelString,
+        providerId: getProviderIdForModel(currentModelString),
       }
     );
   };
@@ -3411,6 +3415,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
       controller.signal,
       {
         model: currentModelString,
+        providerId: getProviderIdForModel(currentModelString),
       }
     );
   };
@@ -3626,6 +3631,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
       controller.signal,
       {
         model: currentModelString,
+        providerId: getProviderIdForModel(currentModelString),
       }
     );
   };
@@ -3726,7 +3732,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
       const modelForCreate = isModelSelectable(currentModelString)
         ? currentModelString
         : resolveModelForNewChat(currentModelString);
-      const newConv = await createConversation(undefined, modelForCreate, { research_mode: researchMode });
+      const newConv = await createConversation(undefined, modelForCreate, { research_mode: researchMode, provider_id: getProviderIdForModel(modelForCreate) } as any);
       if (!newConv || !newConv.id) throw new Error('Failed to create conversation');
       convId = newConv.id;
       createdNewConv = true;
@@ -4918,7 +4924,7 @@ const MainContent = ({ onNewChat, resetKey, tunerConfig, onOpenDocument, onArtif
                   const convId = crossModeWarning.convId;
                   clearCrossModeOverride(convId);
                   setCurrentModelString(target);
-                  try { await updateConversation(convId, { model: target }); } catch {}
+                  try { await updateConversation(convId, { model: target, provider_id: getProviderIdForModel(target) }); } catch {}
                   const fire = pendingCrossModeSendRef.current;
                   pendingCrossModeSendRef.current = null;
                   setCrossModeWarning(null);
